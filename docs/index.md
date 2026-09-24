@@ -52,5 +52,8 @@ A folder in the game's `plugins` folder with two files:
   dropdowns and keyboard input.
 - [Create Extensions](https://github.com/AnythingGoes-ballest/ballest-create-extensions): track editor tools and a
   section docked in the editor's details panel.
+- [Cosmetic Kit](https://github.com/AnythingGoes-ballest/ballest-cosmetic-kit) and
+  [Example Cosmetics](https://github.com/AnythingGoes-ballest/ballest-example-cosmetics): one plugin offering functions
+  to others, and one depending on it to add custom balls, a hat and a goal explosion, with models.
 - [Plugin Manager](https://github.com/AnythingGoes-ballest/ballest-plugin-manager/tree/main/plugins/plugin-manager):
   the plugin browser, settings pages and console, built with cards and a tab header. This is the largest example.

@@ -13,6 +13,11 @@
 //   functions <Class> | instances <Class> [fragment+fragment] | props <Class> [filter] | find <name fragment>
 //   struct <Class> <Function> | call <Class> <Function> [filter] | viewtarget | pov <leaderboard entry filter>
 //   watch <leaderboard entry filter> | materials [fragment] | replaycam <distance> <see-through 0|1>
+//   cosmetic ball <id> <png> | cosmetic hat <id> <mesh path> | cosmetic bfx <id> <goal explosion path> <scale>
+//   cosmetics | cosmetictile <n>         the custom cosmetics and the Customize page's custom section; press a tile
+//   cosmodel ball|hat <id> <model file> [ball image]   a custom cosmetic with a model (models.hpp)
+//   loadasset <path> | matparams <material path> <stride> | spawnfx <niagara path> <height> [scale]
+//   children <owner class> <panel property> | objarray <class> <filter> <property> | fnbytes <class> <function> | gc
 //   crash [plugin id]                     test the fault guard: fault in host code now, or in that plugin's next call
 //   callx <Class> <Function> [filter] | i:5 | f:1.5 | d:1.5 | u8:3 | b:1 | s:str | t:text | n:name | o:Class,filter | v:x,y,z
 #pragma once

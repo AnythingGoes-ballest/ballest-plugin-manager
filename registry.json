@@ -1,6 +1,23 @@
 {
   "plugins": [
     {
+      "id": "cosmetic-kit",
+      "name": "Cosmetic Kit",
+      "description": "Lets plugins add custom balls, hats and goal explosions to a custom section of the Customize page, and remembers which ones you wear.",
+      "author": "AnythingGoes",
+      "repo": "AnythingGoes-ballest/ballest-cosmetic-kit",
+      "version": "0.1.0",
+      "commit": "2054e53b48f61c7c81c85c25108f86f866288f7b",
+      "min_host": "0.8.0",
+      "icon": "icon.png",
+      "dependencies": [],
+      "files": {
+        "info.toml": "3cc2293d99dee9eb91265b1c0248fad6e6ff6e9c358a28633e550934b834c0fb",
+        "main.as": "df675e35a640fd15e40193edafbfd3388e1d79f4fd94a5609f9efdf266ac4dc0",
+        "icon.png": "1ce5f38e5dddb42a50efb9dd0f5f049b92f213c8069c29ebb911c0a0736fd384"
+      }
+    },
+    {
       "id": "create-extensions",
       "name": "Create Extensions",
       "description": "Track editor extras: whole-unit placement, placement distance, rotated copies, Tab between transform boxes.",
@@ -14,6 +31,36 @@
         "info.toml": "4f8fff6c72dab1bbab359a33b538d073eb7eaf64576fdcf2bb03063bd45e17a5",
         "main.as": "fd50f1fd414797e2a4ffba8ff9f98ffce4409e0dd679bc7e85c358c62d90cbe6",
         "icon.png": "673495590b04fbc8b8a75af30e0eed74dc9b34ef11584f3e66fea362e53b74fe"
+      }
+    },
+    {
+      "id": "example-cosmetics",
+      "name": "Example Cosmetics",
+      "description": "Examples for Cosmetic Kit: smiley, morph ball and saw meatball balls, a fruit basket hat and a confetti goal explosion.",
+      "author": "AnythingGoes",
+      "repo": "AnythingGoes-ballest/ballest-example-cosmetics",
+      "version": "0.1.0",
+      "commit": "934632ce7f72a5ae21a6e5bf0f6abea73dc0b008",
+      "min_host": "0.8.0",
+      "icon": "icon.png",
+      "dependencies": [
+        "cosmetic-kit"
+      ],
+      "files": {
+        "info.toml": "2adf00b30a7956436c03e8d7e24aa21f4ca5276b855a2eea1d9daefad5af1553",
+        "main.as": "f97ee6b8a6d04e5b2bbdd48741278b4e22b9faf4d710055dc2a237a433ce8c9a",
+        "basket_preview.png": "b75bcd038614fcb514efa59f8d614d13e58ae739178ace0f06029a853ea618bb",
+        "confetti_preview.png": "0373384c468e6b46d2b8c32b3e02b0cd351e13931dd1916b9c9834b8322247b4",
+        "icon.png": "1e165f688871adb5cc9dbda6a7cf679ece8564c275cacee8fc3d47073df93ee6",
+        "meatball.png": "1218aa065ffd8840a91518cd98ce316680ceb35a88a3036839642ce705d2b68a",
+        "meatball_preview.png": "61711a1ea276a1091f19a793383d6d1963fe9d8829e0bdf7804370f47f6d62ed",
+        "morph_ball.png": "3c4f3e753904c28163345d1fe588381b860622b8782449f5f359c22ef9b799f8",
+        "morph_preview.png": "461c42fea68a8cfb65e570a05b642fc85001a23816ac920ea4592b3bb17ab743",
+        "smiley_ball.png": "73e9538e35401568ceb914371966c2238d05a2cb823d36df4ea909792779b6f4",
+        "smiley_preview.png": "1e165f688871adb5cc9dbda6a7cf679ece8564c275cacee8fc3d47073df93ee6",
+        "models/fruit_basket.txt": "66aa84a19dffd2cbbe277ea4c6d48e19c865d5a9ec109dd7235eaeebc94a3bd3",
+        "models/morph_ball.txt": "cca1b2f5a3fee9f7eae4c30cb6a69c3a3eb0304de93376069c114bd9ce65d754",
+        "models/saw_ball.txt": "45f8c5b1f5d2b9aa6f1cef7d0fb74d7297dd049c679e8a2706e2ef11ac41cd1c"
       }
     },
     {

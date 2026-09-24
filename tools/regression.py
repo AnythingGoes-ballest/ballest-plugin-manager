@@ -29,7 +29,8 @@ FIXTURES = HERE / "test-plugins"          # faulty plugins, installed only for t
 # Plugin repos checked out next to this one: if present, installs and removals are tested against a local copy of
 # the registry built from them (nothing is downloaded).
 PLUGIN_REPOS = [HERE.parents[1] / "ballest-grind-timer-plugin", HERE.parents[1] / "ballest-replay-manager",
-                HERE.parents[1] / "ballest-create-extensions"]
+                HERE.parents[1] / "ballest-create-extensions", HERE.parents[1] / "ballest-cosmetic-kit",
+                HERE.parents[1] / "ballest-example-cosmetics"]
 MIRROR = DATA / "test-registry"
 REGISTRY_URL_FILE = DATA / "registry_url.txt"
 
@@ -179,7 +180,7 @@ def plugin_browser(mirrored):
         # Start from a known state whatever an earlier run left: every registry plugin installed. The first card with
         # a remove button (plugins load in folder order after the plugin manager) is then a registry plugin, which
         # the local copy of the registry can install again.
-        for plugin in ("create-extensions", "grind-timer", "replay-manager"):
+        for plugin in ("create-extensions", "grind-timer", "replay-manager", "cosmetic-kit", "example-cosmetics"):
             if not (GAME_PLUGINS / plugin).exists():
                 c = Cursor()
                 command(f"install {plugin}")
@@ -209,6 +210,32 @@ def plugin_browser(mirrored):
     c = Cursor()
     command("click close")
     check("menu closes", c.wait(r"\[plugin-manager\] menu closed", 5))
+
+
+def dependencies():
+    """Example Cosmetics depends on Cosmetic Kit (imports its functions) and ships assets in a subfolder."""
+    print("plugin dependencies")
+    for plugin in ("example-cosmetics", "cosmetic-kit"):
+        if (GAME_PLUGINS / plugin).exists():
+            c = Cursor()
+            command(f"remove {plugin}")
+            c.wait(rf"registry: removed {plugin}", 10)
+    check("start without either", not (GAME_PLUGINS / "example-cosmetics").exists() and not (GAME_PLUGINS / "cosmetic-kit").exists())
+    c = Cursor()
+    start = Cursor.at(c)
+    command("install example-cosmetics")
+    check("installing a plugin installs its dependency too", c.wait(r"registry: example-cosmetics needs cosmetic-kit; installing that first", 10))
+    check("both are installed", c.wait(r"registry: installed cosmetic-kit", 30) and Cursor.at(start).wait(r"registry: installed example-cosmetics", 30))
+    time.sleep(2)
+    check("its assets arrive in their subfolder", (GAME_PLUGINS / "example-cosmetics" / "models" / "saw_ball.txt").exists())
+    check("the plugin runs with its dependency, whichever download finished first",
+          any("[cosmetic-kit] added ball example-cosmetics.saw-meatball" in l for l in lines()[start.seen:]))
+    c = Cursor()
+    command("remove cosmetic-kit")
+    check("removing a dependency stops the plugins that use it", c.wait(r"\[example-cosmetics\] stopping: it depends on cosmetic-kit", 10))
+    c = Cursor()
+    command("install cosmetic-kit")
+    check("reinstalling it starts them again", c.wait(r"registry: started example-cosmetics again with cosmetic-kit", 30))
 
 
 def replay_manager():
@@ -301,6 +328,8 @@ def main():
         footer("main menu", launch)
         console_menu()
         plugin_browser(mirrored)
+        if mirrored:
+            dependencies()
         replay_manager()
         if not args.skip_map:
             footer("map", map_load())

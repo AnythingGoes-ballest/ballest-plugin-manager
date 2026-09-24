@@ -18,6 +18,7 @@
         committed at HEAD.
 """
 import argparse
+import fnmatch
 import hashlib
 import json
 import subprocess
@@ -44,10 +45,16 @@ def save(registry):
 
 
 def files_of(manifest, repo, commit):
-    """The files the game needs: info.toml, the scripts, and the icon if there is one."""
+    """The files the game needs: info.toml, the scripts, the assets ([script] assets, wildcards allowed) and the icon
+    if there is one."""
     meta, script = manifest.get("meta", {}), manifest.get("script", {})
     names = ["info.toml", *script.get("files", ["main.as"])]
-    tree = set(git(repo, "ls-tree", "--name-only", commit).decode().split())
+    tree = set(git(repo, "ls-tree", "-r", "--name-only", commit).decode().splitlines())
+    for pattern in script.get("assets", []):
+        matched = sorted(n for n in tree if fnmatch.fnmatchcase(n, pattern))
+        if not matched:
+            sys.exit(f"assets pattern {pattern} matches nothing")
+        names += [n for n in matched if n not in names]
     icon = meta.get("icon", "icon.png")
     if icon in tree:
         names.append(icon)
@@ -75,6 +82,7 @@ def add(path, tag, repo_name):
         "commit": commit,
         "min_host": meta.get("min_host", ""),
         "icon": icon,
+        "dependencies": meta.get("dependencies", []),
         "files": {n: hashlib.sha256(git(repo, "show", f"{commit}:{n}")).hexdigest() for n in names},
     }
     registry = load()
@@ -121,6 +129,7 @@ def mirror(out, paths, host_test=None, host_dll=None):
         target = out / entry["repo"] / entry["commit"]
         target.mkdir(parents=True, exist_ok=True)
         for name in entry["files"]:
+            (target / name).parent.mkdir(parents=True, exist_ok=True)
             (target / name).write_bytes(git(repo, "show", f"{entry['commit']}:{name}"))
     local = dict(registry, raw_base=out.as_uri() + "/")
     if host_test:

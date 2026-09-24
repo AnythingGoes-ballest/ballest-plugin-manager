@@ -3,6 +3,8 @@
 // registered as asOBJ_NOCOUNT: the host owns them for the plugin's lifetime and scripts cannot delete them.
 #include "api.hpp"
 
+#include <windows.h>
+
 #include <angelscript.h>
 #include <scriptarray/scriptarray.h>
 #include <scriptstdstring/scriptstdstring.h>
@@ -10,6 +12,7 @@
 #include <string>
 #include <utility>
 
+#include "cosmetics.hpp"
 #include "game.hpp"
 #include "input.hpp"
 #include "log.hpp"
@@ -50,6 +53,10 @@ std::string StorageGet(const std::string& key, const std::string& fallback) { re
 void StorageSet(const std::string& key, const std::string& value) { storage::Set(plugins::CurrentId(), key, value); }
 
 // --- Plugins -----------------------------------------------------------------------------------------------------
+std::string PluginFolder() {
+    const std::wstring dir = plugins::CurrentDir();
+    return dir.empty() ? "" : eng::Narrow(dir.c_str(), static_cast<int>(dir.size())) + "\\";
+}
 plugins::Info PluginAt(unsigned i) {
     const auto list = plugins::List();
     return i < list.size() ? list[i] : plugins::Info{};
@@ -382,6 +389,7 @@ void RegisterCore() {
     Global("string Pending(const string &in id)", asFUNCTION(registry::Pending));
     Global("string DefaultIcon()", asFUNCTION(registry::DefaultIcon));
     Global("void OpenFolder()", asFUNCTION(plugins::OpenFolder));
+    Global("string Folder()", asFUNCTION(PluginFolder));
     Global("void UpdateHost()", asFUNCTION(UpdateHost));
     Global("string HostUpdateState()", asFUNCTION(registry::HostUpdateState));
 
@@ -558,6 +566,81 @@ void RegisterEditor() {
     Global("void SetRotateAroundCenter(bool)", asFUNCTION(editor::SetRotateAroundCenter));
 }
 
+// --- Cosmetics -----------------------------------------------------------------------------------------------------
+// Image files must be inside the plugins folder: a plugin gives its own with Plugins::Folder().
+std::wstring PluginFile(const std::string& path, bool* ok) {
+    *ok = true;
+    if (path.empty()) return L"";
+    wchar_t full[MAX_PATH];
+    const std::wstring wide = eng::Widen(path);
+    const DWORD n = GetFullPathNameW(wide.c_str(), MAX_PATH, full, nullptr);
+    const std::wstring root = plugins::Dir() + L"\\";
+    const std::wstring resolved(full, n > 0 && n < MAX_PATH ? n : 0);
+    if (resolved.empty() || _wcsnicmp(resolved.c_str(), root.c_str(), root.size()) != 0 ||
+        GetFileAttributesW(resolved.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        hostlog::Write("warn", plugins::CurrentId(), "cosmetics: " + path + " is not a file in the plugins folder");
+        *ok = false;
+    }
+    return resolved;
+}
+// A model file (models.hpp's format) in the plugins folder, read whole; "" for none.
+bool ModelText(const std::string& path, std::string* text) {
+    text->clear();
+    if (path.empty()) return true;
+    bool ok = false;
+    const std::wstring file = PluginFile(path, &ok);
+    if (!ok) return false;
+    HANDLE h = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    char buf[4096];
+    DWORD n = 0;
+    while (ReadFile(h, buf, sizeof buf, &n, nullptr) && n > 0 && text->size() < 256 * 1024) text->append(buf, n);
+    CloseHandle(h);
+    return true;
+}
+bool CosmeticsAddBall(const std::string& id, const std::string& name, const std::string& image, const std::string& preview,
+                      const std::string& model) {
+    bool imageOk = false, previewOk = false;
+    std::string text;
+    const std::wstring file = PluginFile(image, &imageOk), picture = PluginFile(preview, &previewOk);
+    return !image.empty() && imageOk && previewOk && ModelText(model, &text) && cosmetics::AddBall(id, name, file, picture, text);
+}
+bool CosmeticsAddHat(const std::string& id, const std::string& name, const std::string& mesh, double scale,
+                     const std::string& preview, const std::string& model) {
+    bool ok = false;
+    std::string text;
+    const std::wstring picture = PluginFile(preview, &ok);
+    return ok && scale > 0 && ModelText(model, &text) && cosmetics::AddHat(id, name, mesh, scale, picture, text);
+}
+bool CosmeticsAddBfx(const std::string& id, const std::string& name, const std::string& base, double scale,
+                     const std::string& preview, const std::string& system, const std::string& sound) {
+    bool ok = false;
+    const std::wstring picture = PluginFile(preview, &ok);
+    return ok && scale > 0 && cosmetics::AddBfx(id, name, base, scale, picture, system, sound);
+}
+cosmetics::Kind KindOf(int kind) { return static_cast<cosmetics::Kind>(kind < 0 || kind > 2 ? 0 : kind); }
+int CosmeticsCount(int kind) { return cosmetics::Count(KindOf(kind)); }
+bool CosmeticsEquip(int kind, const std::string& id) { return kind >= 0 && kind <= 2 && cosmetics::Equip(KindOf(kind), id); }
+std::string CosmeticsEquipped(int kind) { return kind >= 0 && kind <= 2 ? cosmetics::Equipped(KindOf(kind)) : ""; }
+
+void RegisterCosmetics() {
+    e->SetDefaultNamespace("Cosmetics");
+    Check(e->RegisterEnum("Kind"), "Cosmetics::Kind");
+    Check(e->RegisterEnumValue("Kind", "Ball", 0), "Ball");
+    Check(e->RegisterEnumValue("Kind", "Hat", 1), "Hat");
+    Check(e->RegisterEnumValue("Kind", "Bfx", 2), "Bfx");
+    Global("bool AddBall(const string &in, const string &in, const string &in, const string &in = \"\", const string &in = \"\")",
+           asFUNCTION(CosmeticsAddBall));
+    Global("bool AddHat(const string &in, const string &in, const string &in, double, const string &in = \"\", const string &in = \"\")",
+           asFUNCTION(CosmeticsAddHat));
+    Global("bool AddBfx(const string &in, const string &in, const string &in, double, const string &in = \"\", const string &in = \"\", "
+           "const string &in = \"\")",
+           asFUNCTION(CosmeticsAddBfx));
+    Global("int Count(Kind)", asFUNCTION(CosmeticsCount));
+    Global("bool Equip(Kind, const string &in)", asFUNCTION(CosmeticsEquip));
+    Global("string Equipped(Kind)", asFUNCTION(CosmeticsEquipped));
+}
+
 void RegisterReplay() {
     e->SetDefaultNamespace("Replay");
     Check(e->RegisterEnum("Camera"), "Replay::Camera");
@@ -587,6 +670,7 @@ void Register(asIScriptEngine* engine) {
     RegisterRace();
     RegisterEditor();
     RegisterReplay();
+    RegisterCosmetics();
     e->SetDefaultNamespace("");
 }
 

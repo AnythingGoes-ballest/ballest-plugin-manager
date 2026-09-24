@@ -190,6 +190,12 @@ The path of the default icon the plugin manager ships, used for plugins that hav
 --
 string icon = Plugins::Icon(i) == "" ? Plugins::DefaultIcon() : Plugins::Icon(i);
 
+== Plugins::Folder
+The running plugin's own folder, ending in a backslash. Use it to name files the plugin ships, such as images for
+[cosmetics](cosmetics.md).
+--
+string ball = Plugins::Folder() + "ball.png";
+
 == Plugins::OpenFolder
 Opens the plugins folder in File Explorer.
 --
@@ -1160,3 +1166,54 @@ travel, turning smoothly), or `Replay::Free` (fly around: hold the right mouse b
 up and down, Shift for speed).
 --
 Replay::SetCameraMode(Replay::Follow3D);
+
+@@ Cosmetics
+Custom balls, hats and goal explosions (the Customize page's **bfx**). Each one gets a tile in a **custom** section at
+the bottom of its tab, and choosing it works like choosing one of the game's. See the
+[custom cosmetics guide](../../guides/cosmetics.md) for models and how it all fits together; most plugins use
+[Cosmetic Kit](https://github.com/AnythingGoes-ballest/ballest-cosmetic-kit) rather than calling these directly, so
+the player's choice is remembered.
+
+Custom cosmetics are only worn on the player's own ball (the menu ball and the racing ball). The game's save, and
+what other players see, keep the last game cosmetic chosen. Files (images, models) must be inside the plugins folder.
+Ids must be unique per kind; start them with your plugin's id.
+
+== Cosmetics::AddBall
+Adds a ball. `image` is its texture: wrapped around the ball, left to right is around it and top to bottom is pole to
+pole, so make it twice as wide as it is tall (1024x512). `preview` is the picture on its tile (`""` shows the
+texture). `model` is an optional [model file](../../guides/cosmetics.md#models) of parts built around the ball and
+rolling with it: raised details, lights, a spinning blade. Returns false, and logs why, if it can't be added.
+--
+string f = Plugins::Folder();
+Cosmetics::AddBall("my-balls.planet", "planet", f + "planet.png", f + "planet_tile.png", f + "rings.txt");
+
+== Cosmetics::AddHat
+Adds a hat: a game or engine mesh (`mesh`, an asset path), or `""` and a `model` file built where the game puts hats
+(the top of the ball). `scale` sizes it (1 = as it is).
+--
+Cosmetics::AddHat("my-hats.cone", "cone", "/Engine/BasicShapes/Cone.Cone", 0.45, Plugins::Folder() + "cone.png");
+
+== Cosmetics::AddBfx
+Adds a goal explosion based on one of the game's (`base`, a data asset path) at another `scale`, optionally with
+another of the game's Niagara effects (`effect`) and sounds (`sound`). It plays at checkpoints and in the Customize
+preview.
+--
+Cosmetics::AddBfx("my-bfx.confetti", "confetti", "/Game/Art/DataAssets/GoalExplosions/Fire1/DA_Fire1.DA_Fire1", 1.0,
+                  Plugins::Folder() + "confetti.png", "/Game/Art/NS_BallExplosion.NS_BallExplosion",
+                  "/Game/Sound/Menus/SFX_ConfettiGun.SFX_ConfettiGun");
+
+== Cosmetics::Count
+How many custom cosmetics of a kind there are.
+--
+Log::Info(Cosmetics::Count(Cosmetics::Ball) + " custom balls");
+
+== Cosmetics::Equip
+Wears a custom cosmetic (its id), or `""` for the game's own. False if there's no such custom cosmetic. Use it to put
+back what the player wore last time.
+--
+Cosmetics::Equip(Cosmetics::Ball, Storage::Get("ball", ""));
+
+== Cosmetics::Equipped
+The custom cosmetic the player wears, or `""` while it's one of the game's. It changes when the player picks a tile.
+--
+Storage::Set("ball", Cosmetics::Equipped(Cosmetics::Ball));

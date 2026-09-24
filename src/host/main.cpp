@@ -7,6 +7,7 @@
 #include <cstring>
 #include <string>
 
+#include "cosmetics.hpp"
 #include "editor.hpp"
 #include "engine.hpp"
 #include "game.hpp"
@@ -93,6 +94,7 @@ void HostFrame(float dt) {
     editor::Frame();
     race::Frame();
     replay::Frame(dt);
+    cosmetics::Frame();
     ui::Frame();
     registry::Frame();              // installs and removals land between frames of plugin code
     plugins::Frame(dt);

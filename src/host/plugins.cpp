@@ -6,6 +6,7 @@
 #include <scriptbuilder/scriptbuilder.h>
 
 #include <algorithm>
+#include <set>
 #include <cstdlib>
 #include <fstream>
 #include <map>
@@ -28,6 +29,7 @@ struct Plugin {
     std::string id, name, version, author, description, minHost, icon;
     std::wstring dir;
     std::vector<std::string> files;
+    std::vector<std::string> dependencies;      // ids of plugins that must be running first ([meta] dependencies)
     int timeoutMs = 50;
     bool essential = false;
     std::string status = "not loaded";
@@ -115,6 +117,7 @@ bool ReadManifest(const std::wstring& dir, const std::string& id, Plugin& p) {
     p.minHost = value("meta.min_host", "");
     p.essential = value("meta.essential", "false") == "true";
     p.files = kv.count("script.files") ? StringList(kv["script.files"]) : std::vector<std::string>{"main.as"};
+    if (kv.count("meta.dependencies")) p.dependencies = StringList(kv["meta.dependencies"]);
     if (kv.count("script.timeout")) p.timeoutMs = std::max(1, std::atoi(kv["script.timeout"].c_str()));
     // The plugin's own icon, else the default one the plugin manager ships.
     const std::string icon = value("meta.icon", "icon.png");
@@ -183,8 +186,11 @@ int RefuseInclude(const char* include, const char* from, CScriptBuilder*, void*)
     return -1;
 }
 
-// Each plugin compiles into its own module, named by its index so API calls can tell which plugin made them. The
-// script builder keeps each global's metadata, which is where [Setting] tags come from.
+Plugin* Loaded(const std::string& id);
+
+// Each plugin compiles into its own module, named by its id: another plugin that depends on it imports its functions
+// by that name (import void AddBall(...) from "cosmetic-kit";), and API calls tell which plugin made them from the module
+// of the function running. The script builder keeps each global's metadata, which is where [Setting] tags come from.
 void Start(size_t index) {
     Plugin& p = gPlugins[index];
     if (!p.minHost.empty() && CompareVersions(p.minHost, kHostVersion) > 0) {
@@ -192,9 +198,17 @@ void Start(size_t index) {
         hostlog::Write("error", p.id, p.status + " (this is " + kHostVersion + ")");
         return;
     }
+    for (const auto& dependency : p.dependencies) {
+        const Plugin* d = Loaded(dependency);
+        if (!d || !d->running) {
+            p.status = "needs " + dependency;
+            hostlog::Write("error", p.id, p.status + " (install it, or it stopped)");
+            return;
+        }
+    }
     CScriptBuilder builder;
     builder.SetIncludeCallback(RefuseInclude, nullptr);
-    if (builder.StartNewModule(gEngine, std::to_string(index).c_str()) < 0) return;
+    if (builder.StartNewModule(gEngine, p.id.c_str()) < 0) return;
     asIScriptModule* m = builder.GetModule();
     p.module = m;
     for (const auto& file : p.files) {
@@ -208,6 +222,15 @@ void Start(size_t index) {
     }
     if (builder.BuildModule() < 0) {
         p.status = "error: does not compile (see log)";
+        hostlog::Write("error", p.id, p.status);
+        return;
+    }
+    // Imported functions (from its dependencies' modules) are bound now that those modules exist.
+    if (m->GetImportedFunctionCount() > 0 && m->BindAllImportedFunctions() < 0) {
+        p.status = "error: an imported function was not found in its dependencies (see log)";
+        for (asUINT i = 0; i < m->GetImportedFunctionCount(); ++i)
+            hostlog::Write("error", p.id, std::string("import ") + m->GetImportedFunctionDeclaration(i) + " from \"" +
+                                              m->GetImportedFunctionSourceModule(i) + "\"");
         hostlog::Write("error", p.id, p.status);
         return;
     }
@@ -257,11 +280,28 @@ void LoadAll(const std::wstring& pluginsDir) {
     } while (FindNextFileW(find, &fd));
     FindClose(find);
 
-    // The plugin manager first, so its UI exists before the others report in; the rest by id.
+    // The plugin manager first, so its UI exists before the others report in; the rest by id, each after the plugins it
+    // depends on (a dependency that is missing, or a cycle, leaves the plugin in place: Start reports it).
     std::sort(gPlugins.begin(), gPlugins.end(), [](const Plugin& a, const Plugin& b) {
         const bool am = a.id == "plugin-manager", bm = b.id == "plugin-manager";
         return am != bm ? am : a.id < b.id;
     });
+    std::vector<Plugin> ordered;
+    std::set<std::string> placed;
+    for (size_t pass = 0; pass <= gPlugins.size() && ordered.size() < gPlugins.size(); ++pass)
+        for (const auto& p : gPlugins) {
+            if (placed.count(p.id)) continue;
+            bool ready = true;
+            for (const auto& d : p.dependencies) {
+                const bool exists = std::any_of(gPlugins.begin(), gPlugins.end(), [&](const Plugin& q) { return q.id == d; });
+                ready = ready && (!exists || placed.count(d) || pass == gPlugins.size());
+            }
+            if (ready) {
+                ordered.push_back(p);
+                placed.insert(p.id);
+            }
+        }
+    gPlugins = ordered;
     hostlog::Info("found " + std::to_string(gPlugins.size()) + " plugin(s)");
     for (size_t i = 0; i < gPlugins.size(); ++i) Start(i);
 }
@@ -309,25 +349,69 @@ bool Load(const std::string& id) {
     return gPlugins.back().running;
 }
 
-void Unload(const std::string& id) {
-    if (gInFrame) return;
+std::vector<std::string> Dependents(const std::string& id) {
+    std::vector<std::string> out;
+    for (const auto& p : gPlugins)
+        if (!p.removed && std::find(p.dependencies.begin(), p.dependencies.end(), id) != p.dependencies.end())
+            out.push_back(p.id);
+    return out;
+}
+
+namespace {
+
+// Frees a plugin's script, and with it its settings, UI and cursor request.
+void Release(size_t i) {
+    Plugin& p = gPlugins[i];
+    p.running = false;
+    p.update = p.onSettingsChanged = nullptr;
+    settings::Forget(static_cast<int>(i));             // before the module (the variables) goes
+    if (p.ctx) p.ctx->Release();
+    p.ctx = nullptr;
+    if (p.module) p.module->Discard();
+    p.module = nullptr;
+    // Its script is gone, so nothing can use its UI handles any more.
+    ui::RemoveOwner(static_cast<int>(i));
+    game::RequestCursor(static_cast<int>(i), false);
+}
+
+// Plugins that depend on `id` lose their scripts before it does (their imported functions point into its module),
+// but stay listed, as needing it, and start again when it is back (Restart).
+void SuspendDependents(const std::string& id) {
     for (size_t i = 0; i < gPlugins.size(); ++i) {
         Plugin& p = gPlugins[i];
-        if (p.id != id || p.removed) continue;
-        p.running = false;
-        p.removed = true;
-        p.status = "removed";
-        p.update = p.onSettingsChanged = nullptr;
-        settings::Forget(static_cast<int>(i));             // before the module (the variables) goes
-        if (p.ctx) p.ctx->Release();
-        p.ctx = nullptr;
-        if (p.module) p.module->Discard();
-        p.module = nullptr;
-        // Its script is gone, so nothing can use its UI handles any more.
-        ui::RemoveOwner(static_cast<int>(i));
-        game::RequestCursor(static_cast<int>(i), false);
-        hostlog::Write("info", p.id, "unloaded");
+        if (p.removed || !p.module || std::find(p.dependencies.begin(), p.dependencies.end(), id) == p.dependencies.end())
+            continue;
+        SuspendDependents(p.id);
+        hostlog::Write("info", p.id, "stopping: it depends on " + id + ", which is being unloaded");
+        Release(i);
+        gPlugins[i].status = "needs " + id;
     }
+}
+
+}  // namespace
+
+void Unload(const std::string& id) {
+    if (gInFrame) return;
+    SuspendDependents(id);
+    for (size_t i = 0; i < gPlugins.size(); ++i) {
+        if (gPlugins[i].id != id || gPlugins[i].removed) continue;
+        Release(i);
+        gPlugins[i].removed = true;
+        gPlugins[i].status = "removed";
+        hostlog::Write("info", gPlugins[i].id, "unloaded");
+    }
+}
+
+bool Restart(const std::string& id) {
+    if (gInFrame) return false;
+    for (size_t i = 0; i < gPlugins.size(); ++i) {
+        Plugin& p = gPlugins[i];
+        if (p.id != id || p.removed || p.running) continue;
+        Release(i);
+        Start(i);
+        return gPlugins[i].running;
+    }
+    return false;
 }
 
 std::vector<Info> List() {
@@ -343,9 +427,20 @@ bool Find(const std::string& id, Info* out) {
     return p != nullptr;
 }
 
-// Tracked by Run rather than asked of AngelScript: after a fault the abandoned script context would still be reported
-// as active.
-int Current() { return gRunning; }
+// The plugin whose script function is running: the module of the innermost function of the running context, so a
+// function a plugin imported from its dependency counts as the dependency's (its log lines, storage and UI are its
+// own). Only asked while Run has a plugin running: after a fault the abandoned context could still be reported as
+// active.
+int Current() {
+    if (gRunning < 0) return -1;
+    asIScriptContext* ctx = asGetActiveContext();
+    asIScriptFunction* fn = ctx ? ctx->GetFunction(0) : nullptr;
+    const char* module = fn ? fn->GetModuleName() : nullptr;
+    if (module)
+        for (size_t i = 0; i < gPlugins.size(); ++i)
+            if (!gPlugins[i].removed && gPlugins[i].id == module) return static_cast<int>(i);
+    return gRunning;
+}
 
 bool RecoverFromFault(const std::string& where) {
     gInFrame = false;
@@ -362,6 +457,11 @@ void CrashNext(const std::string& id) { gCrashNext = id; }
 std::string CurrentId() {
     const int i = Current();
     return i >= 0 && i < static_cast<int>(gPlugins.size()) ? gPlugins[static_cast<size_t>(i)].id : "?";
+}
+
+std::wstring CurrentDir() {
+    const int i = Current();
+    return i >= 0 && i < static_cast<int>(gPlugins.size()) ? gPlugins[static_cast<size_t>(i)].dir : std::wstring();
 }
 
 bool CurrentIsEssential() {

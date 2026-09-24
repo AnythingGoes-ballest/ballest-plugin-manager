@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "cosmetics.hpp"
 #include "engine.hpp"
 #include "game.hpp"
 #include "input.hpp"
@@ -256,6 +257,20 @@ void Watch(const std::string& filter) {
     Report(std::string("watch -> ") + (ok && source.ReturnBool() ? "following" : "not following"));
 }
 
+// "objitem <Class> [filter]": the raw bytes of that object's entry in the global object array (FUObjectItem), for
+// measuring the flag bits (root set and the like).
+void ObjItem(const std::string& cls, const std::string& filter) {
+    const auto list = Instances(cls, filter);
+    if (list.empty()) return Report("no instance of " + cls);
+    for (size_t n = 0; n < list.size() && n < 3; ++n) {
+        eng::Obj o = list[n];
+        int32_t index = -1;
+        std::memcpy(&index, o + 0xC, 4);
+        const uint8_t* item = eng::ItemOf(index);
+        Report("objitem " + eng::PathOf(o) + " index " + std::to_string(index) + ": " + (item ? Hex(item, 24) : std::string("?")));
+    }
+}
+
 void Materials(const std::string& fragment) {
     eng::Obj cls = eng::FindClass("Material");
     int shown = 0;
@@ -333,11 +348,109 @@ void Run(const std::string& cmd) {
         {"pov", [](const Args& a, const std::string&) { Pov(Arg(a, 1)); }},
         {"materials", [](const Args& a, const std::string&) { Materials(Arg(a, 1)); }},
         {"watch", [](const Args& a, const std::string&) { Watch(Arg(a, 1)); }},
+        {"objitem", [](const Args& a, const std::string&) { ObjItem(Arg(a, 1), Arg(a, 2)); }},
         {"loadglass", [](const Args&, const std::string&) { Report(replay::TestLoadGlass()); }},
         {"crash", [](const Args& a, const std::string&) {
              if (a.size() > 1) return plugins::CrashNext(Arg(a, 1));     // "crash <plugin id>": in that plugin's next call
              Report("crash: faulting in host code now");
              *static_cast<volatile int*>(nullptr) = 1;
+         }},
+        {"cosmetic", [](const Args& a, const std::string&) {
+             const std::string kind = Arg(a, 1), id = Arg(a, 2), what = Arg(a, 3);
+             const bool ok = kind == "ball"  ? cosmetics::AddBall(id, id, eng::Widen(what), L"")
+                             : kind == "hat" ? cosmetics::AddHat(id, id, what, a.size() > 4 ? std::atof(Arg(a, 4).c_str()) : 1, L"")
+                                             : cosmetics::AddBfx(id, id, what, std::atof(Arg(a, 4).c_str()), L"");
+             Report("cosmetic " + kind + " " + id + (ok ? " -> ok" : " -> failed"));
+         }},
+        {"cosmetics", [](const Args&, const std::string&) { Report(cosmetics::Status()); }},
+        {"cosmodel", [](const Args& a, const std::string& c) {    // cosmodel ball|hat <id> <model file> [ball image]
+             std::string text;
+             if (FILE* f = _wfopen(eng::Widen(Arg(a, 3)).c_str(), L"rb")) {
+                 char buf[4096];
+                 for (size_t n; (n = fread(buf, 1, sizeof buf, f)) > 0;) text.append(buf, n);
+                 fclose(f);
+             }
+             const bool ok = Arg(a, 1) == "ball" ? cosmetics::AddBall(Arg(a, 2), Arg(a, 2), eng::Widen(Arg(a, 4)), L"", text)
+                                                 : cosmetics::AddHat(Arg(a, 2), Arg(a, 2), "", 1, L"", text);
+             Report(c + (ok ? " -> ok" : " -> failed"));
+         }},
+        {"cosmetictile", [](const Args& a, const std::string& c) {
+             Report(c + (cosmetics::ClickTile(std::atoi(Arg(a, 1).c_str())) ? " -> ok" : " -> failed"));
+         }},
+        {"children", [](const Args& a, const std::string&) {       // children <owner class> <property>: a panel's children
+             const auto owners = Instances(Arg(a, 1), "Transient");
+             if (owners.empty()) return Report("children: no " + Arg(a, 1));
+             eng::Obj panel = eng::ReadObj(owners.front(), Arg(a, 2));
+             const int32_t n = eng::Call(panel, "GetChildrenCount").ReturnAs<int32_t>(-1);
+             Report("children of " + eng::PathOf(panel) + ": " + std::to_string(n));
+             for (int32_t i = 0; i < n && i < 40; ++i) {
+                 eng::Obj c = eng::Call(panel, "GetChildAt", i).ReturnObj();
+                 Report("  " + std::to_string(i) + " " + eng::ObjName(eng::ClassOf(c)) + " " + eng::PathOf(c));
+             }
+         }},
+        {"loadasset", [](const Args& a, const std::string&) {
+             eng::Obj o = cosmetics::LoadAsset(eng::Widen(Arg(a, 1)));
+             Report("loadasset " + Arg(a, 1) + " -> " + (o ? eng::PathOf(o) : std::string("null")));
+         }},
+        {"fnbytes", [](const Args& a, const std::string&) {       // a UFunction's words; exe pointers marked
+             eng::Obj fn = eng::FindFunction(eng::FindClass(Arg(a, 1)), Arg(a, 2));
+             if (!fn) return Report("fnbytes: no function");
+             std::string line;
+             for (int off = 0; off < 0x100; off += 8) {
+                 uint64_t v = 0;
+                 std::memcpy(&v, fn + off, 8);
+                 line += hostlog::Hex(off) + "=" + hostlog::Hex(v) + (eng::InImage(reinterpret_cast<void*>(v)) ? "* " : " ");
+             }
+             Report("fnbytes " + Arg(a, 2) + " base " + hostlog::Hex(eng::Base()) + ": " + line);
+         }},
+        {"matparams", [](const Args& a, const std::string&) {    // a material instance's parameter names and values
+             eng::Obj m = cosmetics::LoadAsset(eng::Widen(Arg(a, 1)));
+             if (!m) return Report("matparams: not loaded");
+             for (const char* list : {"ScalarParameterValues", "VectorParameterValues", "TextureParameterValues"}) {
+                 struct { uint8_t* data; int32_t num, max; } arr{};
+                 const eng::Prop prop = eng::FindProp(eng::ClassOf(m), list);
+                 if (!prop || !eng::ReadBytes(m, list, &arr, sizeof arr)) continue;
+                 const int stride = std::atoi(Arg(a, 2).c_str()) > 0 ? std::atoi(Arg(a, 2).c_str()) : 0;
+                 std::string line = std::string(list) + " (" + std::to_string(arr.num) + "):";
+                 for (int i = 0; i < arr.num && stride; ++i) {
+                     uint32_t ci = 0; int32_t num = 0;
+                     std::memcpy(&ci, arr.data + i * stride, 4); std::memcpy(&num, arr.data + i * stride + 4, 4);
+                     line += " " + eng::Name(ci, num) + "=" + Hex(arr.data + i * stride + 16, 16);
+                 }
+                 Report(line);
+             }
+         }},
+        {"spawnfx", [](const Args& a, const std::string& c) {     // spawnfx <niagara system path> <height above the ball> [scale]
+             eng::Obj pawn = eng::Call(game::PlayerController(), "K2_GetPawn").ReturnObj();
+             eng::Obj system = cosmetics::LoadAsset(eng::Widen(Arg(a, 1)));
+             if (!pawn || !system) return Report(c + " -> no pawn or system");
+             struct V { double x, y, z; };
+             V at = eng::Call(pawn, "K2_GetActorLocation").ReturnAs<V>();
+             at.z += std::atof(Arg(a, 2).c_str());
+             eng::Obj lib = eng::FindCdo("NiagaraFunctionLibrary");
+             eng::Params p(eng::FunctionOn(lib, "SpawnSystemAtLocation"));
+             const double k = a.size() > 3 ? std::atof(Arg(a, 3).c_str()) : 1;
+             const V zero{0, 0, 0}, one{k, k, k};
+             p.Set("WorldContextObject", pawn);
+             p.Set("SystemTemplate", system);
+             p.Set("Location", at);
+             p.Set("Rotation", zero);
+             p.Set("Scale", one);
+             p.Set("bAutoDestroy", uint8_t{1});
+             p.Set("bAutoActivate", uint8_t{1});
+             eng::Invoke(lib, p);
+             Report(c + (p.ReturnObj() ? " -> spawned" : " -> failed"));
+         }},
+        {"objarray", [](const Args& a, const std::string&) {     // objarray <Class> <filter> <property>: a TArray<UObject*>
+             const auto list = Instances(Arg(a, 1), Arg(a, 2));
+             if (list.empty()) return Report("objarray: no " + Arg(a, 1));
+             int i = 0;
+             for (eng::Obj o : eng::ReadObjArray(list.front(), Arg(a, 3)))
+                 Report("  [" + std::to_string(i++) + "] " + (eng::IsLive(o) ? eng::PathOf(o) : std::string("?")));
+         }},
+        {"gc", [](const Args&, const std::string&) {
+             eng::Call(eng::FindCdo("KismetSystemLibrary"), "CollectGarbage");
+             Report("gc requested");
          }},
         {"replaycam", [](const Args& a, const std::string&) {
              replay::SetCameraDistance(std::atof(Arg(a, 1).c_str()));

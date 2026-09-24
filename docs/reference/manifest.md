@@ -26,6 +26,7 @@ timeout = 20
 | `author` | `""` | Shown in the plugin browser. |
 | `description` | `""` | One line, shown in the plugin browser. |
 | `min_host` | none | The oldest plugin manager (host) version with the API the plugin uses. An older host won't install it ("error: needs host 0.4.0") or run it (status "needs host 0.4.0"). |
+| `dependencies` | `[]` | Ids of plugins this one uses ([imports from](../concepts.md#plugins-that-use-other-plugins)): they load first, the plugin browser installs them first, and this plugin doesn't start without them. |
 | `icon` | `"icon.png"` | An image file in the plugin folder, 256x256. Without one, the default icon is used. |
 | `essential` | `false` | Reserved for the plugin manager itself. |
 
@@ -34,6 +35,7 @@ timeout = 20
 | Key | Default | Meaning |
 |---|---|---|
 | `files` | `["main.as"]` | The script files, compiled together. `#include` isn't supported, so list every file here. |
+| `assets` | `[]` | Other files the plugin needs at runtime, such as images and model files, installed with it from the registry. Wildcards and one level of folders work: `["*.png", "models/*.txt"]`. |
 | `timeout` | `50` | The [time budget](../concepts.md#the-time-budget) for each callback, in milliseconds. |
 
 ## The folder name is the id

@@ -20,6 +20,7 @@ constexpr const char* kDefaultUrl = "https://raw.githubusercontent.com/AnythingG
 
 struct Entry {
     std::string id, name, description, author, repo, version, commit, minHost;
+    std::vector<std::string> dependencies;                  // ids installed before it
     std::string iconFile;                                   // one of `files`, or ""
     std::vector<std::pair<std::string, std::string>> files; // name, sha256
     std::string icon;                                       // local copy of the icon once downloaded, or ""

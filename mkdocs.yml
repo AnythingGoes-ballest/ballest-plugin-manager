@@ -63,6 +63,7 @@ nav:
       - Saving data and timing: guides/storage.md
       - Debugging: guides/debugging.md
       - Publishing a plugin: guides/publishing.md
+      - Custom cosmetics: guides/cosmetics.md
   - Reference:
       - info.toml: reference/manifest.md
       - Callbacks: reference/callbacks.md
@@ -74,6 +75,7 @@ nav:
       - Race: reference/api/race.md
       - Replay: reference/api/replay.md
       - Editor: reference/api/editor.md
+      - Cosmetics: reference/api/cosmetics.md
       - Plugins: reference/api/plugins.md
       - Settings: reference/api/settings.md
       - Registry: reference/api/registry.md

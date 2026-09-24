@@ -52,6 +52,14 @@ constexpr int kUStructFirstFunctionOffset = 0x48;            // Children: UField
 constexpr int kUStructFirstPropertyOffset = 0x50;            // ChildProperties: FField* list (the properties)
 constexpr int kUFieldNextFieldOffset = 0x28;                 // UField::Next
 constexpr int kUFunctionParametersSizeOffset = 0xB6;         // ParmsSize: uint16, bytes of the parameter block
+constexpr int kUFunctionNativeFunctionOffset = 0xD8;         // Func: what Invoke calls; one shared interpreter entry for
+                                                             // every Blueprint function, its own thunk for a native one
+
+// --- FFrame (the stack frame a UFunction's Func receives) --------------------------------------------------------
+// Checked on every use: Node must be the function called and Object the object it was called on.
+constexpr int kFFrameFunctionOffset = 0x10;                  // Node: UFunction*
+constexpr int kFFrameObjectOffset = 0x18;                    // Object: UObject*
+constexpr int kFFrameParametersOffset = 0x28;                // Locals: the parameter block
 
 // --- FField (properties and their type descriptions) -------------------------------------------------------------
 constexpr int kFFieldTypeOffset = 0x8;                       // ClassPrivate: FFieldClass*, the property's type

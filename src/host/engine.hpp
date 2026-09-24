@@ -35,6 +35,7 @@ bool IsA(Obj o, Obj cls);
 int32_t NumObjects();
 Obj ObjectAt(int32_t index);
 bool IsLive(Obj freshPointer);          // reads the object: only for pointers obtained this frame
+const uint8_t* ItemOf(int32_t index);   // the object's FUObjectItem in the global object array, or null
 
 template <class F>
 void ForEachObject(F&& f) {             // f(Obj) returns false to stop

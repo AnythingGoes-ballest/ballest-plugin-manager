@@ -81,6 +81,17 @@ bool Plain(const std::string& s, const char* extra, size_t maxLength) {
 }
 bool ValidId(const std::string& s) { return Plain(s, "-_", 64); }
 bool ValidFile(const std::string& s) { return Plain(s, "-_.", 96) && s.find("..") == std::string::npos; }
+// A plugin's file: a name, or a path of up to three names separated by "/" (a plugin's assets in subfolders).
+bool ValidPluginFile(const std::string& s) {
+    size_t start = 0;
+    for (int part = 0; part < 3; ++part) {
+        const size_t slash = s.find('/', start);
+        if (!ValidFile(s.substr(start, slash == std::string::npos ? std::string::npos : slash - start))) return false;
+        if (slash == std::string::npos) return true;
+        start = slash + 1;
+    }
+    return false;
+}
 bool ValidRepo(const std::string& s) {
     const size_t slash = s.find('/');
     return slash != std::string::npos && Plain(s.substr(0, slash), "-_.", 64) && Plain(s.substr(slash + 1), "-_.", 100);
@@ -154,13 +165,16 @@ bool ReadEntry(const json::Value& v, Entry& e, std::string& why) {
     e.commit = v.Str("commit");
     e.minHost = v.Str("min_host");
     e.iconFile = v.Str("icon");
+    if (const json::Value* deps = v.Get("dependencies"); deps && deps->type == json::Value::Array)
+        for (const auto& d : deps->items)
+            if (d.type == json::Value::String && ValidId(d.string)) e.dependencies.push_back(d.string);
     if (!ValidId(e.id)) return why = "bad id '" + e.id + "'", false;
     if (!ValidRepo(e.repo)) return why = e.id + ": bad repo", false;
     if (!Hex(e.commit, 40, 40)) return why = e.id + ": commit must be a full SHA", false;
     const json::Value* files = v.Get("files");
     if (!files || files->type != json::Value::Object || files->members.empty()) return why = e.id + ": no files", false;
     for (const auto& [name, sha] : files->members) {
-        if (!ValidFile(name) || sha.type != json::Value::String || !Hex(sha.string, 64, 64))
+        if (!ValidPluginFile(name) || sha.type != json::Value::String || !Hex(sha.string, 64, 64))
             return why = e.id + ": bad file entry '" + name + "'", false;
         e.files.emplace_back(name, sha.string);
     }
@@ -270,7 +284,9 @@ void InstallFailed(const Entry& e, const std::string& error) {
 }
 
 void Apply(const Entry& e) {
-    // The download is complete and verified: swap it in and start it.
+    // The download is complete and verified: swap it in and start it. Plugins that depend on it are stopped with it
+    // and started again after it (one that arrived first, while it was missing, starts now).
+    const std::vector<std::string> dependents = plugins::Dependents(e.id);
     plugins::Unload(e.id);
     DeleteTree(PluginPath(e.id));
     if (!MoveFileW(StagingPath(e.id).c_str(), PluginPath(e.id).c_str())) {
@@ -281,6 +297,8 @@ void Apply(const Entry& e) {
     gPending.erase(e.id);
     const bool ok = plugins::Load(e.id);
     hostlog::Info("registry: installed " + e.id + " " + e.version + (ok ? "" : " (it did not start; see the log)"));
+    for (const auto& id : dependents)
+        if (plugins::Restart(id)) hostlog::Info("registry: started " + id + " again with " + e.id);
 }
 
 }  // namespace
@@ -329,6 +347,12 @@ void Install(const std::string& id) {
     }
     plugins::Info info;
     if (plugins::Find(id, &info) && info.essential) return;
+    // Its dependencies first, when they are not installed: they arrive before it, so it starts with them loaded.
+    for (const auto& dependency : found->dependencies)
+        if (!plugins::Find(dependency, nullptr)) {
+            hostlog::Info("registry: " + id + " needs " + dependency + "; installing that first");
+            Install(dependency);
+        }
     gPending[id] = "installing";
     const Entry e = *found;
     std::vector<std::pair<std::string, std::string>> urls;
@@ -353,8 +377,15 @@ void Install(const std::string& id) {
         if (error.empty()) {
             DeleteTree(staging);
             if (!CreateDirectoryW(staging.c_str(), nullptr)) error = "could not create the download folder";
-            for (const auto& [file, body] : bodies)
-                if (error.empty() && !WriteAll(staging + L"\\" + eng::Widen(file), body)) error = "could not write " + file;
+            for (const auto& [file, body] : bodies) {
+                std::wstring path = staging + L"\\" + eng::Widen(file);
+                for (size_t i = staging.size() + 1; i < path.size(); ++i)       // its subfolders first
+                    if (path[i] == L'/') {
+                        path[i] = L'\\';
+                        CreateDirectoryW(path.substr(0, i).c_str(), nullptr);
+                    }
+                if (error.empty() && !WriteAll(path, body)) error = "could not write " + file;
+            }
         }
         Deliver([e, error] {
             if (!error.empty()) return InstallFailed(e, error);

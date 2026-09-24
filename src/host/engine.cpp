@@ -258,6 +258,13 @@ Obj ObjectAt(int32_t index) {
     return chunk ? At<Obj>(chunk, (index % layout::kObjectArrayItemsPerChunk) * layout::kObjectArrayItemSizeBytes + layout::kObjectArrayItemObjectPointerOffset) : nullptr;
 }
 
+const uint8_t* ItemOf(int32_t index) {
+    if (!gObjects || index < 0 || index >= NumObjects()) return nullptr;
+    auto** chunks = At<uint8_t**>(gObjects, layout::kObjectArrayChunkListOffset);
+    uint8_t* chunk = chunks ? chunks[index / layout::kObjectArrayItemsPerChunk] : nullptr;
+    return chunk ? chunk + (index % layout::kObjectArrayItemsPerChunk) * layout::kObjectArrayItemSizeBytes : nullptr;
+}
+
 bool IsLive(Obj o) {
     // Objects are 8-byte aligned and never in the first 64 KB; anything else is not an object pointer.
     const uintptr_t a = reinterpret_cast<uintptr_t>(o);

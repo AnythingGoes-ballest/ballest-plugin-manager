@@ -8,7 +8,7 @@
 
 namespace plugins {
 
-constexpr const char* kHostVersion = "0.7.0";
+constexpr const char* kHostVersion = "0.8.0";
 
 void LoadAll(const std::wstring& pluginsDir);
 void Frame(float dt);
@@ -18,6 +18,8 @@ void OpenFolder();                          // shows the plugins folder in File 
 // Outside plugin callbacks only (the registry calls these from its own frame step).
 bool Load(const std::string& id);           // a plugin folder that appeared (installed); false if it cannot load
 void Unload(const std::string& id);         // stops it, frees its script and takes its UI off screen
+std::vector<std::string> Dependents(const std::string& id);    // loaded plugins that list it in their dependencies
+bool Restart(const std::string& id);        // starts a loaded plugin that is not running (its dependency is back)
 
 struct Info {
     std::string id, name, version, author, description, status;
@@ -32,6 +34,7 @@ int Current();                              // index of the plugin whose code is
 bool RecoverFromFault(const std::string& where);
 void CrashNext(const std::string& id);      // test hook: that plugin's next callback faults inside host code
 std::string CurrentId();
+std::wstring CurrentDir();                  // the running plugin's folder, or "" outside plugin code
 
 // Wraps game work a plugin asked the host for (pasting and selecting track pieces: measured at about 4.5 ms and 3 ms a
 // piece, and 535 ms for a first copy of 15 new piece types), so the game's time is not charged to the plugin's

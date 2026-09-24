@@ -6,6 +6,8 @@ When the game starts, the host looks at every folder in the plugins folder that 
 plugin's scripts into a module of their own, so plugins can't see each other's variables. Then it calls each
 plugin's `Main()`.
 
+Plugins that [depend on other plugins](#plugins-that-use-other-plugins) load after them.
+
 A plugin installed from the in-game browser loads straight away, without a restart. A plugin removed there is
 stopped and its windows disappear. A folder you create or edit by hand is picked up the next time the game starts.
 
@@ -57,6 +59,24 @@ game directly. The API covers:
 Installing and removing plugins, updating the host and changing other plugins' settings are for the plugin manager
 only.
 
+## Plugins that use other plugins
+
+A plugin can use functions another plugin offers. List that plugin's id under `dependencies` in
+[info.toml](reference/manifest.md), and import its functions by the plugin's id:
+
+```angelscript
+// info.toml: dependencies = ["cosmetic-kit"]
+import bool AddBall(const string &in, const string &in, const string &in, const string &in, const string &in) from "cosmetic-kit";
+```
+
+- Plugins load after the plugins they depend on. A plugin whose dependency isn't installed or has stopped doesn't
+  start; its status says `needs cosmetic-kit`.
+- Installing a plugin from the browser installs its dependencies first.
+- Removing or stopping a plugin also stops the plugins that depend on it.
+- An imported function runs as the plugin that offers it: its log lines, `Storage` and time budget are that plugin's.
+- Any global function can be imported; the offering plugin needs nothing special. Document the ones you mean others
+  to use.
+
 ## UI handles live as long as the plugin
 
 `UI::CreateWindow()`, `AddText()` and the rest return handles you keep in global variables. They stay valid for as
@@ -72,6 +92,16 @@ change.
 
 ## The game build
 
-The host only runs on the exact game build it was made for. On any other build it logs "unsupported game build" and
-stays off: the game runs as normal, just without plugins. After a game update, plugins come back once a plugin
-manager made for the new build is released.
+The host is measured on one game build. On a newer build it still tries to run: it looks up the few engine tables it
+needs in the new exe (logged as "game build ... is not the one the host was measured on"), and everything else is
+found by name as usual. Parts of the game a plugin relies on may have changed, so after a game update some things can
+stop working until a plugin manager made for the new build is released.
+
+If something goes wrong in the host's own code:
+
+- while a plugin was running, that plugin is stopped (status `stopped: crashed in host code (...)`) and the others
+  carry on;
+- otherwise the host turns itself off for the session ("the host crashed ...; plugins are off until the game
+  restarts") and the game carries on without plugins.
+
+It tries again on the next launch.

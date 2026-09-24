@@ -7,9 +7,12 @@ for changing the host itself. For writing plugins, start at [Your first plugin](
 
 1. The game imports `version.dll` and Windows loads ours from the game folder. It forwards every real export to
    `System32\version.dll`, so the game notices nothing.
-2. In the game process only, an init thread checks the exe is the exact build the host was measured against
-   (anything else: the host stays inactive), waits for the engine, and hooks the viewport client's per-frame
-   `Tick` by giving that one object a copy of its vtable. No game code is patched.
+2. In the game process only, an init thread checks the exe against the build the host was measured on. On that
+   build it uses the measured addresses; on another it finds the name pool, the object array and `ProcessEvent` by
+   their shapes in the exe's data (`eng::Locate`). It waits for the engine, and hooks the viewport client's
+   per-frame `Tick` by giving that one object a copy of its vtable. No game code is patched.
+   A vectored exception handler guards each host frame: a fault in the host's own code resumes at the start of the
+   frame and stops the plugin that was running, or turns the host off for the session when none was.
 3. Every frame, on the game thread: input, the world (player controller, map changes), races, replays, UI, the
    registry's installs and removals, then plugins.
 4. Plugins are compiled from `plugins/<id>/` into separate AngelScript modules. Each callback runs within a time
@@ -83,6 +86,8 @@ plugin's GitHub repo and lists the SHA-256 of every file the game downloads:
 | `src/host/settings.*` | `[Setting]` variables: read from the script's metadata, saved, edited, `OnSettingsChanged` |
 | `src/host/storage.*` | Per-plugin saved values |
 | `src/host/api.*` | The script API (all bindings in one file) |
+| `src/host/cosmetics.*` | Custom balls, hats and goal explosions: the Customize page's custom sections, what the player picks (the page's handler, wrapped), and wearing them on the player's own balls |
+| `src/host/models.*` | Models: shapes described in text, built as Geometry Script dynamic meshes and attached to a ball or hat slot |
 | `src/host/testchannel.*` | Test and measurement commands, from the console and from the tools below |
 | `src/proxy/` | The `version.dll` export stubs (generated from the system DLL's export table) |
 | `plugins/` | The bundled plugins: Plugin Manager (footer, console, plugin browser) and Hello World (an example) |
