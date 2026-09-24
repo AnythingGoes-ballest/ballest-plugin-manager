@@ -100,7 +100,9 @@ Obj Spawn(Obj cls, Obj outer) {
 
 bool SetObject(Obj o, const char* property, Obj value) { return eng::WriteBytes(o, property, &value, sizeof value); }
 
-// Struct and value properties copied byte for byte (brushes, margins, sizes: no memory of their own).
+// Value properties copied byte for byte: only for plain data (numbers, colours, margins, object pointers). Never for a
+// brush: an FSlateBrush holds a shared, reference-counted resource handle, so a byte copy shares it without counting it
+// and it is freed twice when both widgets go (measured: the game crashed after the menu was left and loaded again).
 void CopyProperty(Obj from, Obj to, const char* property) {
     const eng::Prop p = eng::FindProp(eng::ClassOf(from), property);
     if (!p || !from || !to) return;
@@ -110,6 +112,16 @@ void CopyProperty(Obj from, Obj to, const char* property) {
 
 // A slot's layout copied from another slot of the same kind through its setters: a slot added to a panel that is
 // already on screen has its Slate slot built at once, so written properties alone would not show.
+// A brush (Image.Brush, Border.Background) copied through the widget's own SetBrush, which copies it properly.
+void CopyBrush(Obj from, Obj to, const char* property) {
+    const eng::Prop p = eng::FindProp(eng::ClassOf(from), property);
+    if (!p || !to) return;
+    std::vector<uint8_t> brush(static_cast<size_t>(p.size));
+    if (!eng::ReadBytes(from, property, brush.data(), brush.size())) return;
+    Params set(eng::FunctionOn(to, "SetBrush"));
+    if (set.SetArg(0, brush.data(), brush.size())) eng::Invoke(to, set);
+}
+
 void CopySlot(Obj from, Obj to) {
     struct Margin {
         uint8_t bytes[16];
@@ -309,7 +321,7 @@ void BuildSection(Obj page, int tab) {
             w::SetText(copy, "custom");
         } else if (eng::IsA(content, eng::FindClass("Image"))) {
             copy = w::Spawn("Image", tree);
-            CopyProperty(content, copy, "Brush");
+            CopyBrush(content, copy, "Brush");
             CopyProperty(content, copy, "ColorAndOpacity");
         }
         if (!copy) continue;
@@ -317,7 +329,8 @@ void BuildSection(Obj page, int tab) {
     }
     // Grid: a Border like the collection's around a UniformGridPanel like it.
     Obj border = w::Spawn("Border", tree), grid = w::Spawn("UniformGridPanel", tree);
-    for (const char* p : {"Background", "BrushColor", "Padding", "HorizontalAlignment", "VerticalAlignment"}) CopyProperty(refBorder, border, p);
+    CopyBrush(refBorder, border, "Background");
+    for (const char* p : {"BrushColor", "Padding", "HorizontalAlignment", "VerticalAlignment"}) CopyProperty(refBorder, border, p);
     for (const char* p : {"SlotPadding", "MinDesiredSlotWidth", "MinDesiredSlotHeight"}) CopyProperty(refGrid, grid, p);
     w::AddChild(border, grid);
     Obj headerSlot = eng::Call(scroll, "AddChild", header).ReturnObj();
