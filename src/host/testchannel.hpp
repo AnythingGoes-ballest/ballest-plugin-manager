@@ -12,6 +12,7 @@
 //   open <map>                             load a map directly (skips the menu's level setup)
 //   functions <Class> | instances <Class> [fragment+fragment] | props <Class> [filter] | find <name fragment>
 //   struct <Class> <Function> | call <Class> <Function> [filter] | viewtarget | pov <leaderboard entry filter>
+//   watch <leaderboard entry filter> | materials [fragment] | replaycam <distance> <see-through 0|1>
 //   callx <Class> <Function> [filter] | i:5 | f:1.5 | d:1.5 | u8:3 | b:1 | s:str | t:text | n:name | o:Class,filter | v:x,y,z
 #pragma once
 #include <string>

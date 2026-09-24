@@ -231,6 +231,46 @@ void CallWithArgs(const std::string& cmd) {
     Report("callx " + eng::Describe(p.Fn()) + " on " + eng::PathOf(target) + (ok ? " ok" : " FAILED") + result);
 }
 
+// "materials [fragment]": loaded materials (UMaterial) whose blend mode is not opaque, with the mode, for finding one
+// to reuse. EBlendMode: 0 opaque, 1 masked, 2 translucent, 3 additive, 4 modulate.
+// "watch <leaderboard entry filter>": the game's replay camera follows that entry's ghost, which keeps playing in a
+// race after "pov": BP_MyPlayerController.Start_FreeCam, then its AC_GhostFollowCam is given the entry's GhostKey
+// (SetNativeGhostSource) and follows it. A long-running replay view for testing replay features.
+void Watch(const std::string& filter) {
+    const auto list = Instances("WBP_LeaderboardEntry_C", filter);
+    if (list.empty()) return Report("no leaderboard entry matching " + filter);
+    uint8_t key[96];
+    bool hasKey = false;
+    if (!eng::ReadBool(list.front(), "bHasGhostKey", &hasKey) || !hasKey || !eng::ReadBytes(list.front(), "GhostKey", key, sizeof key))
+        return Report("watch: no ghost key");
+    eng::Obj controller = game::PlayerController();
+    eng::Call(controller, "Start_FreeCam");
+    eng::Obj freeCam = eng::Call(controller, "GetViewTarget").ReturnObj();
+    eng::Obj followCam = eng::ReadObj(freeCam, "AC_GhostFollowCam");
+    eng::Obj ghosts = eng::Call(eng::FindCdo("SubsystemBlueprintLibrary"), "GetWorldSubsystem", controller,
+                                eng::FindClass("BallestGhostWorldSubsystem")).ReturnObj();
+    if (!followCam || !ghosts) return Report("watch: no follow camera or ghost subsystem");
+    eng::Params source(eng::FunctionOn(followCam, "SetNativeGhostSource"));
+    const bool ok = source.Set("Subsystem", ghosts) && source.Set("Key", key, sizeof key) && eng::Invoke(followCam, source);
+    eng::Call(followCam, "SetGhostFollowEnabled", uint8_t{1});
+    Report(std::string("watch -> ") + (ok && source.ReturnBool() ? "following" : "not following"));
+}
+
+void Materials(const std::string& fragment) {
+    eng::Obj cls = eng::FindClass("Material");
+    int shown = 0;
+    eng::ForEachObject([&](eng::Obj o) {
+        if (!eng::IsA(o, cls) || eng::IsDefaultObject(o)) return true;
+        uint8_t mode = 0;
+        if (!eng::ReadBytes(o, "BlendMode", &mode, 1) || mode == 0) return true;
+        const std::string path = eng::PathOf(o);
+        if (!fragment.empty() && path.find(fragment) == std::string::npos) return true;
+        Report("material " + std::to_string(mode) + " " + path);
+        return ++shown < 200;
+    });
+    Report("materials: " + std::to_string(shown) + " shown");
+}
+
 void ViewTarget() {
     eng::Obj controller = game::PlayerController();
     Report("controller " + eng::PathOf(controller) + " view target " + eng::PathOf(eng::Call(controller, "GetViewTarget").ReturnObj()));
@@ -291,6 +331,12 @@ void Run(const std::string& cmd) {
         {"callx", [](const Args&, const std::string& c) { CallWithArgs(c); }},
         {"viewtarget", [](const Args&, const std::string&) { ViewTarget(); }},
         {"pov", [](const Args& a, const std::string&) { Pov(Arg(a, 1)); }},
+        {"materials", [](const Args& a, const std::string&) { Materials(Arg(a, 1)); }},
+        {"watch", [](const Args& a, const std::string&) { Watch(Arg(a, 1)); }},
+        {"replaycam", [](const Args& a, const std::string&) {
+             replay::SetCameraDistance(std::atof(Arg(a, 1).c_str()));
+             replay::SetSeeThrough(Arg(a, 2) == "1");
+         }},
     };
     const Args words = Words(cmd);
     const auto it = words.empty() ? commands.end() : commands.find(words[0]);

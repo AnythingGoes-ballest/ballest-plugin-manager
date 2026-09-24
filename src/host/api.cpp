@@ -343,9 +343,11 @@ void EditorRotatePieces(const CScriptArray* ids, double cx, double cy, double cz
 }
 
 // --- Input, Replay -------------------------------------------------------------------------------------------------
-// While a text input has keyboard focus the keys are being typed there, so plugins see none of them.
-bool KeyPressed(int key) { return !ui::Typing() && input::Pressed(key); }
-bool KeyDown(int key) { return !ui::Typing() && input::Down(key); }
+// While a text input has keyboard focus the keys are being typed there, so plugins see none of them, except Escape,
+// which types nothing and is how a player leaves a menu.
+constexpr int kEscape = 0x1B;
+bool KeyPressed(int key) { return (!ui::Typing() || key == kEscape) && input::Pressed(key); }
+bool KeyDown(int key) { return (!ui::Typing() || key == kEscape) && input::Down(key); }
 
 void RegisterCore() {
     RegisterScriptArray(e, true);
@@ -569,6 +571,10 @@ void RegisterReplay() {
     Global("void Restart()", asFUNCTION(replay::Restart));
     Global("int CameraMode()", asFUNCTION(replay::CameraMode));
     Global("void SetCameraMode(int)", asFUNCTION(replay::SetCameraMode));
+    Global("double CameraDistance()", asFUNCTION(replay::CameraDistance));
+    Global("void SetCameraDistance(double)", asFUNCTION(replay::SetCameraDistance));
+    Global("bool SeeThrough()", asFUNCTION(replay::SeeThrough));
+    Global("void SetSeeThrough(bool)", asFUNCTION(replay::SetSeeThrough));
 }
 
 }  // namespace

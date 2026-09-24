@@ -16,6 +16,13 @@ void Restart();
 enum Camera { CameraDefault = 0, CameraFollow3D = 1, CameraFree = 2 };
 int CameraMode();
 void SetCameraMode(int mode);
+// How far the camera stays from the ball, in whole units: the replay camera's arm length (default mode) and the
+// chase distance (follow 3D). 0 is the game's own.
+double CameraDistance();
+void SetCameraDistance(double units);
+// Pieces between the camera and the ball turn to glass, and the camera is no longer pulled in by them.
+bool SeeThrough();
+void SetSeeThrough(bool on);
 
 // Test hook: a simulated replay (its own clock at 1x, restarting at the end) behind the same functions, for
 // testing replay plugins when no real replay can be started.

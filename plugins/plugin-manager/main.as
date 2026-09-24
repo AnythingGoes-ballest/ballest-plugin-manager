@@ -10,6 +10,8 @@
 //   console    the host log as it is written, and host commands (find, props, functions, ...; the full list is in
 //              src/host/testchannel.hpp): type one and press Enter, or click run. "show" filters the log: everything,
 //              only the commands typed here and their replies, the host, or one plugin.
+//   Escape goes up one level: a settings page back to the installed tab, a tab out of the menu, and closes the
+//   footer panel.
 //   settings   opened from a plugin's card: that plugin's [Setting] variables (a slider and a text box for a number
 //              with min and max, on/off for a bool, a text box otherwise, each with reset), and "reset position"
 //              when it has windows that can be dragged.
@@ -724,6 +726,15 @@ void UpdateSettings()
 
 void UpdateMenu()
 {
+    // Escape goes up one level: from a plugin's settings page back to the installed tab, from a tab out of the menu.
+    if (Input::Pressed(Input::Escape))
+    {
+        if (shownView == settingsView)
+            ShowView(installedView);
+        else
+            CloseMenu();
+        return;
+    }
     if (closeButton.Clicked())
     {
         CloseMenu();
@@ -756,6 +767,8 @@ void Update(float dt)
     }
     if (openButton.Clicked())
         OpenMenu();
+    else if (panel.visible && !menu.visible && Input::Pressed(Input::Escape))
+        panel.visible = false;
     if (panel.visible && Host::Time() - lastRefresh > 1.0)
         Refresh();
     if (menu.visible)

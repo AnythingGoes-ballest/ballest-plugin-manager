@@ -933,7 +933,7 @@ zBox.SetColor(0.0251f, 0.207f, 0.85f, 1);
 
 @@ Input
 The keyboard and mouse, read only while the game window has focus. While the player is typing in a plugin's text
-box, every key reads as up. Keys are `Input::Key` values: named keys (below), `Input::A` to `Input::Z`, and
+box, every key reads as up except `Input::Escape`, so Escape can still close a menu. Keys are `Input::Key` values: named keys (below), `Input::A` to `Input::Z`, and
 `Input::N0` to `Input::N9` for the number row.
 
 == Input::Pressed
@@ -1127,6 +1127,32 @@ The current camera mode: `Replay::Default`, `Replay::Follow3D` or `Replay::Free`
 --
 if (Replay::CameraMode() == Replay::Free)
     hintText.text = "right mouse to look, WASD to move, E/Q up and down";
+
+== Replay::CameraDistance
+How far the replay camera stays from the ball, in whole units, or `0` for the game's own (375 units).
+--
+distanceText.text = "" + int(Replay::CameraDistance());
+
+== Replay::SetCameraDistance
+Sets how far the camera stays from the ball, in whole units (a fraction is rounded). It's the length of the replay
+camera's arm in the default camera, and the chase distance in follow 3D. `0` goes back to the game's own.
+--
+// A slider from 150 to 1500 units
+if (distanceSlider.dragging)
+    Replay::SetCameraDistance(150 + distanceSlider.value * 1350);
+
+== Replay::SeeThrough
+Whether see-through is on.
+--
+seeThroughBox.checked = Replay::SeeThrough();
+
+== Replay::SetSeeThrough
+With `true`, anything between the camera and the ball turns to glass while it's in the way, and the default camera
+is no longer pushed in towards the ball by it. Pieces get their own look back a moment after they're clear. The free
+camera isn't affected.
+--
+if (seeThroughBox.Changed())
+    Replay::SetSeeThrough(seeThroughBox.checked);
 
 == Replay::SetCameraMode
 Sets the camera: `Replay::Default` (the game's own), `Replay::Follow3D` (behind the ball along its direction of
