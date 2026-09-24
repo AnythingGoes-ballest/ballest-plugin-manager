@@ -42,7 +42,24 @@ If the installer can't find the game, give it the folder:
 
 **Updating:** click **update plugin manager** in the game when it offers one.
 
-**Uninstalling:** delete `version.dll` and the `plugins` folder from the game folder above.
+## Uninstall
+
+Close the game. In Git Bash, from the `ballest-plugin-manager` folder:
+
+```bash
+./uninstall.sh
+```
+
+Removes the plugin manager and every plugin from the game folder. Your plugin settings and saved data are kept, in
+case you reinstall.
+
+```bash
+./uninstall.sh --purge
+```
+
+Does the same, and also deletes the saved plugin data.
+
+Add `--dry-run` to either to see what would be removed without removing anything.
 
 ## Develop
 
