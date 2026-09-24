@@ -1,6 +1,22 @@
 {
   "plugins": [
     {
+      "id": "create-extensions",
+      "name": "Create Extensions",
+      "description": "Track editor extras: whole-unit placement, placement distance, rotated copies, Tab between transform boxes.",
+      "author": "AnythingGoes",
+      "repo": "AnythingGoes-ballest/ballest-create-extensions",
+      "version": "0.1.0",
+      "commit": "ffe77b8e870dba3eb9c89bd229331df7bcd1e751",
+      "min_host": "0.6.0",
+      "icon": "icon.png",
+      "files": {
+        "info.toml": "d44e783e3e08ac3d546182c290950395f30de6834477edd01639e486a220690c",
+        "main.as": "40dcc1a07787ce6b56ca7a8888437d54585646495522539d30e377e3cdb86100",
+        "icon.png": "673495590b04fbc8b8a75af30e0eed74dc9b34ef11584f3e66fea362e53b74fe"
+      }
+    },
+    {
       "id": "grind-timer",
       "name": "Grind Timer",
       "description": "A green Trackmania-style timer of total time racing, with restarts from the beginning counted.",
@@ -34,18 +50,18 @@
     }
   ],
   "host": {
-    "version": "0.5.0",
+    "version": "0.6.0",
     "repo": "AnythingGoes-ballest/ballest-plugin-manager",
-    "commit": "bf4edbb8a91c2c846f6f9a21a687e0a013cf9d51",
-    "dll": "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/download/v0.5.0/version.dll",
-    "dll_sha256": "7fb80ed35b68ee6b772153aedc3074f4d810e1fa6e3927888d588ee205f1725c",
+    "commit": "a21a1a6008ca05db4e50717c309dc3767539bea5",
+    "dll": "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/download/v0.6.0/version.dll",
+    "dll_sha256": "57988645b9cef8fa4f45f9b7d2ddaec00b3c1fed52b33e3e87a65943ce3ff0ad",
     "files": {
       "plugins/hello-world/info.toml": "2c26b7bf59eba7c58eb83378ca9bc6502fc3582c9644b8b6b0f971e2df0c890a",
       "plugins/hello-world/main.as": "0ede43fb380faf78791230932c44260b8e53cc8fa76a2d5fabc2b0f4ab64ae2f",
       "plugins/plugin-manager/default-icon.png": "304d27462febbf15c8645b64ae6b01624e4a59e29e0304ffac1f28313a3ba362",
       "plugins/plugin-manager/icon.png": "fb60df477ecffe4942dc7500d2f4f6cb8b65d017bde68b49b81541c29f8e144e",
-      "plugins/plugin-manager/info.toml": "4f0e5a8fefd3a1b837f0413b9640d51121bb58e1be08889e8d9555e83f0fe5b3",
-      "plugins/plugin-manager/main.as": "a00b0476adbf776b126b3efba03a4d58a85c06bc6bc85ab40c62850ca537632f"
+      "plugins/plugin-manager/info.toml": "72722cf6e713b20c66965c3c1539656e85f26fba7e8e3eecc9df40b402255974",
+      "plugins/plugin-manager/main.as": "50c3f6f4d5b2c231f57a2f1556807c9262afa9610006255a2e65c960dc3ce473"
     }
   }
 }
