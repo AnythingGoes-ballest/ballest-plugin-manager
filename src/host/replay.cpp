@@ -25,8 +25,10 @@ bool gActive = false;
 double gLength = -1, gLengthCheckedAt = -100;
 
 int gMode = CameraDefault;
-int gAppliedFollow = -1;            // follow cam last set to: -1 untouched, 0 game default, 1 follow 3D
-eng::Weak gFreeCamera;              // our CameraActor while free mode is on
+eng::Weak gFreeCamera;              // our CameraActor while free or follow 3D mode is on
+int gCameraFor = -1;                // the mode our camera was made for
+Vec3 gBall{}, gDir{1, 0, 0};        // follow 3D: the ball last frame and the smoothed travel direction
+bool gChaseFresh = true;            // the next follow 3D frame snaps instead of easing
 double gYaw = 0, gPitch = 0;
 Vec3 gPos{};
 bool gLooking = false;
@@ -47,57 +49,15 @@ Obj GhostSubsystem() {
     return eng::Call(eng::FindCdo("SubsystemBlueprintLibrary"), "GetWorldSubsystem", controller, cls).ReturnObj();
 }
 
-// --- follow settings ---------------------------------------------------------------------------------------------
-// Measured values: the game's replay camera uses RotationSource 3 (KeepCurrent) with the mouse steering its
-// spring arm; following the ball's travel in 3D is RotationSource 1 with mouse control off.
-void ApplyFollowSettings(Obj followCam, bool follow3d) {
-    Obj arm = eng::ReadObj(followCam, "RuntimeManagedSpringArm");
-    const uint8_t source = follow3d ? 1 : 3;
-    eng::WriteBytes(followCam, "RotationSource", &source, 1);
-    eng::WriteBool(followCam, "bApplyPlayerControlRotationToManagedSpringArm", !follow3d);
-    if (!arm) return;
-    eng::WriteBool(arm, "bUsePawnControlRotation", !follow3d);
-    if (follow3d) {
-        // The arm keeps whatever angle the mouse left it at; zeroed so following points along the travel.
-        Params p(eng::FunctionOn(arm, "K2_SetRelativeRotation"));
-        p.Set("NewRotation", Rot{0, 0, 0});
-        eng::Invoke(arm, p);
-    }
-}
-
-bool FollowSettingsHeld(Obj followCam) {
-    uint8_t source = 0;
-    bool mouse = true, armControl = true;
-    eng::ReadBytes(followCam, "RotationSource", &source, 1);
-    eng::ReadBool(followCam, "bApplyPlayerControlRotationToManagedSpringArm", &mouse);
-    if (Obj arm = eng::ReadObj(followCam, "RuntimeManagedSpringArm")) eng::ReadBool(arm, "bUsePawnControlRotation", &armControl);
-    return source == 1 && !mouse && !armControl;
-}
-
-// The game configures the camera's spring arm again every time following re-engages (each replay restart, which
-// at high speed is every few seconds), putting the mouse back in control. Follow 3D is therefore checked every
-// frame and re-applied whenever the game has reset it. "Default" only undoes what this host set.
-void UpdateFollow(Obj followCam) {
-    if (!followCam) return;
-    const int want = gMode == CameraFollow3D ? 1 : 0;
-    if (want == 1 && !FollowSettingsHeld(followCam)) {
-        ApplyFollowSettings(followCam, true);
-        hostlog::Info(gAppliedFollow == 1 ? "replay camera: follow 3d re-applied (the game had reset it)" : "replay camera: follow 3d");
-    } else if (want == 0 && gAppliedFollow == 1) {
-        ApplyFollowSettings(followCam, false);
-        hostlog::Info("replay camera: game default");
-    }
-    gAppliedFollow = want;
-}
-
-// --- free camera -------------------------------------------------------------------------------------------------
-// A CameraActor of our own becomes the view target; the replay keeps playing behind it.
+// --- our camera --------------------------------------------------------------------------------------------------
+// A CameraActor of our own becomes the view target (free mode and follow 3D); the replay keeps playing behind it.
 bool SetViewTarget(Obj target) { return eng::Call(game::PlayerController(), "SetViewTargetWithBlend", target).Invoked(); }
 
 void DestroyFreeCamera() {
     if (Obj cam = eng::Get(gFreeCamera)) eng::Call(cam, "K2_DestroyActor");
     gFreeCamera = {};
     gLooking = false;
+    gChaseFresh = true;
 }
 
 bool SpawnFreeCamera() {
@@ -177,18 +137,82 @@ void MoveFreeCamera(float dt) {
     eng::Invoke(cam, move);
 }
 
+// --- follow 3D: a chase camera of our own ----------------------------------------------------------------------
+// The game's own follow settings were measured not to give a chase view on this build (2026-09-24: its spring-arm
+// reference is empty, and with every setting forced the view's yaw moved 0.3 degrees in 6 s of replay), so follow
+// 3D views the replay through the host's camera instead: behind the ball along its direction of travel, turning
+// and moving smoothly. The ball is where the game's follow cam puts its rig (GetCurrentSmoothedBaseTransform).
+constexpr double kChaseDistance = 450, kChaseHeight = 150, kChaseLookAbove = 40;
+constexpr double kTurnRate = 3.0;           // how fast the direction eases to the new one (1/s)
+constexpr double kFollowRate = 10.0;        // how fast the camera eases to its place behind the ball (1/s)
+constexpr double kJump = 1500;              // a move this long in one frame is a seek or restart: snap, no easing
+
+bool BallPosition(Obj followCam, Vec3* out) {
+    const Params p = eng::Call(followCam, "GetCurrentSmoothedBaseTransform");
+    size_t size = 0;
+    const uint8_t* t = p.Return(&size);
+    if (!p.Invoked() || !t || size != 96) return false;
+    std::memcpy(out, t + 32, sizeof *out);          // FTransform (doubles): rotation quat, then translation
+    return !(out->x == 0 && out->y == 0 && out->z == 0);
+}
+
+Vec3 Normalized(Vec3 v) {
+    const double len = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    return len > 1e-6 ? Vec3{v.x / len, v.y / len, v.z / len} : Vec3{1, 0, 0};
+}
+
+void MoveChaseCamera(float dt, Obj followCam) {
+    Obj cam = eng::Get(gFreeCamera);
+    Vec3 ball;
+    if (!cam || !followCam || !BallPosition(followCam, &ball) || dt <= 0) return;
+    const Vec3 step{ball.x - gBall.x, ball.y - gBall.y, ball.z - gBall.z};
+    const double moved = std::sqrt(step.x * step.x + step.y * step.y + step.z * step.z);
+    const bool snap = gChaseFresh || moved > kJump;
+    // Travel direction; steep climbs and drops are flattened so the camera never ends up straight above or below.
+    if (!snap && moved / dt > 50) {
+        Vec3 want = Normalized(step);
+        want.z = std::fmax(-0.6, std::fmin(0.6, want.z));
+        want = Normalized(want);
+        const double k = 1 - std::exp(-kTurnRate * dt);
+        gDir = Normalized({gDir.x + (want.x - gDir.x) * k, gDir.y + (want.y - gDir.y) * k, gDir.z + (want.z - gDir.z) * k});
+    }
+    gBall = ball;
+    const Vec3 place{ball.x - gDir.x * kChaseDistance, ball.y - gDir.y * kChaseDistance, ball.z - gDir.z * kChaseDistance + kChaseHeight};
+    if (snap) {
+        gPos = place;
+    } else {
+        const double k = 1 - std::exp(-kFollowRate * dt);
+        gPos = {gPos.x + (place.x - gPos.x) * k, gPos.y + (place.y - gPos.y) * k, gPos.z + (place.z - gPos.z) * k};
+    }
+    gChaseFresh = false;
+    const Vec3 look{ball.x - gPos.x, ball.y - gPos.y, ball.z + kChaseLookAbove - gPos.z};
+    constexpr double kDegrees = 180 / 3.14159265358979;
+    gYaw = std::atan2(look.y, look.x) * kDegrees;
+    gPitch = std::atan2(look.z, std::sqrt(look.x * look.x + look.y * look.y)) * kDegrees;
+    Params move(eng::FunctionOn(cam, "K2_SetActorLocationAndRotation"));
+    move.Set("NewLocation", gPos);
+    move.Set("NewRotation", Rot{gPitch, gYaw, 0});
+    move.Set("bTeleport", uint8_t{1});
+    eng::Invoke(cam, move);
+}
+
 void UpdateCamera(float dt, Obj viewTarget) {
     Obj replayCam = eng::Get(gReplayCam);
     if (!gActive || !replayCam) {
         if (eng::Get(gFreeCamera)) DestroyFreeCamera();
         return;
     }
-    UpdateFollow(FollowCamOf(replayCam));
-    if (gMode == CameraFree) {
+    if (gMode == CameraFree || gMode == CameraFollow3D) {
+        if (gMode != gCameraFor) {                  // switching between free and follow: start the new one afresh
+            DestroyFreeCamera();
+            gCameraFor = gMode;
+            gChaseFresh = true;
+        }
         if (!eng::Get(gFreeCamera)) SpawnFreeCamera();
         Obj cam = eng::Get(gFreeCamera);
         if (cam && viewTarget != cam) SetViewTarget(cam);
-        MoveFreeCamera(dt);
+        if (gMode == CameraFree) MoveFreeCamera(dt);
+        else MoveChaseCamera(dt, FollowCamOf(replayCam));
     } else if (eng::Get(gFreeCamera)) {
         SetViewTarget(replayCam);
         DestroyFreeCamera();
@@ -227,7 +251,7 @@ void Frame(float dt) {
         gGeneration = game::Generation();
         gReplayCam = gFreeCamera = {};
         gActive = false;
-        gAppliedFollow = -1;
+        gCameraFor = -1;
         gLength = -1;
     }
     if (!game::PlayerController()) return;

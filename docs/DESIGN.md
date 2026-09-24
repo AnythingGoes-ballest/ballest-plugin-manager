@@ -146,6 +146,13 @@ wants = ["replay.control", "camera.control", "ui.overlay"]
 - Permissions: each service checks the caller's granted permissions. Sensitive ones (plugin management, physics changes) need an explicit grant.
 - Trust tiers: section 7.
 
+- The plugin manager's menu (plugin manager 0.5.0): a header of tabs (installed, browse, console) over one view each,
+  one card per plugin, and a settings page per plugin opened from its card. Built on `Window.StartHeader`,
+  `StartCard`/`EndCard` and `SetCardBackground` (host 0.7.0): a card is a Border whose Background brush is drawn as
+  a rounded box (DrawAs RoundedBox, OutlineSettings.CornerRadii, measured on this build) around a VerticalBox of its
+  rows. Widget colours are linear (a linear 0.05 measured as about 0.25 on screen), so the menu's colours are linear
+  values of the intended ones.
+
 ### 3.7 Registry and plugin browser (built 2026-09-23)
 - `registry.json` in this repo lists installable plugins, each pinned to a full commit SHA of its own GitHub repo
   with a SHA-256 per file (`tools/registry.py add` writes entries from a tag).

@@ -82,6 +82,7 @@ struct Widget {
     bool backgroundDirty = false;
     Color color{1, 1, 1, 1};
     bool colorDirty = false;
+    bool colorSet = false;              // a colour was given (check box labels keep white otherwise)
     bool clickPending = false, hovered = false, wasPressed = false;         // buttons
     float value = 0;                                                        // slider, 0..1
     bool dragging = false;
@@ -127,8 +128,12 @@ struct Window {
     float screenWidth = 0, screenHeight = 0;    // fraction of the screen covered, centred; 0 = fit the content
     float sidebarWidth = 0;                     // 0 = no sidebar
     bool addingToSidebar = false;
-    std::vector<int> rowView{0};                // the view each row belongs to
+    std::vector<int> rowView{0};                // the view each row belongs to; -1 for the header
     std::vector<bool> rowRetired{false};        // rows of a cleared view
+    std::vector<int> rowCard{-1};               // the card each row is in, or -1
+    int openCard = -1;                          // the card new rows go into, or -1
+    int cards = 0;
+    Color cardBackground{0.12f, 0.13f, 0.16f, 1};
     int addRow = 0;                             // the row new widgets go into
     int views = 1;
     int shownView = 0;                          // the view on screen
@@ -150,6 +155,10 @@ void StartMain(Window* w);              // ... and after this go back into the r
 int StartView(Window* w);               // widgets added after this go into a new view; returns its number
 void ShowView(Window* w, int view);
 void ClearView(Window* w, int view);    // retires the view's widgets; widgets added after this go into it
+void StartHeader(Window* w);            // rows added after this sit above the views, shown with every view,
+                                        // until StartView
+void StartCard(Window* w);              // rows added after this share one rounded box, until EndCard
+void EndCard(Window* w);
 void SetMovable(Window* w, bool movable, const std::string& pluginId);
 void ResetPositions(const std::string& pluginId);   // movable windows of a plugin back where the plugin put them
 bool HasMovable(const std::string& pluginId);

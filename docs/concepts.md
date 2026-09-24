@@ -27,8 +27,8 @@ why the time budget below exists.
 Each callback has a time budget, 50 milliseconds unless `timeout` in `info.toml` says otherwise. If a callback is
 still running when it runs out, the host **stops the plugin** for the rest of the session:
 
-- its status becomes `stopped: exceeded its 50 ms budget` (shown in the plugin manager's **plugins** list and in the
-  log)
+- its status becomes `stopped: exceeded its 50 ms budget` (shown on its card in the plugin manager's **installed** tab, and in
+  the log)
 - its windows, panels and footer buttons are hidden, so nothing dead is left on screen
 - the game and the other plugins carry on
 
@@ -66,7 +66,7 @@ change.
 
 ## Turning plugins off
 
-- One plugin: remove it in the plugin browser, or delete its folder.
+- One plugin: **remove** on its card in the **installed** tab, or delete its folder.
 - All plugins: create an empty file named `DISABLED` in the plugins folder.
 - The whole plugin manager: delete `version.dll` from the game folder.
 

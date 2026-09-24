@@ -41,6 +41,9 @@ struct Snapshot {
     std::vector<Quat> rotations;
     Vec3 center;
     bool active = false, turned = false;
+    Quat lastTurn{0, 0, 0, 1};          // the turn at the last frame of the drag
+    int settleFrames = 0;               // after the release: frames left to keep the pieces about the centre
+    bool reportedRelease = false;
 };
 Snapshot gRotation;
 int gRotationFocusFrames = 0;           // a rotation box had focus this recently (typed rotations)
@@ -178,9 +181,41 @@ bool RotationBoxFocused() {
     return false;
 }
 
+// The snapshot's pieces turned by `turn` about its centre. Returns how far the first piece was from that place.
+double PlaceAboutCenter(const Quat& turn) {
+    double moved = 0;
+    for (size_t i = 0; i < gRotation.ids.size(); ++i) {
+        const Vec3& from = gRotation.locations[i];
+        const Vec3 offset = RotateVector(turn, {from.x - gRotation.center.x, from.y - gRotation.center.y, from.z - gRotation.center.z});
+        const Vec3 place{gRotation.center.x + offset.x, gRotation.center.y + offset.y, gRotation.center.z + offset.z};
+        if (i == 0) {
+            Vec3 now;
+            if (Location(gRotation.ids[i], &now)) moved = std::sqrt((now.x - place.x) * (now.x - place.x) + (now.y - place.y) * (now.y - place.y) + (now.z - place.z) * (now.z - place.z));
+        }
+        SetLocation(gRotation.ids[i], place);
+        SetRotation(gRotation.ids[i], ToRot(Multiply(turn, gRotation.rotations[i])));
+    }
+    return moved;
+}
+
 // While the player rotates two or more pieces, the editor turns them about the last selected one. From the moment a
 // rotation starts, each frame's turn (read from the first piece's rotation) is re-applied about the centre instead.
+// When the mouse is let go the editor applies its own result (the turn about its pivot) once more, so for a few
+// frames after the release the pieces are put back about the centre with the drag's last turn, then selected again
+// so the editor's pivot follows.
 void RotateAboutCenter() {
+    if (gRotation.settleFrames > 0) {
+        const double moved = PlaceAboutCenter(gRotation.lastTurn);
+        if (moved > 0.01 && !gRotation.reportedRelease) {
+            hostlog::Info("editor: after the release the editor moved the pieces " + std::to_string(moved) + " units; put back about the centre");
+            gRotation.reportedRelease = true;
+        }
+        if (--gRotation.settleFrames == 0) {
+            Select(gRotation.ids);
+            gRotation.active = false;
+        }
+        return;
+    }
     if (!gRotateAroundCenter) {
         gRotation.active = false;
         return;
@@ -190,7 +225,12 @@ void RotateAboutCenter() {
     const bool rotating = input::Down(kLeftMouse) || gRotationFocusFrames > 0 || gForceRotateContext;
     const auto ids = Selection();
     if (!rotating || ids.size() < 2) {
-        if (gRotation.active && gRotation.turned) Select(gRotation.ids);    // the editor's pivot catches up
+        if (gRotation.active && gRotation.turned) {
+            gRotation.settleFrames = 10;
+            gRotation.reportedRelease = false;
+            PlaceAboutCenter(gRotation.lastTurn);
+            return;
+        }
         gRotation.active = false;
         return;
     }
@@ -216,12 +256,8 @@ void RotateAboutCenter() {
     const Quat turn = Multiply(ToQuat(now), Inverse(gRotation.rotations[0]));
     if (std::fabs(std::fabs(turn.w) - 1.0) < 1e-9) return;           // not turned (a move, or nothing)
     gRotation.turned = true;
-    for (size_t i = 0; i < ids.size(); ++i) {
-        const Vec3& from = gRotation.locations[i];
-        const Vec3 offset = RotateVector(turn, {from.x - gRotation.center.x, from.y - gRotation.center.y, from.z - gRotation.center.z});
-        SetLocation(ids[i], {gRotation.center.x + offset.x, gRotation.center.y + offset.y, gRotation.center.z + offset.z});
-        SetRotation(ids[i], ToRot(Multiply(turn, gRotation.rotations[i])));
-    }
+    gRotation.lastTurn = turn;
+    PlaceAboutCenter(turn);
 }
 
 }  // namespace

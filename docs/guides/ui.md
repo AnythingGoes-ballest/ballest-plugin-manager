@@ -87,40 +87,55 @@ when they can be clicked.
 ## Movable windows
 
 Set `movable` after placing the window, and the player can drag it whenever the cursor is on screen. Where they
-leave it is saved, and **reset position** in the plugin manager's settings puts it back where you placed it.
+leave it is saved, and **reset position** on the plugin's settings page puts it back where you placed it.
 
 ```cpp
 window.SetOffset(40, 40);
 window.movable = true;
 ```
 
-## Menus: sidebars and views
+## Menus: a header, views and cards
 
-For something bigger, like the plugin manager's own menu, a window can have a sidebar and several views. Only one
-view shows at a time:
+For something bigger, like the plugin manager's own menu, a window can have a **header** (rows shown above every
+view, for tabs), several **views** (only one shows at a time) and **cards** (rows grouped in a rounded box):
 
 ```cpp
 window.SetScreenSize(0.6f, 0.7f);           // 60% by 70% of the screen
 window.SetBlocksClicks(true);               // clicks never reach the game underneath
 window.zOrder = 500;                        // in front of other windows (default 100)
+window.SetCardBackground(0.012f, 0.014f, 0.019f, 1);
 
-window.StartSidebar(220);
-UI::Button@ statsNav = window.AddButton("stats");
-UI::Button@ optionsNav = window.AddButton("options");
-window.StartMain();
+window.StartHeader();                       // the tabs, shown with every view
+UI::Button@ statsTab = window.AddButton("stats");
+UI::Button@ optionsTab = window.AddButton("options");
 
-int statsView = window.StartView();
-window.AddText("stats", 28);
+int statsView = window.StartView();         // the header ends here
+window.StartCard();
+window.AddText("Best time", 19);
+window.AddSpace(0);
+window.AddText("0:42.17", 19);
+window.EndCard();
+
 int optionsView = window.StartView();
-window.AddText("options", 28);
+window.StartCard();
+window.AddText("options go here", 19);
+window.EndCard();
 window.ShowView(statsView);
 
 // in Update:
-if (optionsNav.Clicked())
+if (optionsTab.Clicked())
     window.ShowView(optionsView);
 ```
 
-`ClearView(n)` empties a view so you can fill it again, for example when a list changes.
+`ClearView(n)` empties a view so you can fill it again, for example when a list changes. A window can also have a
+sidebar (`StartSidebar(width)`, then `StartMain()`) for navigation down the left instead of tabs.
+
+## Colours
+
+Colours are red, green, blue and opacity from 0 to 1, in **linear** values: the game brightens them on screen, so a
+linear `0.05` shows as roughly `0.25`. To match a colour picked on screen (0 to 1 per channel, `c`), use
+`c / 12.92` for `c` up to `0.04`, else `((c + 0.055) / 1.055) ^ 2.4`. A near-black window background is around
+`0.005`.
 
 ## Text boxes and typing
 

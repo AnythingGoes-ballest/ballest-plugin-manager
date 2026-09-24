@@ -2,7 +2,7 @@
 
 The Ballest plugin manager lets anyone add features to **Ballest of Them All** with small scripts called plugins. A
 timer, replay controls, extra track editor tools: each is a plugin. Players install them from inside the game
-(footer **plugins** > **open** > **plugins**), and they start straight away, with no restart.
+(footer **plugins** > **open** > **browse**), and they start straight away, with no restart.
 
 Plugins are written in [AngelScript](https://www.angelcode.com/angelscript/), a small scripting language that looks
 like C++ or C#. You don't need a compiler, Visual Studio or any engine tools. A text editor is enough.
@@ -53,4 +53,4 @@ A folder in the game's `plugins` folder with two files:
 - [Create Extensions](https://github.com/AnythingGoes-ballest/ballest-create-extensions): track editor tools and a
   section docked in the editor's details panel.
 - [Plugin Manager](https://github.com/AnythingGoes-ballest/ballest-plugin-manager/tree/main/plugins/plugin-manager):
-  the plugin browser, settings screen and console. This is the largest example.
+  the plugin browser, settings pages and console, built with cards and a tab header. This is the largest example.

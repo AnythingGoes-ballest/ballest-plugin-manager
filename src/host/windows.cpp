@@ -4,6 +4,7 @@
 // after a map change or a layout change. Switching views only changes visibility.
 #include <windows.h>
 
+#include <cctype>
 #include <cstdlib>
 #include <map>
 
@@ -186,7 +187,8 @@ Obj BuildWidget(Obj tree, Widget& item) {
             eng::Call(box, "SetIsChecked", static_cast<uint8_t>(item.checked));
             w::SetFontSize(text, item.size);
             w::SetText(text, item.text);
-            w::SetTextColor(text, kWhite);
+            w::SetTextColor(text, item.colorSet ? item.color : kWhite);
+            item.colorDirty = false;
             w::SetVisibility(text, w::kHitTestInvisible);
             w::AddToRow(row, box, 0);
             w::AddToRow(row, text, 4);
@@ -281,7 +283,11 @@ void Build(Window& win) {
         w::AddChild(border, content);
     }
 
-    // One VerticalBox per view, each taking all the height; only the shown view is visible.
+    // The header (rows of view -1, shown with every view) above one VerticalBox per view, each taking all the
+    // height; only the shown view is visible.
+    Obj headerBox = w::Spawn("VerticalBox", tree);
+    if (!headerBox) return;
+    if (Obj slot = eng::Call(column, "AddChildToVerticalBox", headerBox).ReturnObj()) eng::Call(slot, "SetPadding", w::Margin{0, 0, 0, 12});
     std::vector<Obj> viewBoxes;
     for (int v = 0; v < win.views; ++v) {
         Obj box = w::Spawn("VerticalBox", tree);
@@ -290,18 +296,47 @@ void Build(Window& win) {
         win.viewBoxes.push_back(eng::MakeWeak(box));
     }
 
-    // A row that holds something with a fill height (a text area of height 0) takes the leftover height.
+    // A row that holds something with a fill height (a text area of height 0) takes the leftover height. The rows
+    // of a card go into that card's column, inside a rounded box; the card sits in the view like one row.
     std::vector<Obj> rows(win.rowView.size(), nullptr);
-    std::vector<int> rowsInView(static_cast<size_t>(win.views), 0);
+    std::vector<int> rowsInView(static_cast<size_t>(win.views) + 1, 0);    // [0] is the header, [v + 1] view v
+    std::vector<Obj> cardColumns(static_cast<size_t>(win.cards), nullptr), cardSlots(static_cast<size_t>(win.cards), nullptr);
+    std::vector<int> rowsInCard(static_cast<size_t>(win.cards), 0);
     for (size_t r = 0; r < rows.size(); ++r) {
         if (win.rowRetired[r]) continue;
         Obj row = w::Spawn("HorizontalBox", tree);
-        Obj slot = eng::Call(viewBoxes[static_cast<size_t>(win.rowView[r])], "AddChildToVerticalBox", row).ReturnObj();
+        const size_t viewSlot = static_cast<size_t>(win.rowView[r] + 1);
+        Obj parent = win.rowView[r] < 0 ? headerBox : viewBoxes[viewSlot - 1];
+        const int card = win.rowCard[r];
+        bool firstInParent = rowsInView[viewSlot] == 0;
+        if (card >= 0) {
+            Obj& cardColumn = cardColumns[static_cast<size_t>(card)];
+            if (!cardColumn) {
+                Obj box = w::Spawn("Border", tree);
+                cardColumn = w::Spawn("VerticalBox", tree);
+                if (!box || !cardColumn) return;
+                w::RoundCorners(box, 10);
+                eng::Call(box, "SetBrushColor", win.cardBackground);
+                eng::Call(box, "SetPadding", w::Margin{14, 10, 14, 10});
+                w::AddChild(box, cardColumn);
+                Obj cardSlot = eng::Call(parent, "AddChildToVerticalBox", box).ReturnObj();
+                if (!cardSlot) return;
+                cardSlots[static_cast<size_t>(card)] = cardSlot;
+                if (rowsInView[viewSlot]++ > 0) eng::Call(cardSlot, "SetPadding", w::Margin{0, 8, 0, 0});
+            }
+            parent = cardColumn;
+            firstInParent = rowsInCard[static_cast<size_t>(card)]++ == 0;
+        } else {
+            rowsInView[viewSlot]++;
+        }
+        Obj slot = eng::Call(parent, "AddChildToVerticalBox", row).ReturnObj();
         if (!slot) return;
-        if (rowsInView[static_cast<size_t>(win.rowView[r])]++ > 0) eng::Call(slot, "SetPadding", w::Margin{0, 8, 0, 0});
+        if (!firstInParent) eng::Call(slot, "SetPadding", w::Margin{0, card >= 0 ? 4.0f : 8.0f, 0, 0});
         for (const auto& item : win.items)
-            if (!item->retired && !item->inSidebar && item->row == static_cast<int>(r) && item->kind == Kind::TextArea && item->height <= 0)
+            if (!item->retired && !item->inSidebar && item->row == static_cast<int>(r) && item->kind == Kind::TextArea && item->height <= 0) {
                 w::FillSlot(slot);
+                if (card >= 0) w::FillSlot(cardSlots[static_cast<size_t>(card)]);     // the card takes the height too
+            }
         rows[r] = row;
     }
     std::vector<int> placedInRow(rows.size(), 0);
@@ -450,6 +485,10 @@ void Sync(Widget& item) {
         case Kind::Space:
             break;
         case Kind::CheckBox: {
+            if (item.colorDirty) {
+                w::SetTextColor(eng::Get(item.label), item.color);
+                item.colorDirty = false;
+            }
             const bool now = eng::Call(main, "IsChecked").ReturnBool();
             if (now != item.shownChecked) {             // the player clicked it
                 item.checked = item.shownChecked = now;
@@ -513,6 +552,7 @@ namespace {
 void AddRow(Window* win, int view) {
     win->rowView.push_back(view);
     win->rowRetired.push_back(false);
+    win->rowCard.push_back(win->openCard);
     win->addRow = static_cast<int>(win->rowView.size()) - 1;
     win->layoutDirty = true;
 }
@@ -522,6 +562,7 @@ void NewRow(Window* win) { AddRow(win, win->rowView[static_cast<size_t>(win->add
 
 int StartView(Window* win) {
     win->addingToSidebar = false;
+    win->openCard = -1;
     AddRow(win, win->views++);
     return win->views - 1;
 }
@@ -537,7 +578,37 @@ void ClearView(Window* win, int view) {
     for (auto& item : win->items)
         if (!item->inSidebar && win->rowView[static_cast<size_t>(item->row)] == view) item->retired = true;
     win->addingToSidebar = false;
+    win->openCard = -1;
     AddRow(win, view);
+}
+
+bool RowEmpty(const Window* win, int row) {
+    for (const auto& item : win->items)
+        if (!item->retired && !item->inSidebar && item->row == row) return false;
+    return true;
+}
+
+void StartHeader(Window* win) {
+    win->addingToSidebar = false;
+    win->openCard = -1;
+    AddRow(win, -1);
+}
+
+void StartCard(Window* win) {
+    win->addingToSidebar = false;
+    win->openCard = win->cards++;
+    const int view = win->rowView[static_cast<size_t>(win->addRow)];
+    if (RowEmpty(win, win->addRow) && win->rowCard[static_cast<size_t>(win->addRow)] < 0)
+        win->rowCard[static_cast<size_t>(win->addRow)] = win->openCard;    // the empty row just started becomes the card's
+    else
+        AddRow(win, view);
+    win->layoutDirty = true;
+}
+
+void EndCard(Window* win) {
+    if (win->openCard < 0) return;
+    win->openCard = -1;
+    AddRow(win, win->rowView[static_cast<size_t>(win->addRow)]);
 }
 
 void StartSidebar(Window* win, float width) {
@@ -646,7 +717,8 @@ void Frame() {
             for (auto& item : win.items) {
                 if (item->retired) continue;
                 // Widgets of hidden views are not synced; their text inputs cannot have focus.
-                if (!item->inSidebar && win.rowView[static_cast<size_t>(item->row)] != win.shownView) {
+                const int view = win.rowView[static_cast<size_t>(item->row)];
+                if (!item->inSidebar && view >= 0 && view != win.shownView) {
                     item->focused = false;
                     continue;
                 }
@@ -679,10 +751,19 @@ void RemoveOwner(int owner) {
     }
 }
 
+// "label" is the first button with that label; "label#n" the nth (from 1), for cards that repeat a label.
 bool SimulateClick(const std::string& label) {
+    std::string wanted = label;
+    int nth = 1;
+    const size_t hash = label.rfind('#');
+    if (hash != std::string::npos && hash + 1 < label.size() && std::isdigit(static_cast<unsigned char>(label[hash + 1]))) {
+        wanted = label.substr(0, hash);
+        nth = std::atoi(label.c_str() + hash + 1);
+    }
     for (auto& win : gWindows)
         for (auto& item : win->items)
-            if (!item->retired && (item->kind == Kind::Button || item->kind == Kind::IconButton) && (item->text == label || label == "icon"))
+            if (!item->retired && (item->kind == Kind::Button || item->kind == Kind::IconButton) && (item->text == wanted || wanted == "icon") &&
+                --nth == 0)
                 return item->clickPending = true;
     return false;
 }

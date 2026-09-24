@@ -1,8 +1,8 @@
 # Settings
 
-Settings are global variables with a `[Setting]` tag, the same way Openplanet does them. The plugin manager's
-**settings** screen (footer **plugins** > **open** > **settings**) shows them. It saves the player's changes and
-tells your plugin about them.
+Settings are global variables with a `[Setting]` tag, the same way Openplanet does them. Each plugin with settings
+gets its own settings page in the plugin manager: footer **plugins** > **open** > **installed**, then **settings** on
+the plugin's card. The page saves the player's changes and tells your plugin about them.
 
 ```cpp
 [Setting name="Time size" min=16 max=160 description="Height of the time, in pixels"]
@@ -32,10 +32,10 @@ Numbers are kept between `min` and `max`. Allowed types: `bool`, `int`, `uint`, 
 
 | Attribute | Meaning |
 |---|---|
-| `name="..."` | What the settings screen calls it. Without it, the variable's name is used. |
+| `name="..."` | What the settings page calls it. Without it, the variable's name is used. |
 | `description="..."` | A line of explanation under the name. |
 | `min=` and `max=` | The allowed range. With both, the setting gets a slider. |
-| `hidden` | Saved, but not shown on the settings screen. Useful for values your plugin sets itself. |
+| `hidden` | Saved, but not shown on the settings page. Useful for values your plugin sets itself. |
 
 ## Reacting to changes
 

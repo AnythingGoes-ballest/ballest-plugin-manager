@@ -167,15 +167,15 @@ def plugin_browser(mirrored):
     c = Cursor()
     command("click open")
     check("menu opens again", c.wait(r"\[plugin-manager\] menu opened", 10))
-    command("click window:plugins", 1.0)
+    command("click window:installed", 1.0)
     c = Cursor()
     command("state", 0.5)
     state = c.wait(r"test: state", 5) or ""
-    check("plugins view lists the installed plugins as cards", "text[Plugin Manager" in state and "text[Hello World" in state)
+    check("installed tab lists the installed plugins as cards", "text[Plugin Manager]" in state and "text[Hello World]" in state)
     if mirrored:
         check("registry read from the local copy", any(re.search(r"registry: \d+ plugin\(s\) from file:", l) for l in lines()))
-        # Start from a known state whatever an earlier run left: both registry plugins installed. The grind timer's
-        # card then comes first, so the first "remove" button is its.
+        # Start from a known state whatever an earlier run left: both registry plugins installed. The first card with
+        # a remove button (plugins load in folder order after the plugin manager) is then a registry plugin.
         for plugin in ("grind-timer", "replay-manager"):
             if not (GAME_PLUGINS / plugin).exists():
                 c = Cursor()
@@ -183,18 +183,26 @@ def plugin_browser(mirrored):
                 c.wait(rf"registry: installed {plugin}", 20)
         screenshot("regression_browser")
         c = Cursor()
-        command("click remove")      # the first card with a remove button: the grind timer
-        check("remove takes the plugin out straight away", c.wait(r"\[grind-timer\] unloaded", 10) and c.wait(r"registry: removed grind-timer", 10))
-        check("its folder is gone", not (GAME_PLUGINS / "grind-timer").exists())
+        command("click remove#1")
+        removed = c.wait(r"registry: removed ([\w-]+)", 10)
+        victim = re.search(r"registry: removed ([\w-]+)", removed).group(1) if removed else ""
+        check("remove on a card takes the plugin out straight away", bool(victim) and any(f"[{victim}] unloaded" in l for l in lines()))
+        check("its folder is gone", bool(victim) and not (GAME_PLUGINS / victim).exists())
+        command("click window:browse", 1.0)
         c = Cursor()
         click_when_there("install")
-        check("install downloads, verifies and starts it", c.wait(r"registry: installed grind-timer", 20) and c.wait(r"\[grind-timer\] loaded", 5))
-    if (GAME_PLUGINS / "grind-timer").exists():
-        command("click window:settings", 1.0)
-        c = Cursor()
-        command("state", 0.5)
-        state = c.wait(r"test: state", 5) or ""
-        check("settings view lists the Grind Timer's settings", "text[Grind Timer]" in state and "text[Time size" in state)
+        check("install from the browse tab downloads, verifies and starts it",
+              bool(victim) and c.wait(rf"registry: installed {victim}", 20) and c.wait(rf"\[{victim}\] loaded", 5))
+        command("click window:installed", 1.0)
+    c = Cursor()
+    command("click settings#1", 1.0)
+    command("state", 0.5)
+    state = c.wait(r"test: state", 5) or ""
+    check("a card's settings button opens that plugin's settings page", " settings]" in state and any(f"text[{name}]" in state for name in ("Placement distance", "Time size", "Message")))
+    c = Cursor()
+    command("click window:console", 1.0)
+    command("state", 0.5)
+    check("console tab opens", bool(c.wait(r"test: state", 5)))
     c = Cursor()
     command("click close")
     check("menu closes", c.wait(r"\[plugin-manager\] menu closed", 5))

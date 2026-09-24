@@ -277,10 +277,21 @@ void InputClearOnSubmit(ui::Widget* w, bool on) { w->clearOnSubmit = on; }
 bool CheckGet(ui::Widget* w) { return w->checked; }
 void CheckSet(ui::Widget* w, bool on) { w->checked = on; }
 bool CheckChanged(ui::Widget* w) { return TakeFlag(w, &ui::Widget::changedPending); }
+void CheckColor(ui::Widget* w, float r, float g, float b, float a) {
+    w->color = {r, g, b, a};
+    w->colorSet = w->colorDirty = true;
+}
 ui::Widget* WinCheckBox(ui::Window* w, const std::string& label, float size) {
     ui::Widget* box = ui::AddWidget(w, ui::Kind::CheckBox, label, 0);
     box->size = size;
     return box;
+}
+void WinStartHeader(ui::Window* w) { ui::StartHeader(w); }
+void WinStartCard(ui::Window* w) { ui::StartCard(w); }
+void WinEndCard(ui::Window* w) { ui::EndCard(w); }
+void WinCardBackground(ui::Window* w, float r, float g, float b, float a) {
+    w->cardBackground = {r, g, b, a};
+    w->layoutDirty = true;
 }
 void WinDockInEditorDetails(ui::Window* w) {
     w->dock = ui::Dock::EditorDetails;
@@ -451,6 +462,10 @@ void RegisterUi() {
     Method("Window", "void SetBlocksClicks(bool)", asFUNCTION(WinBlocksClicks));
     Method("Window", "CheckBox@ AddCheckBox(const string &in label, float size = 16)", asFUNCTION(WinCheckBox));
     Method("Window", "void DockInEditorDetails()", asFUNCTION(WinDockInEditorDetails));
+    Method("Window", "void StartHeader()", asFUNCTION(WinStartHeader));
+    Method("Window", "void StartCard()", asFUNCTION(WinStartCard));
+    Method("Window", "void EndCard()", asFUNCTION(WinEndCard));
+    Method("Window", "void SetCardBackground(float, float, float, float)", asFUNCTION(WinCardBackground));
     Method("Window", "void set_zOrder(int) property", asFUNCTION(WinSetZOrder));
     Method("Window", "int get_zOrder() property", asFUNCTION(WinGetZOrder));
     Method("Window", "void set_movable(bool) property", asFUNCTION(WinSetMovable));
@@ -496,6 +511,7 @@ void RegisterUi() {
     Method("CheckBox", "bool get_checked() property", asFUNCTION(CheckGet));
     Method("CheckBox", "void set_checked(bool) property", asFUNCTION(CheckSet));
     Method("CheckBox", "bool Changed()", asFUNCTION(CheckChanged));
+    Method("CheckBox", "void SetColor(float, float, float, float)", asFUNCTION(CheckColor));
     Method("CheckBox", "void set_visible(bool) property", asFUNCTION(SetWidgetVisible));
     Method("CheckBox", "bool get_visible() property", asFUNCTION(GetWidgetVisible));
 }

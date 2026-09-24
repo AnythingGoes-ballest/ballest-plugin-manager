@@ -211,7 +211,7 @@ if (Plugins::HostUpdateState() == "restart")
 
 @@ Settings
 Every loaded plugin's `[Setting]` variables, as a flat list. Index `i` runs from `0` to `Count() - 1`. A plugin
-normally just reads and assigns its own setting variables; these functions are for building a settings screen.
+normally just reads and assigns its own setting variables; these functions are for building a settings page.
 `Set` and `Reset` are for the plugin manager only. See [Settings](../../guides/settings.md).
 
 == Settings::Count
@@ -248,7 +248,7 @@ else
     window.AddTextInput(200, "type a value, Enter");
 
 == Settings::Hidden
-Whether the setting is tagged `hidden`. Hidden settings are saved, but a settings screen doesn't show them.
+Whether the setting is tagged `hidden`. Hidden settings are saved, but a settings page doesn't show them.
 --
 if (Settings::Hidden(i))
     continue;
@@ -524,8 +524,8 @@ if (openButton.Clicked())
 
 @@ UI::Window
 A box on screen holding widgets in rows (from `UI::CreateWindow`). Widgets are added left to right; `NewRow()`
-starts the next row. A window can also have a sidebar and several views, one shown at a time, like the plugin
-manager's menu.
+starts the next row. A window can also have a header, cards, a sidebar and several views (one shown at a time),
+like the plugin manager's menu.
 
 == UI::Window.SetAnchor
 The point of the screen the window is placed from, as fractions: `(0, 0)` top left, `(0.5, 0.5)` centre,
@@ -654,6 +654,46 @@ UI::Window@ section = UI::CreateWindow();
 section.DockInEditorDetails();
 section.SetBackground(0, 0, 0, 0);
 section.AddText("rotated copy", 18);
+
+== UI::Window.StartHeader
+Widgets added after this go into rows above the views, shown whichever view is open, until the next `StartView`.
+Use it for tabs or a toolbar shared by every view.
+--
+window.StartHeader();
+window.AddText("plugins", 28);
+UI::Button@ installedTab = window.AddButton("installed");
+UI::Button@ browseTab = window.AddButton("browse");
+int installedView = window.StartView();     // the header ends here
+
+== UI::Window.StartCard
+Rows added after this share one rounded box, a card, until `EndCard()`. `NewRow()` inside a card adds another
+row to the same card.
+--
+// A card with a title row and a description row
+window.StartCard();
+window.AddImage(Plugins::Icon(i), 52, 52);
+window.AddText(Plugins::Name(i), 21);
+window.AddSpace(0);
+UI::Button@ settingsButton = window.AddButton("settings");
+window.NewRow();
+window.AddText(Plugins::Description(i), 16);
+window.EndCard();
+
+== UI::Window.EndCard
+Ends the card started by `StartCard()`. Widgets added afterwards go on a new row below it.
+--
+window.StartCard();
+window.AddText("Show timer", 19);
+window.EndCard();
+window.StartCard();                     // the next card
+window.AddText("Time size", 19);
+window.EndCard();
+
+== UI::Window.SetCardBackground
+The colour of this window's cards, red, green, blue and opacity from 0 to 1.
+--
+window.SetBackground(0.05f, 0.055f, 0.07f, 0.97f);
+window.SetCardBackground(0.11f, 0.12f, 0.15f, 1);    // a little lighter than the window
 
 == UI::Window.zOrder
 Which windows are in front: higher is in front. Windows start at 100, the plugin manager's menu uses 500, and footer
@@ -882,6 +922,14 @@ True once after the player ticks or unticks it. Reading it clears it.
 --
 if (showBox.Changed())
     timerWindow.visible = showBox.checked;
+
+== UI::CheckBox.SetColor
+The label's colour, red, green, blue and opacity from 0 to 1 (linear, like every colour here).
+--
+// Axis labels in the gizmo's colours: X red, Y green, Z blue
+xBox.SetColor(0.594f, 0.0197f, 0, 1);
+yBox.SetColor(0.1349f, 0.3959f, 0, 1);
+zBox.SetColor(0.0251f, 0.207f, 0.85f, 1);
 
 @@ Input
 The keyboard and mouse, read only while the game window has focus. While the player is typing in a plugin's text

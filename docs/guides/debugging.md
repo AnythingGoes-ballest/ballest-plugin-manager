@@ -28,8 +28,8 @@ Fix the file and restart the game.
 
 ## A plugin that stopped
 
-The plugin manager's **plugins** list shows each plugin's status. `running` is fine. Anything else says why it
-stopped:
+Each plugin's card in the plugin manager's **installed** tab shows its status. `running` is fine. Anything else says
+why it stopped:
 
 | Status | Cause |
 |---|---|

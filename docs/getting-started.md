@@ -10,7 +10,7 @@ start the game once. You should see **plugins** in the footer at the bottom of t
 
 The game folder is `...\steamapps\common\Ballest of Them All\Ballest\Binaries\Win64`. From here on, **the plugins
 folder** means the `plugins` folder inside it. In game, footer **plugins** > **open**, then **open plugins folder**
-in the menu's sidebar, opens it for you.
+at the top right of the menu, opens it for you.
 
 ## 2. Make the folder
 

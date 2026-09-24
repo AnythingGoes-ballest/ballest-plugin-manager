@@ -1,6 +1,9 @@
 #include "widgets.hpp"
 
+#include <cstring>
 #include <vector>
+
+#include "log.hpp"
 
 namespace ui::widgets {
 
@@ -186,6 +189,33 @@ Obj Block(Obj outer, float width, float height, Color c) {
     eng::Call(fill, "SetBrushColor", c);
     AddChild(box, fill);
     return box;
+}
+
+// Border.Background is an FSlateBrush: DrawAs = ESlateBrushDrawType::RoundedBox (4), OutlineSettings.CornerRadii an
+// FVector4 (doubles on this build, floats on older engines: told apart by its size), RoundingType FixedRadius (0).
+// If the brush is not laid out that way the border keeps square corners, and that is logged once.
+void RoundCorners(Obj border, double radius) {
+    if (!border) return;
+    Obj cls = eng::ClassOf(border);
+    eng::Prop drawAs, radii, rounding;
+    const int drawAt = eng::NestedOffset(cls, {"Background", "DrawAs"}, &drawAs);
+    const int radiiAt = eng::NestedOffset(cls, {"Background", "OutlineSettings", "CornerRadii"}, &radii);
+    const int roundingAt = eng::NestedOffset(cls, {"Background", "OutlineSettings", "RoundingType"}, &rounding);
+    if (drawAt < 0 || radiiAt < 0 || drawAs.size != 1 || (radii.size != 32 && radii.size != 16)) {
+        static bool logged = false;
+        if (!logged) hostlog::Warn("rounded corners: Border.Background is not laid out as measured; cards stay square");
+        logged = true;
+        return;
+    }
+    border[drawAt] = 4;
+    if (radii.size == 32) {
+        const double r[4] = {radius, radius, radius, radius};
+        std::memcpy(border + radiiAt, r, sizeof r);
+    } else {
+        const float r[4] = {float(radius), float(radius), float(radius), float(radius)};
+        std::memcpy(border + radiiAt, r, sizeof r);
+    }
+    if (roundingAt >= 0 && rounding.size == 1) border[roundingAt] = 0;
 }
 
 bool NewScreen(Obj controller, Obj* host, Obj* tree, Obj* canvas) {

@@ -105,9 +105,27 @@ void Struct(const std::string& className, const std::string& function) {
         Report(param.name + " is " + eng::ObjName(st));
         for (const auto& field : eng::PropertyNames(st)) {
             const eng::Prop fp = eng::FindProp(st, field);
-            Report("  " + field + " @" + hostlog::Hex(fp.offset) + " size " + std::to_string(fp.size));
+            Report("  " + field + " @" + hostlog::Hex(fp.offset) + " size " + std::to_string(fp.size) + " " + eng::KindOf(fp) +
+                   (eng::StructOf(fp) ? " " + eng::ObjName(eng::StructOf(fp)) : ""));
         }
     }
+}
+
+// "pov <filter>": watches a leaderboard entry's replay the way the game does, by handing the entry's own GhostKey
+// (read, not built) to BP_MyPlayerController.PlayerWantsToPOVGhost. Calling the entry's Blueprint helpers directly
+// hung the game once and crashed it once, so nothing on the entry is called.
+void Pov(const std::string& filter) {
+    const auto list = Instances("WBP_LeaderboardEntry_C", filter);
+    if (list.empty()) return Report("no leaderboard entry matching " + filter);
+    eng::Obj entry = list.front();
+    bool hasKey = false;
+    uint8_t key[96];
+    if (!eng::ReadBool(entry, "bHasGhostKey", &hasKey) || !hasKey || !eng::ReadBytes(entry, "GhostKey", key, sizeof key))
+        return Report("pov: " + eng::PathOf(entry) + " has no ghost key");
+    eng::Obj controller = game::PlayerController();
+    eng::Params p(eng::FunctionOn(controller, "PlayerWantsToPOVGhost"));
+    const bool ok = p.Set("GhostKey", key, sizeof key) && eng::Invoke(controller, p);
+    Report("pov " + eng::PathOf(entry) + (ok ? " -> ok" : " -> FAILED"));
 }
 
 void CallNoArgs(const std::string& className, const std::string& function, const std::string& filter) {
@@ -151,6 +169,17 @@ void CallWithArgs(const std::string& cmd) {
         const size_t colon = a.find(':');
         const std::string type = a.substr(0, colon), value = colon == std::string::npos ? "" : a.substr(colon + 1);
         const int index = static_cast<int>(i - 1);
+        // A string, text, name or object written into a parameter of another kind is the same size but not the same
+        // thing (a string written into an out FText hung the game once), so those kinds are checked.
+        const auto params = eng::ParamsOf(p.Fn());
+        std::vector<eng::ParamInfo> inputs;
+        for (const auto& param : params)
+            if (!param.isReturn) inputs.push_back(param);
+        if (index >= static_cast<int>(inputs.size())) return Report("callx: more arguments than parameters");
+        const std::string kind = eng::KindOf(eng::FindProp(p.Fn(), inputs[index].name));
+        const std::string wanted = type == "s" ? "StrProperty" : type == "t" ? "TextProperty" : type == "n" ? "NameProperty" : "";
+        if ((!wanted.empty() && kind != wanted) || (type == "o" && kind.find("Object") == std::string::npos && kind.find("Class") == std::string::npos))
+            return Report("callx: argument " + std::to_string(i) + " (" + a + ") does not fit " + inputs[index].name + ", a " + kind);
         if (type == "i") p.SetArg(index, static_cast<int32_t>(std::atoi(value.c_str())));
         else if (type == "f") p.SetArg(index, static_cast<float>(std::atof(value.c_str())));
         else if (type == "d") p.SetArg(index, std::atof(value.c_str()));
@@ -261,6 +290,7 @@ void Run(const std::string& cmd) {
         {"call", [](const Args& a, const std::string&) { CallNoArgs(Arg(a, 1), Arg(a, 2), Arg(a, 3)); }},
         {"callx", [](const Args&, const std::string& c) { CallWithArgs(c); }},
         {"viewtarget", [](const Args&, const std::string&) { ViewTarget(); }},
+        {"pov", [](const Args& a, const std::string&) { Pov(Arg(a, 1)); }},
     };
     const Args words = Words(cmd);
     const auto it = words.empty() ? commands.end() : commands.find(words[0]);

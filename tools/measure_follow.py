@@ -1,10 +1,13 @@
 """Waits for a replay in the running game, then samples the view in default mode and in follow 3D.
 
+    python tools/measure_follow.py [default|follow]   (one mode only, for short replays; the mode is not switched)
+
 Read-only apart from switching the Replay Manager's camera dropdown through the host's test channel.
 """
 import os
 import re
 import struct
+import sys
 import time
 from pathlib import Path
 
@@ -65,6 +68,10 @@ cam = p.u64(freecam + off)
 cam_cls = e.class_of(cam)
 off, _ = prop_info(cam_cls, "RuntimeManagedSpringArm")
 arm = p.u64(cam + off)
+if not arm:     # measured empty on this build (2026-09-24): the replay camera actor's own SpringArm is the one steered
+    off, _ = prop_info(freecam_cls, "SpringArm")
+    arm = p.u64(freecam + off)
+    print("RuntimeManagedSpringArm is empty; using BP_FreeCam.SpringArm")
 arm_cls = e.class_of(arm)
 rr_off, _ = prop_info(arm_cls, "RelativeRotation")
 rs_off, _ = prop_info(cam_cls, "RotationSource")
@@ -111,13 +118,19 @@ def sample(label, seconds):
     print(f"  view moved {moved:.0f} units, yaw changed {turned:.1f} deg")
 
 
-command("select default 0")
-time.sleep(1)
-sample("default", 4)
-command("select default 1")
-time.sleep(1)
-sample("follow 3d", 6)
-command("select default 0")
+only = sys.argv[1] if len(sys.argv) > 1 else ""
+if only == "default":
+    sample("default", 6)
+elif only == "follow":
+    sample("follow 3d", 6)
+else:
+    command("select default 0")
+    time.sleep(1)
+    sample("default", 4)
+    command("select default 1")
+    time.sleep(1)
+    sample("follow 3d", 6)
+    command("select default 0")
 print("\nhost log during the test:")
 for l in log_lines()[start_lines:]:
     if re.search(r"camera|replay", l):

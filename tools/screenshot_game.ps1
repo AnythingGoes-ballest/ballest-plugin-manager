@@ -13,6 +13,24 @@ public class NativeShot {
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint flags);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    public delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc proc, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder name, int size);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    // The game's own window (class UnrealWindow). The process's "main window" can be its console instead.
+    public static IntPtr FindGameWindow(uint pid) {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((h, l) => {
+            uint owner;
+            GetWindowThreadProcessId(h, out owner);
+            var name = new System.Text.StringBuilder(64);
+            GetClassName(h, name, 64);
+            if (owner == pid && IsWindowVisible(h) && name.ToString() == "UnrealWindow") { found = h; return false; }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
 }
 '@
 Add-Type -TypeDefinition $signature
@@ -21,9 +39,10 @@ Add-Type -TypeDefinition $signature
 # physical pixels, and the capture is a crop of the window's top-left corner.
 [void][NativeShot]::SetProcessDPIAware()
 
-$game = Get-Process -Name "Ballest-Win64-Shipping" | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-if (-not $game) { throw "no Ballest window" }
-$handle = $game.MainWindowHandle
+$game = Get-Process -Name "Ballest-Win64-Shipping" | Select-Object -First 1
+if (-not $game) { throw "Ballest is not running" }
+$handle = [NativeShot]::FindGameWindow([uint32]$game.Id)
+if ($handle -eq [IntPtr]::Zero) { throw "no Ballest window" }
 
 $rect = New-Object RECT
 [void][NativeShot]::GetClientRect($handle, [ref]$rect)
