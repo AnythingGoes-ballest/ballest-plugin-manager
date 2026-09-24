@@ -15,7 +15,10 @@ namespace eng {
 
 using Obj = uint8_t*;
 
-bool Init(uintptr_t moduleBase);        // checks the build fingerprint; false = unsupported, host stays inactive
+bool Init(uintptr_t moduleBase);        // the measured tables on the known build; on another build, Locate finds them
+bool KnownBuild();                      // the game build the host was measured on
+bool Locate();                          // on another build: finds the name pool, object array and ProcessEvent;
+                                        // call until true
 uintptr_t Base();
 bool InImage(const void* address);      // inside the game exe's image (code, vtables, static data)
 

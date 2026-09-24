@@ -27,6 +27,10 @@ struct Info {
 std::vector<Info> List();                   // loaded plugins, in load order
 bool Find(const std::string& id, Info* out);
 int Current();                              // index of the plugin whose code is running now, or -1
+// After a fault in host code (main.cpp's guard): stops the plugin that was running, if any, and returns true; false
+// when no plugin was running (the fault is the host's own).
+bool RecoverFromFault(const std::string& where);
+void CrashNext(const std::string& id);      // test hook: that plugin's next callback faults inside host code
 std::string CurrentId();
 
 // Wraps game work a plugin asked the host for (pasting and selecting track pieces: measured at about 4.5 ms and 3 ms a

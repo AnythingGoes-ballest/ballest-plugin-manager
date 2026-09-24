@@ -2,8 +2,11 @@
 
 #include <windows.h>
 
+#include <algorithm>
+#include <cstdint>
 #include <map>
 #include <set>
+#include <vector>
 
 #include "layout.hpp"
 #include "log.hpp"
@@ -12,6 +15,8 @@ namespace eng {
 namespace {
 
 uintptr_t gBase = 0;
+uint32_t gImageSize = 0;
+bool gKnownBuild = false;
 uint8_t* gObjects = nullptr;
 uint8_t* gNamePool = nullptr;
 using ProcessEventFn = void (*)(Obj self, Obj fn, void* params);
@@ -56,6 +61,91 @@ std::string FieldName(const uint8_t* field) {
     return Name(At<uint32_t>(field, layout::kFFieldNameOffset), At<int32_t>(field, layout::kFFieldNameOffset + 4));
 }
 
+// --- finding the engine's tables on a build that was not measured ------------------------------------------------
+// Every pointer is checked against the process's readable memory before it is read, so looking at candidates cannot
+// fault. The readable ranges are listed once per search (VirtualQuery over the address space) and looked up by
+// binary search; asking VirtualQuery per candidate took 34 s for one search (measured).
+std::vector<std::pair<uintptr_t, uintptr_t>> gReadable;     // [start, end), sorted
+
+void ListReadableMemory() {
+    gReadable.clear();
+    const DWORD readableProtection = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE;
+    MEMORY_BASIC_INFORMATION info{};
+    for (uintptr_t a = 0x10000; a < 0x7FFFFFFFFFFF && VirtualQuery(reinterpret_cast<void*>(a), &info, sizeof info);
+         a = reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize) {
+        if (info.State == MEM_COMMIT && (info.Protect & readableProtection) && !(info.Protect & PAGE_GUARD)) {
+            const uintptr_t start = reinterpret_cast<uintptr_t>(info.BaseAddress), end = start + info.RegionSize;
+            if (!gReadable.empty() && gReadable.back().second == start) gReadable.back().second = end;
+            else gReadable.push_back({start, end});
+        }
+    }
+}
+
+bool Readable(uintptr_t address, size_t bytes) {
+    if (address < 0x10000 || address > 0x7FFFFFFFFFFF) return false;
+    auto it = std::upper_bound(gReadable.begin(), gReadable.end(), std::make_pair(address, UINTPTR_MAX));
+    if (it == gReadable.begin()) return false;
+    --it;
+    return address >= it->first && address + bytes <= it->second;
+}
+
+uintptr_t ReadPointer(uintptr_t address) { return Readable(address, 8) ? At<uintptr_t>(reinterpret_cast<void*>(address), 0) : 0; }
+
+// Every 8-byte slot of the exe's writable sections (where the engine's global tables live).
+template <class F>
+uintptr_t FindInWritableSections(F isIt) {
+    ListReadableMemory();
+    auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(gBase);
+    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(gBase + dos->e_lfanew);
+    auto* section = IMAGE_FIRST_SECTION(nt);
+    for (int i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
+        if (!(section->Characteristics & IMAGE_SCN_MEM_WRITE)) continue;
+        const uintptr_t start = gBase + section->VirtualAddress, end = start + section->Misc.VirtualSize;
+        for (uintptr_t a = start; a + 0x20 <= end; a += 8)
+            if (Readable(a, 0x20) && isIt(a)) return a;
+    }
+    return 0;
+}
+
+// FNamePool: block 0 (at +kNamePoolBlockListOffset) starts with entry 0, "None": a header (length 4 in the bits from
+// 6 up, bit 0 clear for narrow characters, hash bits between) then the letters.
+uint8_t* FindNamePool() {
+    return reinterpret_cast<uint8_t*>(FindInWritableSections([](uintptr_t a) {
+        const uintptr_t block = ReadPointer(a + layout::kNamePoolBlockListOffset);
+        if (!block || !Readable(block, 6)) return false;
+        const uint16_t header = At<uint16_t>(reinterpret_cast<void*>(block), 0);
+        return (header >> 6) == 4 && !(header & 1) && std::memcmp(reinterpret_cast<void*>(block + 2), "None", 4) == 0;
+    }));
+}
+
+// The object array: a chunk list and a count, where the objects in the first slots each store their own slot
+// number (UObject::InternalIndex). Needs the engine to have created its first objects.
+uint8_t* FindObjectArray() {
+    return reinterpret_cast<uint8_t*>(FindInWritableSections([](uintptr_t a) {
+        const int32_t count = At<int32_t>(reinterpret_cast<void*>(a), layout::kObjectArrayObjectCountOffset);
+        if (count < 1000 || count > 10000000) return false;
+        const uintptr_t chunk = ReadPointer(ReadPointer(a + layout::kObjectArrayChunkListOffset));
+        if (!chunk || !Readable(chunk, 200 * layout::kObjectArrayItemSizeBytes)) return false;
+        int matching = 0;
+        for (int i = 0; i < 200; ++i) {
+            const uintptr_t object = ReadPointer(chunk + i * layout::kObjectArrayItemSizeBytes + layout::kObjectArrayItemObjectPointerOffset);
+            if (object && Readable(object, 0x28) && At<int32_t>(reinterpret_cast<void*>(object), layout::kUObjectArrayIndexOffset) == i) ++matching;
+        }
+        return matching >= 150;
+    }));
+}
+
+bool InCode(uintptr_t address) {
+    auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(gBase);
+    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(gBase + dos->e_lfanew);
+    auto* section = IMAGE_FIRST_SECTION(nt);
+    for (int i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section)
+        if ((section->Characteristics & IMAGE_SCN_MEM_EXECUTE) && address >= gBase + section->VirtualAddress &&
+            address < gBase + section->VirtualAddress + section->Misc.VirtualSize)
+            return true;
+    return false;
+}
+
 }  // namespace
 
 // --- setup -------------------------------------------------------------------------------------------------------
@@ -65,15 +155,52 @@ bool Init(uintptr_t moduleBase) {
     auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(moduleBase + dos->e_lfanew);
     const uint32_t stamp = nt->FileHeader.TimeDateStamp, size = nt->OptionalHeader.SizeOfImage;
     hostlog::Info("game build: PE timestamp " + std::to_string(stamp) + ", image size " + hostlog::Hex(size));
-    if (stamp != layout::kExpectedGameExeTimeDateStamp || size != layout::kExpectedGameExeSizeOfImage) {
-        hostlog::Error("unsupported game build (the host was measured against timestamp " +
-                       std::to_string(layout::kExpectedGameExeTimeDateStamp) + "); staying inactive");
+    gBase = moduleBase;
+    gImageSize = size;
+    gKnownBuild = stamp == layout::kExpectedGameExeTimeDateStamp && size == layout::kExpectedGameExeSizeOfImage;
+    // Test switch: a file named force_unknown_build next to the log makes this build count as unmeasured, so the
+    // search below can be checked against the measured addresses.
+    if (GetFileAttributesW((hostlog::DataDir() + L"\\force_unknown_build").c_str()) != INVALID_FILE_ATTRIBUTES) {
+        hostlog::Warn("force_unknown_build: treating this build as unmeasured");
+        gKnownBuild = false;
+    }
+    if (gKnownBuild) {
+        gObjects = reinterpret_cast<uint8_t*>(moduleBase + layout::kGlobalObjectArrayOffsetInExe);
+        gNamePool = reinterpret_cast<uint8_t*>(moduleBase + layout::kNamePoolOffsetInExe);
+        gProcessEvent = reinterpret_cast<ProcessEventFn>(moduleBase + layout::kProcessEventFunctionOffsetInExe);
+        return true;
+    }
+    hostlog::Warn("this game build was not measured (the host knows timestamp " + std::to_string(layout::kExpectedGameExeTimeDateStamp) +
+                  "); finding the engine's tables again and trying");
+    return true;
+}
+
+bool KnownBuild() { return gKnownBuild; }
+
+// The name pool, the object array and ProcessEvent, on a build that was not measured. Called until it succeeds: the
+// game builds them a moment after it starts (the name pool was measured empty when this DLL's thread starts).
+bool Locate() {
+    if (gNamePool && gObjects && gProcessEvent) return true;
+    if (!gNamePool) {
+        gNamePool = FindNamePool();
+        if (!gNamePool) return false;
+        hostlog::Info("name pool found at +" + hostlog::Hex(reinterpret_cast<uintptr_t>(gNamePool) - gBase));
+    }
+    if (!gObjects) {
+        gObjects = FindObjectArray();
+        if (!gObjects) return false;
+        hostlog::Info("object array found at +" + hostlog::Hex(reinterpret_cast<uintptr_t>(gObjects) - gBase) + ", " +
+                      std::to_string(NumObjects()) + " objects");
+    }
+    Obj object = FindCdo("Object");
+    const uintptr_t vtable = object ? ReadPointer(reinterpret_cast<uintptr_t>(object)) : 0;
+    const uintptr_t processEvent = vtable ? ReadPointer(vtable + layout::kProcessEventVtableSlot * 8) : 0;
+    if (!processEvent || !InCode(processEvent)) {
+        hostlog::Error("ProcessEvent not found in UObject's vtable slot " + std::to_string(layout::kProcessEventVtableSlot));
         return false;
     }
-    gBase = moduleBase;
-    gObjects = reinterpret_cast<uint8_t*>(moduleBase + layout::kGlobalObjectArrayOffsetInExe);
-    gNamePool = reinterpret_cast<uint8_t*>(moduleBase + layout::kNamePoolOffsetInExe);
-    gProcessEvent = reinterpret_cast<ProcessEventFn>(moduleBase + layout::kProcessEventFunctionOffsetInExe);
+    gProcessEvent = reinterpret_cast<ProcessEventFn>(processEvent);
+    hostlog::Info("ProcessEvent found at +" + hostlog::Hex(processEvent - gBase));
     return true;
 }
 
@@ -81,7 +208,7 @@ uintptr_t Base() { return gBase; }
 
 bool InImage(const void* address) {
     const uintptr_t a = reinterpret_cast<uintptr_t>(address);
-    return a >= gBase && a < gBase + layout::kExpectedGameExeSizeOfImage;
+    return a >= gBase && a < gBase + gImageSize;
 }
 
 // --- objects and names -----------------------------------------------------------------------------------------
@@ -122,9 +249,10 @@ bool IsA(Obj o, Obj cls) {
     return false;
 }
 
-int32_t NumObjects() { return At<int32_t>(gObjects, layout::kObjectArrayObjectCountOffset); }
+int32_t NumObjects() { return gObjects ? At<int32_t>(gObjects, layout::kObjectArrayObjectCountOffset) : 0; }
 
 Obj ObjectAt(int32_t index) {
+    if (!gObjects) return nullptr;
     auto** chunks = At<uint8_t**>(gObjects, layout::kObjectArrayChunkListOffset);
     uint8_t* chunk = chunks ? chunks[index / layout::kObjectArrayItemsPerChunk] : nullptr;
     return chunk ? At<Obj>(chunk, (index % layout::kObjectArrayItemsPerChunk) * layout::kObjectArrayItemSizeBytes + layout::kObjectArrayItemObjectPointerOffset) : nullptr;

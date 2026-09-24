@@ -1,7 +1,9 @@
 // Every fact about the game binary the host depends on, in one place. All of it was measured on this exact build
 // (Ballest-Win64-Shipping.exe, UE 5.8, FileVersion ++UE5+Release-5.8-CL-56702186) with tools/memread.py against
-// the running game, or from its PE headers; see docs/DESIGN.md section 2a. A different build is detected at
-// startup (timestamp and image size) and the host stays inactive rather than guess.
+// the running game, or from its PE headers; see docs/DESIGN.md section 2a. On this build the addresses below are used
+// as they are. On any other build (a game update) the three tables are found again by what they contain (engine.cpp:
+// the name pool by its "None" entry, the object array by objects that know their own slot, ProcessEvent by its vtable
+// slot) and checked before use; the offsets inside engine objects belong to the engine version (UE 5.8) and stay.
 //
 // Naming: k<Type><What>Offset is the byte offset of a field inside an engine object of that type, and
 // k<What>OffsetInExe is an address given relative to where the game exe is loaded. The Unreal source name of each
@@ -23,6 +25,8 @@ constexpr uintptr_t kProcessEventFunctionOffsetInExe = 0x15F22C0;          // UO
 constexpr uintptr_t kViewportClientTickFunctionOffsetInExe = 0x2A74F20;    // UGameViewportClient::Tick
 constexpr int kViewportClientTickVtableSlot = 99;                          // its vtable slot (not overridden by
                                                                            // CommonGameViewportClient)
+constexpr int kProcessEventVtableSlot = 74;                                // UObject::ProcessEvent in UObject's vtable
+                                                                           // (measured on Default__Object, 2026-09-24)
 
 // --- Global object array (FUObjectArray, whose ObjObjects is a FChunkedFixedUObjectArray at offset 0) -------------
 constexpr int kObjectArrayChunkListOffset = 0x0;             // Objects: FUObjectItem** (one pointer per chunk)

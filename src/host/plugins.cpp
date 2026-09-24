@@ -44,6 +44,8 @@ std::wstring gDir;
 ULONGLONG gDeadline = 0;
 ULONGLONG gGameWorkLeft = 0;            // how much more game work this callback may have off its budget
 bool gInFrame = false;
+int gRunning = -1;                      // the plugin whose script is running, or -1
+std::string gCrashNext;                 // test hook: the plugin whose next callback faults on purpose
 constexpr ULONGLONG kMaxGameWorkMs = 5000;
 
 // --- manifest: the subset of TOML info.toml uses ([section], key = "string" | number | ["a", "b"]) ------------------
@@ -146,6 +148,16 @@ void Stop(Plugin& p, const std::string& why) {
 
 // Runs one callback within the plugin's time budget; an exception or overrun stops the plugin.
 void Run(Plugin& p, asIScriptFunction* fn, const float* dt) {
+    const int index = static_cast<int>(&p - gPlugins.data());
+    struct Running {                    // which plugin is running, for Current() and for a fault's blame
+        int previous;
+        explicit Running(int i) : previous(gRunning) { gRunning = i; }
+        ~Running() { gRunning = previous; }
+    } running(index);
+    if (!gCrashNext.empty() && gCrashNext == p.id) {
+        gCrashNext.clear();
+        *static_cast<volatile int*>(nullptr) = 1;       // test: a fault inside host code while this plugin runs
+    }
     if (!fn || !p.running) return;
     p.ctx->Prepare(fn);
     if (dt) p.ctx->SetArgFloat(0, *dt);
@@ -331,11 +343,21 @@ bool Find(const std::string& id, Info* out) {
     return p != nullptr;
 }
 
-int Current() {
-    asIScriptContext* ctx = asGetActiveContext();
-    const char* module = ctx && ctx->GetFunction() ? ctx->GetFunction()->GetModuleName() : nullptr;
-    return module ? std::atoi(module) : -1;
+// Tracked by Run rather than asked of AngelScript: after a fault the abandoned script context would still be reported
+// as active.
+int Current() { return gRunning; }
+
+bool RecoverFromFault(const std::string& where) {
+    gInFrame = false;
+    if (gRunning < 0 || gRunning >= static_cast<int>(gPlugins.size())) return false;
+    Plugin& p = gPlugins[static_cast<size_t>(gRunning)];
+    gRunning = -1;
+    p.ctx = nullptr;                    // abandoned mid-call: never touched again (a small leak, until restart)
+    Stop(p, "stopped: crashed in host code (" + where + ")");
+    return true;
 }
+
+void CrashNext(const std::string& id) { gCrashNext = id; }
 
 std::string CurrentId() {
     const int i = Current();

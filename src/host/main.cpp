@@ -26,6 +26,52 @@ namespace {
 
 using TickFn = void (*)(void* self, float deltaSeconds);
 TickFn gOriginalTick = nullptr;
+
+// --- the fault guard ---------------------------------------------------------------------------------------------
+// Each frame the host's work starts from a saved point (RtlCaptureContext). An access violation (or other hardware
+// fault) whose instruction is in this DLL, on the game thread during the host's frame, resumes at that point instead
+// of taking the game down: the plugin that was running is stopped until restart, or, when none was, the host turns
+// itself off for the session. Typical cause: a game update that moved something the host reads. Faults in the game's
+// own code are left to the game, because resuming there could leave the engine in a broken state.
+alignas(16) CONTEXT gGuard;
+volatile bool gGuardActive = false, gFaulted = false;
+volatile uintptr_t gFaultAt = 0;
+DWORD gGuardThread = 0;
+uintptr_t gHostStart = 0, gHostEnd = 0;
+bool gHostOff = false;
+
+LONG CALLBACK OnFault(EXCEPTION_POINTERS* e) {
+    const DWORD code = e->ExceptionRecord->ExceptionCode;
+    if (!gGuardActive || GetCurrentThreadId() != gGuardThread) return EXCEPTION_CONTINUE_SEARCH;
+    if (code != EXCEPTION_ACCESS_VIOLATION && code != EXCEPTION_ILLEGAL_INSTRUCTION && code != EXCEPTION_INT_DIVIDE_BY_ZERO &&
+        code != EXCEPTION_ARRAY_BOUNDS_EXCEEDED && code != EXCEPTION_DATATYPE_MISALIGNMENT)
+        return EXCEPTION_CONTINUE_SEARCH;
+    const uintptr_t at = reinterpret_cast<uintptr_t>(e->ExceptionRecord->ExceptionAddress);
+    if (at < gHostStart || at >= gHostEnd) return EXCEPTION_CONTINUE_SEARCH;
+    gGuardActive = false;
+    gFaulted = true;
+    gFaultAt = at;
+    *e->ContextRecord = gGuard;
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+void InstallFaultGuard() {
+    HMODULE self = nullptr;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       reinterpret_cast<LPCWSTR>(&OnFault), &self);
+    auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(self);
+    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(reinterpret_cast<uintptr_t>(self) + dos->e_lfanew);
+    gHostStart = reinterpret_cast<uintptr_t>(self);
+    gHostEnd = gHostStart + nt->OptionalHeader.SizeOfImage;
+    AddVectoredExceptionHandler(1, &OnFault);
+}
+
+void AfterFault() {
+    const std::string where = "host +" + hostlog::Hex(gFaultAt - gHostStart);
+    if (plugins::RecoverFromFault(where)) return;               // logged as that plugin's status
+    gHostOff = true;
+    hostlog::Error("the host crashed (" + where + "); plugins are off until the game restarts");
+}
 std::wstring gGameDir;
 bool gInFrame = false, gPluginsLoaded = false;
 
@@ -55,9 +101,19 @@ void HostFrame(float dt) {
 
 void HookedTick(void* self, float deltaSeconds) {
     gOriginalTick(self, deltaSeconds);
-    if (gInFrame) return;           // never re-entered from inside our own engine calls
+    if (gInFrame || gHostOff) return;       // never re-entered from inside our own engine calls
     gInFrame = true;
+    gFaulted = false;
+    gGuardThread = GetCurrentThreadId();
+    RtlCaptureContext(&gGuard);             // a fault in host code resumes here, with gFaulted set
+    if (gFaulted) {
+        AfterFault();
+        gInFrame = false;
+        return;
+    }
+    gGuardActive = true;
     HostFrame(deltaSeconds);
+    gGuardActive = false;
     gInFrame = false;
 }
 
@@ -73,8 +129,10 @@ eng::Obj FindViewportClient() {
 
 bool HookViewportTick(eng::Obj client) {
     void** vtable = *reinterpret_cast<void***>(client);
+    // On the measured build the slot must hold the measured Tick; on another build it must at least be game code.
     void* expected = reinterpret_cast<void*>(eng::Base() + layout::kViewportClientTickFunctionOffsetInExe);
-    if (vtable[layout::kViewportClientTickVtableSlot] != expected) {
+    void* slot = vtable[layout::kViewportClientTickVtableSlot];
+    if (eng::KnownBuild() ? slot != expected : !eng::InImage(slot)) {
         hostlog::Error("viewport Tick slot holds " + hostlog::Hex(reinterpret_cast<uintptr_t>(vtable[layout::kViewportClientTickVtableSlot])) +
                        ", expected " + hostlog::Hex(reinterpret_cast<uintptr_t>(expected)) + "; not hooking");
         return false;
@@ -105,8 +163,10 @@ DWORD WINAPI InitThread(LPVOID) {
         return 0;
     }
     if (!eng::Init(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)))) return 0;
+    InstallFaultGuard();
     for (int attempt = 0; attempt < 600; ++attempt) {        // up to five minutes
         Sleep(500);
+        if (!eng::Locate()) continue;
         if (eng::NumObjects() < 1000) continue;
         if (eng::Obj client = FindViewportClient()) {
             hostlog::Info("engine ready after " + std::to_string((attempt + 1) / 2) + " s, " + std::to_string(eng::NumObjects()) + " objects");

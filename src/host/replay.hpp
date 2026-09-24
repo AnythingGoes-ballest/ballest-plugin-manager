@@ -2,6 +2,7 @@
 // the game's own replay system (measured): BallestGhostWorldSubsystem for playback, the replay camera
 // BP_FreeCam_C and its AC_GhostFollowCam component for following. Game thread only.
 #pragma once
+#include <string>
 
 namespace replay {
 
@@ -27,5 +28,6 @@ void SetSeeThrough(bool on);
 // Test hook: a simulated replay (its own clock at 1x, restarting at the end) behind the same functions, for
 // testing replay plugins when no real replay can be started.
 void Simulate(bool on, double length);
+std::string TestLoadGlass();              // test hook: loads the glass material, reports before and after
 
 }  // namespace replay

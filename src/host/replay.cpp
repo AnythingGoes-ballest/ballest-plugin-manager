@@ -32,6 +32,7 @@ double gDistance = 0;               // the camera's distance from the ball; 0: t
 bool gSeeThrough = false;           // pieces between the camera and the ball turn to glass
 Vec3 gBall{}, gDir{1, 0, 0};        // follow 3D: the ball last frame and the smoothed travel direction
 bool gChaseFresh = true;            // the next follow 3D frame snaps instead of easing
+double gLastPlayTime = 0;           // replay time at the last follow 3D frame
 double gYaw = 0, gPitch = 0;
 Vec3 gPos{};
 bool gLooking = false;
@@ -171,8 +172,14 @@ void MoveChaseCamera(float dt, Obj followCam) {
     const Vec3 step{ball.x - gBall.x, ball.y - gBall.y, ball.z - gBall.z};
     const double moved = std::sqrt(step.x * step.x + step.y * step.y + step.z * step.z);
     const bool snap = gChaseFresh || moved > kJump;
-    // Travel direction; steep climbs and drops are flattened so the camera never ends up straight above or below.
-    if (!snap && moved / dt > 50) {
+    // Travel direction, only while the replay plays forward: paused, the Replay Manager seeks to the same moment
+    // every frame and the ball jitters in place, and scrubbing moves it backwards or in jumps; none of that is a
+    // direction of travel, so the last one is kept. Steep climbs and drops are flattened so the camera never ends
+    // up straight above or below.
+    const double playTime = Time(), played = playTime - gLastPlayTime;
+    gLastPlayTime = playTime;
+    const bool playing = played > 0.001 && played < 0.5;
+    if (!snap && playing && moved / dt > 50) {
         Vec3 want = Normalized(step);
         want.z = std::fmax(-0.6, std::fmin(0.6, want.z));
         want = Normalized(want);
@@ -201,8 +208,10 @@ void MoveChaseCamera(float dt, Obj followCam) {
 }
 
 // --- distance and see-through -----------------------------------------------------------------------------------
-// The replay camera (BP_FreeCam) hangs off its SpringArm, measured: TargetArmLength 375, bDoCollisionTest on (which
-// pulls the camera in when something is between it and the ball), ProbeSize 22. A chosen distance is written to the
+// The replay camera hangs off a spring arm, measured: TargetArmLength 375, bDoCollisionTest on (which pulls the
+// camera in when something is between it and the ball), ProbeSize 22. In a replay started from the leaderboard the
+// arm that places the view is the follow cam's RuntimeManagedSpringArm (measured 2026-09-24; writing BP_FreeCam's
+// own SpringArm had no effect on the view); the free camera's SpringArm is the fallback when there is none. A chosen distance is written to the
 // arm every frame (the game may set it again); see-through turns the collision test off so the camera stays out,
 // and turns whatever is between the camera and the ball into glass (the game's own M_Glass material), putting each
 // piece's own materials back a moment after it no longer blocks the view.
@@ -213,6 +222,7 @@ constexpr int kMaxBlockers = 4;
 struct Glassed {
     eng::Weak component;
     std::vector<eng::Weak> materials;       // its own, in slot order
+    bool hidden = false;                    // hidden instead (no glass material)
     double lastBlocking = 0;
 };
 std::vector<Glassed> gGlassed;
@@ -232,12 +242,14 @@ void RestoreArm() {
 }
 
 void UpdateArm(Obj replayCam) {
-    Obj arm = eng::ReadObj(replayCam, "SpringArm");
+    Obj arm = eng::ReadObj(FollowCamOf(replayCam), "RuntimeManagedSpringArm");
+    if (!arm) arm = eng::ReadObj(replayCam, "SpringArm");
     if (!arm) return;
     if (arm != eng::Get(gArm)) {
         RestoreArm();
         gArm = eng::MakeWeak(arm);
         eng::ReadBytes(arm, "TargetArmLength", &gArmLength, sizeof gArmLength);
+        hostlog::Info("replay camera arm " + eng::PathOf(arm) + " (length " + std::to_string(static_cast<int>(gArmLength)) + ")");
     }
     const float length = gDistance > 0 ? static_cast<float>(gDistance) : gArmLength;
     if (length > 0) eng::WriteBytes(arm, "TargetArmLength", &length, sizeof length);
@@ -246,6 +258,7 @@ void UpdateArm(Obj replayCam) {
 
 void Unglass(Glassed& g) {
     Obj component = eng::Get(g.component);
+    if (component && g.hidden) eng::Call(component, "SetVisibility", uint8_t{1}, uint8_t{0});
     for (size_t i = 0; component && i < g.materials.size(); ++i)
         if (Obj material = eng::Get(g.materials[i])) eng::Call(component, "SetMaterial", static_cast<int32_t>(i), material);
 }
@@ -255,15 +268,37 @@ void UnglassAll() {
     gGlassed.clear();
 }
 
+// The game's glass material. Not every map has it loaded (it is in the season 2 tracks, measured), so when it is
+// not in memory it is loaded from the game's files: KismetSystemLibrary.MakeSoftObjectPath, then LoadAsset_Blocking
+// with a soft reference (an empty 8-byte weak pointer followed by the 32-byte path, measured sizes).
+Obj LoadGlass() {
+    Obj library = eng::FindCdo("KismetSystemLibrary");
+    const std::wstring path = L"/Game/Art/Materials/Masters/M_Glass.M_Glass";
+    const Params made = eng::Call(library, "MakeSoftObjectPath",
+                                  eng::FString{path.c_str(), static_cast<int32_t>(path.size() + 1), static_cast<int32_t>(path.size() + 1)});
+    size_t size = 0;
+    const uint8_t* softPath = made.Return(&size);
+    if (!softPath || size != 32) return nullptr;
+    struct {
+        uint8_t bytes[40];
+    } reference{};
+    std::memcpy(reference.bytes + 8, softPath, 32);
+    return eng::Call(library, "LoadAsset_Blocking", reference).ReturnObj();
+}
+
 Obj Glass() {
     if (Obj glass = eng::Get(gGlass)) return glass;
     static double lastLook = -100;                  // looking scans every object: at most every two seconds
     if (game::Seconds() - lastLook < 2) return nullptr;
     lastLook = game::Seconds();
     Obj found = eng::FindObjectByName("M_Glass");
+    if (!found) {
+        found = LoadGlass();
+        hostlog::Info(found ? "see-through: loaded the glass material" : "see-through: could not load the glass material");
+    }
     gGlass = eng::MakeWeak(found);
     if (!found && !gGlassMissingLogged) {
-        hostlog::Warn("see-through: the glass material is not loaded in this map; pieces in the way stay as they are");
+        hostlog::Warn("see-through: no glass material; pieces in the way are hidden instead");
         gGlassMissingLogged = true;
     }
     return found;
@@ -285,7 +320,7 @@ void UpdateSeeThrough(Obj followCam) {
     Obj manager = eng::ReadObj(controller, "PlayerCameraManager");
     Vec3 ball;
     Obj glass = Glass();
-    if (!manager || !followCam || !glass || !BallPosition(followCam, &ball)) return;
+    if (!manager || !followCam || !BallPosition(followCam, &ball)) return;
     const Vec3 from = eng::Call(manager, "GetCameraLocation").ReturnAs<Vec3>();
     const Vec3 dir = Normalized({ball.x - from.x, ball.y - from.y, ball.z - from.z});
     const Vec3 to{ball.x - dir.x * kShortOfBall, ball.y - dir.y * kShortOfBall, ball.z - dir.z * kShortOfBall};
@@ -318,10 +353,16 @@ void UpdateSeeThrough(Obj followCam) {
             Glassed g;
             g.component = eng::MakeWeak(component);
             const int32_t slots = eng::Call(component, "GetNumMaterials").ReturnAs<int32_t>();
-            for (int32_t i = 0; i < slots && i < 16; ++i) {
-                g.materials.push_back(eng::MakeWeak(eng::Call(component, "GetMaterial", i).ReturnObj()));
-                eng::Call(component, "SetMaterial", i, glass);
+            if (glass) {
+                for (int32_t i = 0; i < slots && i < 16; ++i) {
+                    g.materials.push_back(eng::MakeWeak(eng::Call(component, "GetMaterial", i).ReturnObj()));
+                    eng::Call(component, "SetMaterial", i, glass);
+                }
+            } else {
+                g.hidden = true;
+                eng::Call(component, "SetVisibility", uint8_t{0}, uint8_t{0});
             }
+            hostlog::Info("see-through: " + eng::ObjName(actor) + "." + eng::ObjName(component) + (glass ? " to glass" : " hidden"));
             gGlassed.push_back(std::move(g));
             it = gGlassed.end() - 1;
         }
@@ -462,6 +503,13 @@ void SetCameraMode(int mode) {
     if (mode < CameraDefault || mode > CameraFree || mode == gMode) return;
     gMode = mode;
     hostlog::Info("camera mode " + std::to_string(mode));
+}
+
+std::string TestLoadGlass() {
+    Obj before = eng::FindObjectByName("M_Glass");
+    Obj loaded = LoadGlass();
+    return std::string("glass before: ") + (before ? eng::PathOf(before) : "not loaded") + "; after LoadAsset_Blocking: " +
+           (loaded ? eng::PathOf(loaded) : "null");
 }
 
 double CameraDistance() { return gDistance; }

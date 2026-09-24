@@ -333,6 +333,12 @@ void Run(const std::string& cmd) {
         {"pov", [](const Args& a, const std::string&) { Pov(Arg(a, 1)); }},
         {"materials", [](const Args& a, const std::string&) { Materials(Arg(a, 1)); }},
         {"watch", [](const Args& a, const std::string&) { Watch(Arg(a, 1)); }},
+        {"loadglass", [](const Args&, const std::string&) { Report(replay::TestLoadGlass()); }},
+        {"crash", [](const Args& a, const std::string&) {
+             if (a.size() > 1) return plugins::CrashNext(Arg(a, 1));     // "crash <plugin id>": in that plugin's next call
+             Report("crash: faulting in host code now");
+             *static_cast<volatile int*>(nullptr) = 1;
+         }},
         {"replaycam", [](const Args& a, const std::string&) {
              replay::SetCameraDistance(std::atof(Arg(a, 1).c_str()));
              replay::SetSeeThrough(Arg(a, 2) == "1");
