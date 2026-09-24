@@ -6,13 +6,13 @@
       "description": "Track editor extras: whole-unit placement, placement distance, rotated copies, Tab between transform boxes.",
       "author": "AnythingGoes",
       "repo": "AnythingGoes-ballest/ballest-create-extensions",
-      "version": "0.1.0",
-      "commit": "384d39bba439d65c6cf43963136323082b15ac89",
-      "min_host": "0.6.0",
+      "version": "0.2.0",
+      "commit": "0d162b7a31b59ba83ca1ad0f000df2253e84d6f3",
+      "min_host": "0.7.0",
       "icon": "icon.png",
       "files": {
-        "info.toml": "d44e783e3e08ac3d546182c290950395f30de6834477edd01639e486a220690c",
-        "main.as": "40dcc1a07787ce6b56ca7a8888437d54585646495522539d30e377e3cdb86100",
+        "info.toml": "4f8fff6c72dab1bbab359a33b538d073eb7eaf64576fdcf2bb03063bd45e17a5",
+        "main.as": "fd50f1fd414797e2a4ffba8ff9f98ffce4409e0dd679bc7e85c358c62d90cbe6",
         "icon.png": "673495590b04fbc8b8a75af30e0eed74dc9b34ef11584f3e66fea362e53b74fe"
       }
     },
@@ -22,46 +22,46 @@
       "description": "A green Trackmania-style timer of total time racing, with restarts from the beginning counted.",
       "author": "AnythingGoes",
       "repo": "AnythingGoes-ballest/ballest-grind-timer-plugin",
-      "version": "0.2.1",
-      "commit": "7cee7ad73c575129c0d22dad0fad7a2f2b897593",
+      "version": "0.3.0",
+      "commit": "da3cf649684a8bba63b653f1c92c36bc93458cb1",
       "min_host": "0.4.0",
       "icon": "icon.png",
       "files": {
-        "info.toml": "de785f8beb626097c26998f2081afe83ee9c27b57d9c62252d6dd9923b94fde6",
-        "main.as": "4fc853fb49b6ecdb41b0555876f710e4c81caec9af2a2e34234e5cb226705ddb",
+        "info.toml": "4aa6ffb4cfef05e8a0abed8daa4a3ab828588e46bb18ba779fd8574c0f4ddb92",
+        "main.as": "5e4e8bdcc747f5a95d49cc7f822a251f61bf8fe36651354f05994fb895519ba1",
         "icon.png": "0cadd031d4d60b4bca0d120356bd6999e5dd55fcb1e4cd235c923c1b0c9eeb77"
       }
     },
     {
       "id": "replay-manager",
       "name": "Replay Manager",
-      "description": "Pause, speed (.1x to 5x), scrubbing with the real replay length, and default / follow 3D / free cameras.",
+      "description": "Pause, speed (.1x to 5x), scrubbing, default / follow 3D / free cameras, camera distance, and seeing through objects.",
       "author": "AnythingGoes",
       "repo": "AnythingGoes-ballest/ballest-replay-manager",
-      "version": "0.1.0",
-      "commit": "69a8d00d650b989bb50026eeef7921d7e21c6f99",
-      "min_host": "0.3.0",
+      "version": "0.2.0",
+      "commit": "12973c9a579c8cc6b37ab0b79efb8c6d3da603d6",
+      "min_host": "0.7.0",
       "icon": "icon.png",
       "files": {
-        "info.toml": "e43f5e821aa8a497a7089be8a37640d2fb33bc0741e11791a9d4b9cf96a292ea",
-        "main.as": "258c5721a3f9bf0b0be7d0ae4f8c66e7a7a794cddbf73c7c21fb0fc7813e256b",
+        "info.toml": "f3d8f332584f8439d16e2fe1eec1ab3a73127ee39abbe5f4e0654dfe297c93f1",
+        "main.as": "ba53e67d5691c6639d66795341537253ed6d8381422217cde6ebf0df0af6b23a",
         "icon.png": "93ff162118c1ede8d14cbd2bc333f7a25823f14f7c6c5732e654059d4460acfe"
       }
     }
   ],
   "host": {
-    "version": "0.6.0",
+    "version": "0.7.0",
     "repo": "AnythingGoes-ballest/ballest-plugin-manager",
-    "commit": "642d308767d8815a4c030914099839eb367ec7cc",
-    "dll": "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/download/v0.6.0/version.dll",
-    "dll_sha256": "57988645b9cef8fa4f45f9b7d2ddaec00b3c1fed52b33e3e87a65943ce3ff0ad",
+    "commit": "51407d50d5c871db320b5dcfb18bf677b3b7e075",
+    "dll": "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/download/v0.7.0/version.dll",
+    "dll_sha256": "ca1d948b4299cc8eda54a17cadb72d9bab81acdc9a5029b5d8b9de4ae687e189",
     "files": {
-      "plugins/hello-world/info.toml": "2c26b7bf59eba7c58eb83378ca9bc6502fc3582c9644b8b6b0f971e2df0c890a",
-      "plugins/hello-world/main.as": "0ede43fb380faf78791230932c44260b8e53cc8fa76a2d5fabc2b0f4ab64ae2f",
+      "plugins/hello-world/info.toml": "5300e78277bc1e92d4d1626ce17ed15e938f37e692b2271b58c3c9c30b79be40",
+      "plugins/hello-world/main.as": "24f510821cb3ea7825bfef6363d92e12fd493b9977038beb9e6c297a692fb23b",
       "plugins/plugin-manager/default-icon.png": "304d27462febbf15c8645b64ae6b01624e4a59e29e0304ffac1f28313a3ba362",
       "plugins/plugin-manager/icon.png": "fb60df477ecffe4942dc7500d2f4f6cb8b65d017bde68b49b81541c29f8e144e",
-      "plugins/plugin-manager/info.toml": "72722cf6e713b20c66965c3c1539656e85f26fba7e8e3eecc9df40b402255974",
-      "plugins/plugin-manager/main.as": "50c3f6f4d5b2c231f57a2f1556807c9262afa9610006255a2e65c960dc3ce473"
+      "plugins/plugin-manager/info.toml": "ff68549d966f8a75a89436d17524d2ffa9cf29c703f6c5d9cb4d434dbd8d0829",
+      "plugins/plugin-manager/main.as": "a335f403138b7fe27c93a197bfcb013c9aa507fb41bd74a243dd44af85d4c1f5"
     }
   }
 }
