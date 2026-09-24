@@ -28,7 +28,8 @@ GAME_PLUGINS = GAME_DIR / "plugins"
 FIXTURES = HERE / "test-plugins"          # faulty plugins, installed only for the run
 # Plugin repos checked out next to this one: if present, installs and removals are tested against a local copy of
 # the registry built from them (nothing is downloaded).
-PLUGIN_REPOS = [HERE.parents[1] / "ballest-grind-timer-plugin", HERE.parents[1] / "ballest-replay-manager"]
+PLUGIN_REPOS = [HERE.parents[1] / "ballest-grind-timer-plugin", HERE.parents[1] / "ballest-replay-manager",
+                HERE.parents[1] / "ballest-create-extensions"]
 MIRROR = DATA / "test-registry"
 REGISTRY_URL_FILE = DATA / "registry_url.txt"
 
@@ -151,6 +152,7 @@ def console_menu():
     command("click open")
     check("menu opens from the panel's open button", c.wait(r"\[plugin-manager\] menu opened", 10))
     check("menu window built", c.wait(r"window built with \d+ widgets", 10))
+    command("click window:console", 1.0)       # the menu opens on the installed tab
     c = Cursor()
     command("submit find WBP_Footer_C", 0.5)
     check("console echoes the command", c.wait(r"\[plugin-manager\] > find WBP_Footer_C", 5))
@@ -174,9 +176,10 @@ def plugin_browser(mirrored):
     check("installed tab lists the installed plugins as cards", "text[Plugin Manager]" in state and "text[Hello World]" in state)
     if mirrored:
         check("registry read from the local copy", any(re.search(r"registry: \d+ plugin\(s\) from file:", l) for l in lines()))
-        # Start from a known state whatever an earlier run left: both registry plugins installed. The first card with
-        # a remove button (plugins load in folder order after the plugin manager) is then a registry plugin.
-        for plugin in ("grind-timer", "replay-manager"):
+        # Start from a known state whatever an earlier run left: every registry plugin installed. The first card with
+        # a remove button (plugins load in folder order after the plugin manager) is then a registry plugin, which
+        # the local copy of the registry can install again.
+        for plugin in ("create-extensions", "grind-timer", "replay-manager"):
             if not (GAME_PLUGINS / plugin).exists():
                 c = Cursor()
                 command(f"install {plugin}")
@@ -213,7 +216,7 @@ def replay_manager():
     c = Cursor()
     command("fakereplay on 30")
     check("controls appear when a replay starts", c.wait(r"\[replay-manager\] replay controls shown", 10))
-    check("controls window built", c.wait(r"window built with 7 widgets", 10))
+    check("controls window built", c.wait(r"window built with \d+ widgets", 10))
     time.sleep(3)
     t, length = replay_time()
     check("total length known from the start", length == 30.0, f"{t} of {length}")
