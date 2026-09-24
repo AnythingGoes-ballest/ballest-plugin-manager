@@ -30,7 +30,7 @@ FIXTURES = HERE / "test-plugins"          # faulty plugins, installed only for t
 # the registry built from them (nothing is downloaded).
 PLUGIN_REPOS = [HERE.parents[1] / "ballest-grind-timer-plugin", HERE.parents[1] / "ballest-replay-manager",
                 HERE.parents[1] / "ballest-create-extensions", HERE.parents[1] / "ballest-cosmetic-kit",
-                HERE.parents[1] / "ballest-example-cosmetics"]
+                HERE.parents[1] / "ballest-example-cosmetics", HERE.parents[1] / "ballest-player-count"]
 MIRROR = DATA / "test-registry"
 REGISTRY_URL_FILE = DATA / "registry_url.txt"
 
@@ -132,27 +132,25 @@ def footer(where, placed_since):
     check(f"'plugins' button placed in the {where} footer", placed_since.wait(r"footer button 'plugins' placed", 30))
     c = Cursor()
     command("click plugins")
-    check("panel opens on click", c.wait(r"\[plugin-manager\] panel opened", 10))
+    check("the button opens the plugins menu", c.wait(r"\[plugin-manager\] menu opened", 10))
+    if where == "main menu":
+        check("menu window built", c.wait(r"window built with \d+ widgets", 10))
     c = Cursor()
     command("state", 0.5)
     state = c.wait(r"test: state", 5) or ""
-    check("panel shown, the real plugins running", "panel[plugins]=shown" in state and
+    check("menu shown, the real plugins running", "window=shown" in state and
           all(f"{p}=running" in state for p in ("plugin-manager", "hello-world", "replay-manager")), state[-200:])
     screenshot(f"regression_footer_{where}")
     c = Cursor()
     command("click plugins")
-    check("panel closes on second click", c.wait(r"\[plugin-manager\] panel closed", 10))
+    check("the button closes it again", c.wait(r"\[plugin-manager\] menu closed", 10))
 
 
 def console_menu():
     print("plugin manager menu and console")
     c = Cursor()
     command("click plugins")
-    check("panel opens for the menu", c.wait(r"\[plugin-manager\] panel opened", 10))
-    c = Cursor()
-    command("click open")
-    check("menu opens from the panel's open button", c.wait(r"\[plugin-manager\] menu opened", 10))
-    check("menu window built", c.wait(r"window built with \d+ widgets", 10))
+    check("menu opens", c.wait(r"\[plugin-manager\] menu opened", 10))
     command("click window:console", 1.0)       # the menu opens on the installed tab
     c = Cursor()
     command("submit find WBP_Footer_C", 0.5)
@@ -168,7 +166,7 @@ def console_menu():
 def plugin_browser(mirrored):
     print("plugin browser" + ("" if mirrored else " (no plugin repos next to this one: install and remove not tested)"))
     c = Cursor()
-    command("click open")
+    command("click plugins")
     check("menu opens again", c.wait(r"\[plugin-manager\] menu opened", 10))
     command("click window:installed", 1.0)
     c = Cursor()
@@ -180,7 +178,7 @@ def plugin_browser(mirrored):
         # Start from a known state whatever an earlier run left: every registry plugin installed. The first card with
         # a remove button (plugins load in folder order after the plugin manager) is then a registry plugin, which
         # the local copy of the registry can install again.
-        for plugin in ("create-extensions", "grind-timer", "replay-manager", "cosmetic-kit", "example-cosmetics"):
+        for plugin in ("create-extensions", "grind-timer", "replay-manager", "cosmetic-kit", "example-cosmetics", "player-count"):
             if not (GAME_PLUGINS / plugin).exists():
                 c = Cursor()
                 command(f"install {plugin}")
@@ -236,6 +234,32 @@ def dependencies():
     c = Cursor()
     command("install cosmetic-kit")
     check("reinstalling it starts them again", c.wait(r"registry: started example-cosmetics again with cosmetic-kit", 30))
+
+    # Turning a plugin off and on: the card buttons (whichever plugin's card is first), then Cosmetic Kit by id to see
+    # the plugins that depend on it wait for it.
+    off = DATA / "off.txt"
+    def off_ids():
+        return off.read_text(encoding="utf-8").split() if off.exists() else []
+    command("click plugins", 1.0)
+    command("click window:installed", 1.0)
+    c = Cursor()
+    command("click turn off")
+    line = c.wait(r"\[([\w-]+)\] turned off", 10)
+    turned = re.search(r"\[([\w-]+)\] turned off", line).group(1) if line else ""
+    check("a card's turn off stops the plugin, and it stays off for the next launch", bool(turned) and turned in off_ids())
+    time.sleep(1)
+    c = Cursor()
+    command("click turn on")
+    check("turn on starts it again", bool(turned) and c.wait(rf"\[{turned}\] turned on", 10) and turned not in off_ids())
+    c = Cursor()
+    command("enable cosmetic-kit 0")
+    check("turning off a dependency stops the plugins that use it", c.wait(r"\[cosmetic-kit\] turned off", 10) and
+          Cursor.at(c).wait(r"\[example-cosmetics\] stopping: it depends on cosmetic-kit", 5))
+    c = Cursor()
+    command("enable cosmetic-kit 1")
+    check("turning it on starts them again", c.wait(r"\[cosmetic-kit\] turned on", 10) and
+          Cursor.at(c).wait(r"\[example-cosmetics\] loaded", 10) and "cosmetic-kit" not in off_ids())
+    command("click plugins", 1.0)
 
 
 def replay_manager():

@@ -7,6 +7,7 @@
 //   click <label>[#n] | select <first option> <index> | slider <0..1> | press <virtual key> | submit [@<hint>|]<text>
 //   fakereplay on [length] | fakereplay off | replaytime
 //   install <id> | remove <id>             through the registry, as the plugin browser's buttons do
+//   enable <id> 0|1                        turn a plugin off or on, as its card's button does
 //   editor [rotatecontext on|off]         the track editor's selection with each piece's transform
 //   setting <plugin id> <variable> <value> change a plugin's [Setting] as the settings view does
 //   open <map>                             load a map directly (skips the menu's level setup)

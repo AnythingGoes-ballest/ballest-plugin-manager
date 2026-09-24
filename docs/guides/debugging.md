@@ -2,7 +2,7 @@
 
 ## The log
 
-Everything goes to one log, which you read in the game: footer **plugins** > **open** > **console**. It shows the
+Everything goes to one log, which you read in the game: footer **plugins** > **console**. It shows the
 last 400 lines and updates live. The whole log is also saved to
 `%LOCALAPPDATA%\Ballest\Saved\PluginManager\host.log`, started fresh each time the game starts: use it for older
 lines, or when the game won't start.
@@ -36,7 +36,8 @@ why it stopped:
 | `stopped: exceeded its N ms budget` | A callback took longer than its [time budget](../concepts.md#the-time-budget): usually a loop that does too much, or never ends. |
 | `exception: Null pointer access in ... line N` | A handle that was never set (a missing `@window = ...`), or one used before `Main()` set it. |
 | `exception: Index out of bounds ...` | An array read past its end. |
-| `needs cosmetic-kit` | A plugin in its `dependencies` isn't installed, or has stopped. |
+| `off` | Turned off on its card in the plugin manager (**turn on** starts it again). |
+| `needs cosmetic-kit` | A plugin in its `dependencies` isn't installed, is turned off, or has stopped. |
 | `error: an imported function was not found in its dependencies` | An `import ... from "id"` names a function that plugin doesn't have (the log lists each import). |
 | `stopped: crashed in host code (...)` | Something failed inside the host while this plugin was running, usually after a game update. Worth reporting with host.log. |
 

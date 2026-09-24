@@ -36,19 +36,21 @@
     {
       "id": "example-cosmetics",
       "name": "Example Cosmetics",
-      "description": "Examples for Cosmetic Kit: smiley, morph ball and saw meatball balls, a fruit basket hat and a confetti goal explosion.",
+      "description": "Examples for Cosmetic Kit: smiley, AnythingGoes, morph ball and saw meatball balls, a fruit basket hat and a confetti goal explosion.",
       "author": "AnythingGoes",
       "repo": "AnythingGoes-ballest/ballest-example-cosmetics",
-      "version": "0.1.0",
-      "commit": "934632ce7f72a5ae21a6e5bf0f6abea73dc0b008",
+      "version": "0.2.0",
+      "commit": "e5471b21b1ac046acdf88c30976d04cfff62a029",
       "min_host": "0.8.0",
       "icon": "icon.png",
       "dependencies": [
         "cosmetic-kit"
       ],
       "files": {
-        "info.toml": "2adf00b30a7956436c03e8d7e24aa21f4ca5276b855a2eea1d9daefad5af1553",
-        "main.as": "f97ee6b8a6d04e5b2bbdd48741278b4e22b9faf4d710055dc2a237a433ce8c9a",
+        "info.toml": "1cb3d290ff5077e2e4d6e4864df911a1d89eb192c40da16a5c15fc947dfc8224",
+        "main.as": "fb1832466efbd95a2137de41d0d610c7684439f0e76fcc6c457d52163139cf5b",
+        "anythinggoes_ball.png": "f6b8321d494c77f66bd0090f1e3db13ab2cad6758cecfb8b87c7e173362715f9",
+        "anythinggoes_preview.png": "d5d40b3bcf7b84e63b38ca6d64a0d21f2d30d665f3ccfa2772c11fa24fbf05fe",
         "basket_preview.png": "b75bcd038614fcb514efa59f8d614d13e58ae739178ace0f06029a853ea618bb",
         "confetti_preview.png": "0373384c468e6b46d2b8c32b3e02b0cd351e13931dd1916b9c9834b8322247b4",
         "icon.png": "1e165f688871adb5cc9dbda6a7cf679ece8564c275cacee8fc3d47073df93ee6",
@@ -80,18 +82,36 @@
       }
     },
     {
+      "id": "player-count",
+      "name": "Player Count",
+      "description": "Inside a map, the leaderboard's title shows how many players have a time on that track.",
+      "author": "AnythingGoes",
+      "repo": "AnythingGoes-ballest/ballest-player-count",
+      "version": "0.1.0",
+      "commit": "fe84ad250505734e61dce5168e9b1056d8579d08",
+      "min_host": "0.9.0",
+      "icon": "icon.png",
+      "dependencies": [],
+      "files": {
+        "info.toml": "cfbe452c5909f67b81da815f828add6c86a59296cfed441b4cbfe0417ea2c425",
+        "main.as": "d33bcd3d25cfaf4edd6dbda096c4e87257dc8698b158e4a91baa66c74990b128",
+        "icon.png": "71253bed0ebdcde5c8b31c0f0fc05b7182b289df5454e2a99b53a428c4988d3d"
+      }
+    },
+    {
       "id": "replay-manager",
       "name": "Replay Manager",
       "description": "Pause, speed (.1x to 5x), scrubbing, default / follow 3D / free cameras, camera distance, and seeing through objects.",
       "author": "AnythingGoes",
       "repo": "AnythingGoes-ballest/ballest-replay-manager",
-      "version": "0.2.0",
-      "commit": "12973c9a579c8cc6b37ab0b79efb8c6d3da603d6",
-      "min_host": "0.7.0",
+      "version": "0.3.0",
+      "commit": "f7526205a5dcb2e01f6e91da44edbf564d8ce4fd",
+      "min_host": "0.9.0",
       "icon": "icon.png",
+      "dependencies": [],
       "files": {
-        "info.toml": "f3d8f332584f8439d16e2fe1eec1ab3a73127ee39abbe5f4e0654dfe297c93f1",
-        "main.as": "ba53e67d5691c6639d66795341537253ed6d8381422217cde6ebf0df0af6b23a",
+        "info.toml": "dd395c11c9f8efff7bcf602a3dc34c2eb41c5f2725d796449312da85642b3f6c",
+        "main.as": "b338ca8886429c555292c021a97d8fb8b5b28947b60b00f15cb283756e40c3c7",
         "icon.png": "93ff162118c1ede8d14cbd2bc333f7a25823f14f7c6c5732e654059d4460acfe"
       }
     }

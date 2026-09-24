@@ -2,7 +2,7 @@
 
 The Ballest plugin manager lets anyone add features to **Ballest of Them All** with small scripts called plugins. A
 timer, replay controls, extra track editor tools: each is a plugin. Players install them from inside the game
-(footer **plugins** > **open** > **browse**), and they start straight away, with no restart.
+(footer **plugins** > **browse**), and they start straight away, with no restart.
 
 Plugins are written in [AngelScript](https://www.angelcode.com/angelscript/), a small scripting language that looks
 like C++ or C#. You don't need a compiler, Visual Studio or any engine tools. A text editor is enough.

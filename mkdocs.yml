@@ -76,6 +76,7 @@ nav:
       - Replay: reference/api/replay.md
       - Editor: reference/api/editor.md
       - Cosmetics: reference/api/cosmetics.md
+      - Leaderboard: reference/api/leaderboard.md
       - Plugins: reference/api/plugins.md
       - Settings: reference/api/settings.md
       - Registry: reference/api/registry.md

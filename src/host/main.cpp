@@ -12,6 +12,7 @@
 #include "engine.hpp"
 #include "game.hpp"
 #include "input.hpp"
+#include "leaderboard.hpp"
 #include "layout.hpp"
 #include "log.hpp"
 #include "plugins.hpp"
@@ -95,6 +96,7 @@ void HostFrame(float dt) {
     race::Frame();
     replay::Frame(dt);
     cosmetics::Frame();
+    leaderboard::Frame();
     ui::Frame();
     registry::Frame();              // installs and removals land between frames of plugin code
     plugins::Frame(dt);

@@ -98,7 +98,7 @@ struct Widget {
     int focusAttempts = 0;
     bool scrollToEnd = false;                                               // text area
     // live widgets and what they last showed (a text area's main is its ScrollBox, label its TextBlock)
-    eng::Weak main, label, iconA, iconB;
+    eng::Weak main, label, iconA, iconB, iconC, iconD;    // icon buttons: play, pause, down, up
     eng::Weak outer;                    // what sits in the row (a SizeBox around sliders, images, ...)
     uint8_t normalVisibility = 0;       // the outer widget's visibility when shown
     bool shownVisible = true;
@@ -136,6 +136,7 @@ struct Window {
     Color cardBackground{0.12f, 0.13f, 0.16f, 1};
     int addRow = 0;                             // the row new widgets go into
     int views = 1;
+    std::vector<int> scrollingViews;            // views whose rows scroll when taller than the window
     int shownView = 0;                          // the view on screen
     bool visible = true;
     bool layoutDirty = false;                   // rebuild on the next frame
@@ -155,6 +156,7 @@ void StartMain(Window* w);              // ... and after this go back into the r
 int StartView(Window* w);               // widgets added after this go into a new view; returns its number
 void ShowView(Window* w, int view);
 void ClearView(Window* w, int view);    // retires the view's widgets; widgets added after this go into it
+void SetScrolling(Window* w, int view, bool on);  // a view whose rows scroll (not for a view with a fill-height text area)
 void StartHeader(Window* w);            // rows added after this sit above the views, shown with every view,
                                         // until StartView
 void StartCard(Window* w);              // rows added after this share one rounded box, until EndCard

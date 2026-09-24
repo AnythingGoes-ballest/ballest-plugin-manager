@@ -9,7 +9,7 @@ Follow the [install steps](https://github.com/AnythingGoes-ballest/ballest-plugi
 start the game once. You should see **plugins** in the footer at the bottom of the main menu.
 
 The game folder is `...\steamapps\common\Ballest of Them All\Ballest\Binaries\Win64`. From here on, **the plugins
-folder** means the `plugins` folder inside it. In game, footer **plugins** > **open**, then **open plugins folder**
+folder** means the `plugins` folder inside it. In game, footer **plugins**, then **open plugins folder**
 at the top right of the menu, opens it for you.
 
 ## 2. Make the folder
@@ -51,7 +51,7 @@ void Main()
 ```
 
 `Main()` runs once, when the plugin loads. Start the game (or restart it), then open the log: footer **plugins** >
-**open** > **console**. You'll find:
+**console**. You'll find:
 
 ```
 [info] [race-clock] loaded Race Clock 0.1.0

@@ -16,6 +16,7 @@
 #include "api.hpp"
 #include "engine.hpp"
 #include "game.hpp"
+#include "leaderboard.hpp"
 #include "log.hpp"
 #include "settings.hpp"
 #include "ui.hpp"
@@ -48,6 +49,23 @@ ULONGLONG gGameWorkLeft = 0;            // how much more game work this callback
 bool gInFrame = false;
 int gRunning = -1;                      // the plugin whose script is running, or -1
 std::string gCrashNext;                 // test hook: the plugin whose next callback faults on purpose
+std::set<std::string> gOff;             // plugins the player turned off: listed, not started (saved in off.txt)
+std::vector<std::pair<std::string, bool>> gToggles;     // asked for during plugin code, applied after it
+
+std::wstring OffFile() { return hostlog::DataDir() + L"\\off.txt"; }
+
+void ReadOff() {
+    std::ifstream f(OffFile().c_str());
+    for (std::string line; std::getline(f, line);) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (!line.empty()) gOff.insert(line);
+    }
+}
+
+void WriteOff() {
+    std::ofstream f(OffFile().c_str(), std::ios::trunc);
+    for (const auto& id : gOff) f << id << "\n";
+}
 constexpr ULONGLONG kMaxGameWorkMs = 5000;
 
 // --- manifest: the subset of TOML info.toml uses ([section], key = "string" | number | ["a", "b"]) ------------------
@@ -193,6 +211,11 @@ Plugin* Loaded(const std::string& id);
 // of the function running. The script builder keeps each global's metadata, which is where [Setting] tags come from.
 void Start(size_t index) {
     Plugin& p = gPlugins[index];
+    if (gOff.count(p.id) && !p.essential) {
+        p.status = "off";
+        hostlog::Write("info", p.id, "off (turned off in the plugin manager)");
+        return;
+    }
     if (!p.minHost.empty() && CompareVersions(p.minHost, kHostVersion) > 0) {
         p.status = "needs host " + p.minHost;
         hostlog::Write("error", p.id, p.status + " (this is " + kHostVersion + ")");
@@ -202,7 +225,7 @@ void Start(size_t index) {
         const Plugin* d = Loaded(dependency);
         if (!d || !d->running) {
             p.status = "needs " + dependency;
-            hostlog::Write("error", p.id, p.status + " (install it, or it stopped)");
+            hostlog::Write("error", p.id, p.status + (gOff.count(dependency) ? " (it is turned off)" : " (install it, or it stopped)"));
             return;
         }
     }
@@ -264,6 +287,7 @@ void LoadAll(const std::wstring& pluginsDir) {
     }
     gEngine->SetMessageCallback(asFUNCTION(MessageCallback), nullptr, asCALL_CDECL);
     api::Register(gEngine);
+    ReadOff();
 
     WIN32_FIND_DATAW fd;
     HANDLE find = FindFirstFileW((pluginsDir + L"\\*").c_str(), &fd);
@@ -314,6 +338,9 @@ void Frame(float dt) {
         if (p.running && p.update) Run(p, p.update, &dt);
     }
     gInFrame = false;
+    const auto toggles = std::move(gToggles);
+    gToggles.clear();
+    for (const auto& [id, on] : toggles) SetEnabled(id, on);
     settings::Frame();
 }
 
@@ -372,6 +399,7 @@ void Release(size_t i) {
     // Its script is gone, so nothing can use its UI handles any more.
     ui::RemoveOwner(static_cast<int>(i));
     game::RequestCursor(static_cast<int>(i), false);
+    leaderboard::RemoveOwner(static_cast<int>(i));
 }
 
 // Plugins that depend on `id` lose their scripts before it does (their imported functions point into its module),
@@ -402,11 +430,40 @@ void Unload(const std::string& id) {
     }
 }
 
+bool Restart(const std::string& id);
+
+bool SetEnabled(const std::string& id, bool on) {
+    if (gInFrame) {                     // from a plugin (the plugin manager's button): after this frame's plugin code
+        gToggles.emplace_back(id, on);
+        return true;
+    }
+    Plugin* p = Loaded(id);
+    if (!p || p->essential || on == !gOff.count(id)) return false;
+    if (on) {
+        gOff.erase(id);
+        WriteOff();
+        hostlog::Write("info", id, "turned on");
+        Restart(id);
+        for (const auto& dependent : Dependents(id)) Restart(dependent);     // the ones waiting for it
+    } else {
+        gOff.insert(id);
+        WriteOff();
+        SuspendDependents(id);
+        const size_t i = static_cast<size_t>(p - gPlugins.data());
+        Release(i);
+        gPlugins[i].status = "off";
+        hostlog::Write("info", id, "turned off");
+    }
+    return true;
+}
+
+bool IsOff(const std::string& id) { return gOff.count(id) > 0; }
+
 bool Restart(const std::string& id) {
     if (gInFrame) return false;
     for (size_t i = 0; i < gPlugins.size(); ++i) {
         Plugin& p = gPlugins[i];
-        if (p.id != id || p.removed || p.running) continue;
+        if (p.id != id || p.removed || p.running || gOff.count(id)) continue;
         Release(i);
         Start(i);
         return gPlugins[i].running;

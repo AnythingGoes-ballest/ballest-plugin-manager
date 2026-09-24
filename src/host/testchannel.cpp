@@ -448,6 +448,9 @@ void Run(const std::string& cmd) {
              for (eng::Obj o : eng::ReadObjArray(list.front(), Arg(a, 3)))
                  Report("  [" + std::to_string(i++) + "] " + (eng::IsLive(o) ? eng::PathOf(o) : std::string("?")));
          }},
+        {"enable", [](const Args& a, const std::string& c) {       // enable <plugin id> 0|1: turn a plugin off or on
+             Report(c + (plugins::SetEnabled(Arg(a, 1), Arg(a, 2) == "1") ? " -> ok" : " -> nothing to do"));
+         }},
         {"gc", [](const Args&, const std::string&) {
              eng::Call(eng::FindCdo("KismetSystemLibrary"), "CollectGarbage");
              Report("gc requested");

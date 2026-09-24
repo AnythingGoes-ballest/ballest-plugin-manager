@@ -55,10 +55,12 @@ void ShowImage(Obj image, const std::string& path) {
 Obj BuildIconButton(Obj tree, Widget& item) {
     Obj button = w::Spawn("Button", tree), frame = w::Spawn("SizeBox", tree), overlay = w::Spawn("Overlay", tree);
     Obj pause = w::Spawn("HorizontalBox", tree), play = w::Spawn("VerticalBox", tree);
-    if (!button || !frame || !overlay || !pause || !play) return nullptr;
+    Obj down = w::Spawn("VerticalBox", tree), up = w::Spawn("VerticalBox", tree);
+    if (!button || !frame || !overlay || !pause || !play || !down || !up) return nullptr;
     w::Unfocusable(button);
     eng::Call(button, "SetBackgroundColor", kButtonColor);
-    eng::Call(frame, "SetWidthOverride", 56.0f);
+    const bool arrow = item.text == "down" || item.text == "up";
+    eng::Call(frame, "SetWidthOverride", arrow ? 30.0f : 56.0f);
     eng::Call(frame, "SetHeightOverride", 22.0f);
     for (int i = 0; i < 2; ++i) w::AddToRow(pause, w::Block(tree, 5, 18, kWhite), i == 0 ? 0.0f : 5.0f);
     constexpr int kRows = 9;
@@ -67,12 +69,22 @@ Obj BuildIconButton(Obj tree, Widget& item) {
         if (Obj slot = eng::Call(play, "AddChildToVerticalBox", w::Block(tree, width, 2, kWhite)).ReturnObj())
             eng::Call(slot, "SetHorizontalAlignment", w::kAlignLeft);
     }
-    for (Obj icon : {pause, play}) w::AddToOverlay(overlay, icon, w::kAlignCenter, w::kAlignCenter, {0, 0, 0, 0});
+    // Arrows: rows of shrinking (down) or growing (up) width, centred.
+    constexpr int kArrowRows = 6;
+    for (int r = 0; r < kArrowRows; ++r)
+        for (Obj box : {down, up}) {
+            const int step = box == down ? kArrowRows - 1 - r : r;
+            if (Obj slot = eng::Call(box, "AddChildToVerticalBox", w::Block(tree, 2.0f + 2.5f * static_cast<float>(step), 2, kWhite)).ReturnObj())
+                eng::Call(slot, "SetHorizontalAlignment", w::kAlignCenter);
+        }
+    for (Obj icon : {pause, play, down, up}) w::AddToOverlay(overlay, icon, w::kAlignCenter, w::kAlignCenter, {0, 0, 0, 0});
     w::AddChild(frame, overlay);
     w::AddChild(button, frame);
     item.main = eng::MakeWeak(button);
     item.iconA = eng::MakeWeak(play);
     item.iconB = eng::MakeWeak(pause);
+    item.iconC = eng::MakeWeak(down);
+    item.iconD = eng::MakeWeak(up);
     item.shownText.clear();                 // the right icon is shown on the first sync
     return button;
 }
@@ -220,7 +232,7 @@ void Forget(Window& win) {
     win.shownVisible = false;
     win.appliedView = -1;
     for (auto& item : win.items) {
-        item->main = item->label = item->iconA = item->iconB = item->outer = {};
+        item->main = item->label = item->iconA = item->iconB = item->iconC = item->iconD = item->outer = {};
         item->wasPressed = item->dragging = item->focused = false;
     }
 }
@@ -291,9 +303,13 @@ void Build(Window& win) {
     std::vector<Obj> viewBoxes;
     for (int v = 0; v < win.views; ++v) {
         Obj box = w::Spawn("VerticalBox", tree);
-        w::FillSlot(eng::Call(column, "AddChildToVerticalBox", box).ReturnObj());
+        // A scrolling view is its rows in a ScrollBox that takes the height; it is what is shown and hidden.
+        const bool scrolls = std::find(win.scrollingViews.begin(), win.scrollingViews.end(), v) != win.scrollingViews.end();
+        Obj outer = scrolls ? w::Spawn("ScrollBox", tree) : box;
+        if (scrolls && outer) w::AddChild(outer, box);
+        w::FillSlot(eng::Call(column, "AddChildToVerticalBox", outer).ReturnObj());
         viewBoxes.push_back(box);
-        win.viewBoxes.push_back(eng::MakeWeak(box));
+        win.viewBoxes.push_back(eng::MakeWeak(outer));
     }
 
     // A row that holds something with a fill height (a text area of height 0) takes the leftover height. The rows
@@ -445,9 +461,10 @@ void Sync(Widget& item) {
                 if (item.kind == Kind::Button) {
                     w::SetText(eng::Get(item.label), item.text);
                 } else {
-                    const bool play = item.text == "play";
-                    w::SetVisibility(eng::Get(item.iconA), play ? w::kHitTestInvisible : w::kCollapsed);
-                    w::SetVisibility(eng::Get(item.iconB), play ? w::kCollapsed : w::kHitTestInvisible);
+                    const std::string names[4] = {"play", "pause", "down", "up"};
+                    const eng::Weak* icons[4] = {&item.iconA, &item.iconB, &item.iconC, &item.iconD};
+                    for (int n = 0; n < 4; ++n)
+                        w::SetVisibility(eng::Get(*icons[n]), item.text == names[n] ? w::kHitTestInvisible : w::kCollapsed);
                 }
                 item.shownText = item.text;
             }
@@ -565,6 +582,15 @@ int StartView(Window* win) {
     win->openCard = -1;
     AddRow(win, win->views++);
     return win->views - 1;
+}
+
+void SetScrolling(Window* win, int view, bool on) {
+    auto& list = win->scrollingViews;
+    const auto it = std::find(list.begin(), list.end(), view);
+    if (on == (it != list.end())) return;
+    if (on) list.push_back(view);
+    else list.erase(it);
+    win->layoutDirty = true;
 }
 
 void ShowView(Window* win, int view) {

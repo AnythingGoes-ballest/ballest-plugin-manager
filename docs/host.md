@@ -125,7 +125,7 @@ Real replays cannot be started by script, so camera modes on a real replay are c
 - `python tools/measure_follow.py` samples the replay camera in default and follow 3D modes during a real replay
 
 Test channel commands (one line written to `test_command.txt` next to the log) are listed in
-`src/host/testchannel.hpp`. The same commands can be typed in game: footer **plugins** > **open** > **console**.
+`src/host/testchannel.hpp`. The same commands can be typed in game: footer **plugins** > **console**.
 
 ## The docs site
 

@@ -15,6 +15,7 @@
 #include "cosmetics.hpp"
 #include "game.hpp"
 #include "input.hpp"
+#include "leaderboard.hpp"
 #include "log.hpp"
 #include "plugins.hpp"
 #include "editor.hpp"
@@ -86,6 +87,10 @@ void PluginInstall(const std::string& id) {
 }
 void PluginRemove(const std::string& id) {
     if (MayManage()) registry::Remove(id);
+}
+bool PluginEnabled(unsigned i) { return !plugins::IsOff(PluginAt(i).id); }
+void PluginSetEnabled(const std::string& id, bool on) {
+    if (MayManage()) plugins::SetEnabled(id, on);
 }
 void UpdateHost() {
     if (MayManage()) registry::UpdateHost();
@@ -228,6 +233,7 @@ void WinBlocksClicks(ui::Window* w, bool block) {
 }
 void WinShowView(ui::Window* w, int view) { ui::ShowView(w, view); }
 void WinClearView(ui::Window* w, int view) { ui::ClearView(w, view); }
+void WinSetScrolling(ui::Window* w, int view, bool on) { ui::SetScrolling(w, view, on); }
 ui::Widget* WinImage(ui::Window* w, const std::string& path, float width, float height) {
     ui::Widget* image = ui::AddWidget(w, ui::Kind::Image, path, width);
     image->height = height;
@@ -382,6 +388,8 @@ void RegisterCore() {
     Global("string Description(uint)", asFUNCTION(PluginDescription));
     Global("string Icon(uint)", asFUNCTION(PluginIcon));
     Global("bool Essential(uint)", asFUNCTION(PluginEssential));
+    Global("bool Enabled(uint)", asFUNCTION(PluginEnabled));
+    Global("void SetEnabled(const string &in id, bool)", asFUNCTION(PluginSetEnabled));
     Global("bool IsInstalled(const string &in id)", asFUNCTION(PluginInstalled));
     Global("string InstalledVersion(const string &in id)", asFUNCTION(PluginInstalledVersion));
     Global("void Install(const string &in id)", asFUNCTION(PluginInstall));
@@ -482,6 +490,7 @@ void RegisterUi() {
     Method("Window", "bool get_movable() property", asFUNCTION(WinGetMovable));
     Method("Window", "void ShowView(int)", asFUNCTION(WinShowView));
     Method("Window", "void ClearView(int)", asFUNCTION(WinClearView));
+    Method("Window", "void SetScrolling(int, bool)", asFUNCTION(WinSetScrolling));
     Method("Window", "Image@ AddImage(const string &in path, float width, float height)", asFUNCTION(WinImage));
     Method("Window", "TextArea@ AddTextArea(float width, float height, float size = 14)", asFUNCTION(WinTextArea));
     Method("Window", "TextInput@ AddTextInput(float width, const string &in hint = \"\", float size = 18)", asFUNCTION(WinTextInput));
@@ -623,6 +632,14 @@ int CosmeticsCount(int kind) { return cosmetics::Count(KindOf(kind)); }
 bool CosmeticsEquip(int kind, const std::string& id) { return kind >= 0 && kind <= 2 && cosmetics::Equip(KindOf(kind), id); }
 std::string CosmeticsEquipped(int kind) { return kind >= 0 && kind <= 2 ? cosmetics::Equipped(KindOf(kind)) : ""; }
 
+void LeaderboardNote(const std::string& note) { leaderboard::SetTitleNote(plugins::Current(), note); }
+
+void RegisterLeaderboard() {
+    e->SetDefaultNamespace("Leaderboard");
+    Global("int Players()", asFUNCTION(leaderboard::Players));
+    Global("void SetTitleNote(const string &in)", asFUNCTION(LeaderboardNote));
+}
+
 void RegisterCosmetics() {
     e->SetDefaultNamespace("Cosmetics");
     Check(e->RegisterEnum("Kind"), "Cosmetics::Kind");
@@ -671,6 +688,7 @@ void Register(asIScriptEngine* engine) {
     RegisterEditor();
     RegisterReplay();
     RegisterCosmetics();
+    RegisterLeaderboard();
     e->SetDefaultNamespace("");
 }
 

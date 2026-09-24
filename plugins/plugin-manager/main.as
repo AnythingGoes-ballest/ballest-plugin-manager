@@ -1,25 +1,19 @@
 // Plugin Manager: a "plugins" entry in the game's footer (main menu, inside maps and in the track editor) that opens
-// a panel listing every plugin the host found, with its version and status. The list refreshes every second while
-// the panel is open, so a plugin that stops (an error, or overrunning its time budget) shows as stopped straight away.
-//
-// The panel's "open" button opens the plugin manager menu: tabs along the top, one card per plugin.
-//   installed  every plugin running here: status, and update / settings / remove / github. When the registry names
-//              a newer plugin manager (the host and this plugin), a card at the top offers it; the update finishes
-//              when the game restarts.
+// the plugin manager menu, and closes it again: tabs along the top, one card per plugin.
+//   installed  every plugin here: status, and update / settings / turn off or on / remove / github. A plugin turned
+//              off stays installed but doesn't run, also after a restart. When the registry names a newer plugin
+//              manager (the host and this plugin), a card at the top offers it; the update finishes when the game
+//              restarts.
 //   browse     plugins in the registry that aren't installed: install / github. Installs take effect straight away.
 //   console    the host log as it is written, and host commands (find, props, functions, ...; the full list is in
 //              src/host/testchannel.hpp): type one and press Enter, or click run. "show" filters the log: everything,
 //              only the commands typed here and their replies, the host, or one plugin.
-//   Escape goes up one level: a settings page back to the installed tab, a tab out of the menu, and closes the
-//   footer panel.
+//   Escape goes up one level: a settings page back to the installed tab, a tab out of the menu.
 //   settings   opened from a plugin's card: that plugin's [Setting] variables (a slider and a text box for a number
 //              with min and max, on/off for a bool, a text box otherwise, each with reset), and "reset position"
 //              when it has windows that can be dragged.
 
 UI::FooterButton@ button;
-UI::Panel@ panel;
-UI::FooterButton@ openButton;
-double lastRefresh = 0;
 
 // Colours (red, green, blue). The game's widget colours are linear, so each is the linear value of the colour in
 // the comment (a linear 0.05 shows as about 0.25 on screen).
@@ -59,7 +53,8 @@ const uint LOG_LINES_SHOWN = 400;
 // installed and browse: the buttons on the cards and what each does
 UI::Button@ refreshButton;
 array<UI::Button@> cardButtons;
-array<string> cardActions;      // "install:<id>", "remove:<id>", "settings:<id>", "open:<url>" or "host:<version>"
+array<string> cardActions;      // "install:<id>", "remove:<id>", "settings:<id>", "on:<id>", "off:<id>", "open:<url>"
+                                // or "host:<version>"
 string shownCards;              // what the cards were built from; rebuilt when it changes
 double lastCardCheck = 0;
 
@@ -82,10 +77,6 @@ void Main()
 {
     Log::Info("plugin manager started on host " + Host::Version());
     @button = UI::AddFooterButton("plugins");
-    @panel = UI::CreatePanel();
-    panel.title = "plugins";
-    @openButton = panel.AddButton("open");
-    Refresh();
     BuildMenu();
 }
 
@@ -94,17 +85,6 @@ string HostUpdate()
 {
     string latest = Registry::HostVersion();
     return latest != "" && CompareVersions(latest, Host::Version()) > 0 ? latest : "";
-}
-
-void Refresh()
-{
-    panel.Clear();
-    if (HostUpdate() != "")
-        panel.AddLine(Plugins::HostUpdateState() == "restart" ? "plugin manager " + HostUpdate() + " installed: restart the game"
-                                                              : "plugin manager " + HostUpdate() + " available: open > installed");
-    for (uint i = 0; i < Plugins::Count(); i++)
-        panel.AddLine(Plugins::Name(i) + "   " + Plugins::Version(i) + "   " + Plugins::Status(i));
-    lastRefresh = Host::Time();
 }
 
 // --- the menu -------------------------------------------------------------------------------------------------------
@@ -142,6 +122,10 @@ void BuildMenu()
     consoleView = menu.StartView();
     BuildConsole();
     settingsView = menu.StartView();
+    // Long lists scroll; the console's log already fills its view and scrolls itself.
+    menu.SetScrolling(installedView, true);
+    menu.SetScrolling(browseView, true);
+    menu.SetScrolling(settingsView, true);
     ShowView(installedView);
 }
 
@@ -169,7 +153,6 @@ void ShowView(int view)
 
 void OpenMenu()
 {
-    panel.visible = false;
     menu.visible = true;
     UI::SetCursorVisible(true);
     ShowView(shownView);
@@ -335,7 +318,8 @@ string CardState()
     for (uint i = 0; i < Registry::Count(); i++)
         state += "|r:" + Registry::Id(i) + ":" + Registry::Version(i) + ":" + Registry::Icon(i) + ":" + Plugins::Pending(Registry::Id(i));
     for (uint i = 0; i < Plugins::Count(); i++)
-        state += "|p:" + Plugins::Id(i) + ":" + Plugins::Version(i) + ":" + Plugins::Status(i) + ":" + Plugins::Pending(Plugins::Id(i));
+        state += "|p:" + Plugins::Id(i) + ":" + Plugins::Version(i) + ":" + Plugins::Status(i) + ":" + Plugins::Pending(Plugins::Id(i)) +
+                 (Plugins::Enabled(i) ? "" : ":off");
     return state;
 }
 
@@ -415,6 +399,8 @@ void AddInstalledCard(uint p)
         else
             Muted(state);
     }
+    else if (!Plugins::Enabled(p))
+        @state = Muted(menu.AddText("off", 16));
     else if (status != "running")
     {
         @state = menu.AddText(status, 16);
@@ -437,7 +423,13 @@ void AddInstalledCard(uint p)
     if (HasSettings(id))
         AddCardButton("settings", "settings:" + id);
     if (!busy && !Plugins::Essential(p))
+    {
+        if (Plugins::Enabled(p))
+            AddCardButton("turn off", "off:" + id);
+        else
+            Primary(AddCardButton("turn on", "on:" + id));
         AddCardButton("remove", "remove:" + id);
+    }
     if (r >= 0)
         AddCardButton("github", "open:" + Registry::Page(r));
     AddCardDescription(r >= 0 ? Registry::Description(r) : Plugins::Description(p));
@@ -540,6 +532,8 @@ void UpdateCards()
             Plugins::Install(target);
         else if (verb == "remove")
             Plugins::Remove(target);
+        else if (verb == "off" || verb == "on")
+            Plugins::SetEnabled(target, verb == "on");
         else if (verb == "open")
             Host::OpenUrl(target);
         else if (verb == "host")
@@ -758,19 +752,15 @@ void UpdateMenu()
 
 void Update(float dt)
 {
+    // The footer button opens the menu, and closes it while it's open.
     if (button.Clicked())
     {
-        panel.visible = !panel.visible;
-        if (panel.visible)
-            Refresh();
-        Log::Info("panel " + (panel.visible ? "opened" : "closed"));
+        if (menu.visible)
+            CloseMenu();
+        else
+            OpenMenu();
+        return;
     }
-    if (openButton.Clicked())
-        OpenMenu();
-    else if (panel.visible && !menu.visible && Input::Pressed(Input::Escape))
-        panel.visible = false;
-    if (panel.visible && Host::Time() - lastRefresh > 1.0)
-        Refresh();
     if (menu.visible)
         UpdateMenu();
 }

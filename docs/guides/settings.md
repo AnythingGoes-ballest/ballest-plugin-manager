@@ -1,7 +1,7 @@
 # Settings
 
 Settings are global variables with a `[Setting]` tag, the same way Openplanet does them. Each plugin with settings
-gets its own settings page in the plugin manager: footer **plugins** > **open** > **installed**, then **settings** on
+gets its own settings page in the plugin manager: footer **plugins** > **installed**, then **settings** on
 the plugin's card. The page saves the player's changes and tells your plugin about them.
 
 ```cpp

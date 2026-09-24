@@ -8,7 +8,7 @@
 
 namespace plugins {
 
-constexpr const char* kHostVersion = "0.8.0";
+constexpr const char* kHostVersion = "0.9.0";
 
 void LoadAll(const std::wstring& pluginsDir);
 void Frame(float dt);
@@ -20,6 +20,10 @@ bool Load(const std::string& id);           // a plugin folder that appeared (in
 void Unload(const std::string& id);         // stops it, frees its script and takes its UI off screen
 std::vector<std::string> Dependents(const std::string& id);    // loaded plugins that list it in their dependencies
 bool Restart(const std::string& id);        // starts a loaded plugin that is not running (its dependency is back)
+// Turns a plugin off (stopped, listed as "off", its dependents waiting for it) or back on; remembered across launches
+// (off.txt next to host.log). False for the plugin manager itself, or when nothing changes.
+bool SetEnabled(const std::string& id, bool on);
+bool IsOff(const std::string& id);
 
 struct Info {
     std::string id, name, version, author, description, status;

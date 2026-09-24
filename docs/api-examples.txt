@@ -190,6 +190,18 @@ The path of the default icon the plugin manager ships, used for plugins that hav
 --
 string icon = Plugins::Icon(i) == "" ? Plugins::DefaultIcon() : Plugins::Icon(i);
 
+== Plugins::Enabled
+Whether the player has the plugin turned on. A plugin turned off stays installed and listed (its status is `off`)
+but doesn't run, and the plugins that depend on it wait for it.
+--
+string state = Plugins::Enabled(i) ? "on" : "off";
+
+== Plugins::SetEnabled
+**Plugin manager only.** Turns a plugin off or back on, straight away and for later launches. Its settings and saved
+data are kept. The plugin manager itself can't be turned off.
+--
+Plugins::SetEnabled("grind-timer", false);
+
 == Plugins::Folder
 The running plugin's own folder, ending in a backslash. Use it to name files the plugin ships, such as images for
 [cosmetics](cosmetics.md).
@@ -369,7 +381,7 @@ if (Registry::HostVersion() != "" && Registry::HostVersion() != Host::Version())
     statusText.text = "plugin manager " + Registry::HostVersion() + " is available";
 
 @@ Console
-Runs the host's own commands, the same ones as the in-game console (footer **plugins** > **open** > **console**).
+Runs the host's own commands, the same ones as the in-game console (footer **plugins** > **console**).
 They're for measuring and debugging. The list is in `src/host/testchannel.hpp`.
 
 == Console::Run
@@ -575,7 +587,8 @@ Adds a button with a text label.
 UI::Button@ resetButton = window.AddButton("reset");
 
 == UI::Window.AddIconButton
-Adds a button that shows a drawn icon: `"play"` or `"pause"`.
+Adds a button that shows a drawn icon: `"play"`, `"pause"`, `"down"` or `"up"` (arrows, for showing and hiding
+more of a window). Change it with `icon`.
 --
 UI::Button@ playButton = window.AddIconButton("pause");
 // later: playButton.icon = paused ? "play" : "pause";
@@ -719,6 +732,13 @@ Shows one view (a number from `StartView`) and hides the others.
 --
 if (logNav.Clicked())
     window.ShowView(logView);
+
+== UI::Window.SetScrolling
+Makes a view scroll (mouse wheel or its scroll bar) when its rows are taller than the window, such as a long list of
+cards. Not for a view with a text area of height 0 (that one fills the height instead).
+--
+int list = window.StartView();
+window.SetScrolling(list, true);
 
 == UI::Window.ClearView
 Removes every widget in a view. Widgets added afterwards go into that view, so it can be rebuilt.
@@ -1217,3 +1237,20 @@ Cosmetics::Equip(Cosmetics::Ball, Storage::Get("ball", ""));
 The custom cosmetic the player wears, or `""` while it's one of the game's. It changes when the player picks a tile.
 --
 Storage::Set("ball", Cosmetics::Equipped(Cosmetics::Ball));
+
+@@ Leaderboard
+The leaderboard on the right while you're in a map.
+
+== Leaderboard::Players
+How many players have a time on the leaderboard on screen inside a map (Steam's count for that board), or -1 when
+there isn't one on screen or Steam hasn't answered yet.
+--
+int players = Leaderboard::Players();
+if (players > 0)
+    Log::Info(players + " players on this track");
+
+== Leaderboard::SetTitleNote
+Shows a short note after the leaderboard's title, kept there when the game rebuilds its screens; `""` removes it. It
+goes when the plugin stops. If two plugins set one, the last one shows.
+--
+Leaderboard::SetTitleNote("· 12,345 players");
