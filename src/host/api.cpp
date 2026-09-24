@@ -206,6 +206,11 @@ ui::Widget* WinTextArea(ui::Window* w, float width, float height, float size) {
     return area;
 }
 int WinStartView(ui::Window* w) { return ui::StartView(w); }
+void WinSetZOrder(ui::Window* w, int z) {
+    w->zOrder = z;
+    w->layoutDirty = true;
+}
+int WinGetZOrder(ui::Window* w) { return w->zOrder; }
 void WinBlocksClicks(ui::Window* w, bool block) {
     w->blocksClicks = block;
     w->layoutDirty = true;
@@ -376,6 +381,8 @@ void RegisterUi() {
     Method("Window", "void SetScreenSize(float width, float height)", asFUNCTION(WinScreenSize));
     Method("Window", "int StartView()", asFUNCTION(WinStartView));
     Method("Window", "void SetBlocksClicks(bool)", asFUNCTION(WinBlocksClicks));
+    Method("Window", "void set_zOrder(int) property", asFUNCTION(WinSetZOrder));
+    Method("Window", "int get_zOrder() property", asFUNCTION(WinGetZOrder));
     Method("Window", "void set_movable(bool) property", asFUNCTION(WinSetMovable));
     Method("Window", "bool get_movable() property", asFUNCTION(WinGetMovable));
     Method("Window", "void ShowView(int)", asFUNCTION(WinShowView));

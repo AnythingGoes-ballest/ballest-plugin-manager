@@ -92,6 +92,7 @@ void BuildMenu()
     menu.SetScreenSize(0.9f, 0.9f);
     menu.SetBackground(0.02f, 0.02f, 0.03f, 0.94f);
     menu.SetBlocksClicks(true);         // the game's menu underneath must not get clicks through it
+    menu.zOrder = 500;                  // in front of every other plugin's windows (they default to 100)
     menu.visible = false;
 
     menu.StartSidebar(220);

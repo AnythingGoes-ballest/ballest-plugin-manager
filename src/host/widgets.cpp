@@ -188,6 +188,17 @@ Obj Block(Obj outer, float width, float height, Color c) {
     return box;
 }
 
+bool NewScreen(Obj controller, Obj* host, Obj* tree, Obj* canvas) {
+    *host = eng::Call(eng::FindCdo("WidgetBlueprintLibrary"), "Create", controller, eng::FindClass("UserWidget"), controller).ReturnObj();
+    if (!*host) return false;
+    *tree = eng::ReadObj(*host, "WidgetTree");
+    if (!*tree && (*tree = Spawn("WidgetTree", *host))) eng::WriteBytes(*host, "WidgetTree", tree, sizeof *tree);
+    *canvas = Spawn("CanvasPanel", *tree);
+    if (!*tree || !*canvas) return false;
+    eng::WriteBytes(*tree, "RootWidget", canvas, sizeof *canvas);
+    return true;
+}
+
 Obj FindFirst(Obj widget, Obj cls) {
     std::vector<std::pair<Obj, int>> pending{{widget, 0}};
     while (!pending.empty()) {

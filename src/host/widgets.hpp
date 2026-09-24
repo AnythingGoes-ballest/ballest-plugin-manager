@@ -52,6 +52,13 @@ void Unfocusable(Obj widget);           // so Space never presses the last click
 void Transparent(Obj button);           // a Button that draws nothing but its content
 
 Obj Block(Obj outer, float width, float height, Color c);          // a solid rectangle
+
+// A new, empty on-screen widget of its own (a UserWidget owned by the player controller) whose root is a
+// CanvasPanel. Fill it, then AddToViewport with a z-order: higher is drawn in front. False if it could not be made.
+bool NewScreen(Obj controller, Obj* host, Obj* tree, Obj* canvas);
+
+// Footer panels are in front of everything: plugin windows default to z-order 100, the plugin menu uses 500.
+constexpr int32_t kPanelLayer = 1000;
 Obj FindFirst(Obj widget, Obj cls);     // the first widget of a class under `widget`, searching user widgets
 
 }  // namespace ui::widgets

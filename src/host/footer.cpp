@@ -2,6 +2,7 @@
 // menu (WBP_MainMenu_UIManager_C) and inside maps (WBP_RaceUIManager_C); whichever is live is used, and the
 // entries are rebuilt whenever the game replaces it. Measured tree: SizeBox > Overlay > [Image, HorizontalBox];
 // the HorizontalBox holds master volume, music, an empty Overlay (the flexible gap), Discord, language.
+#include "game.hpp"
 #include "log.hpp"
 #include "ui.hpp"
 #include "widgets.hpp"
@@ -20,7 +21,7 @@ struct Footer {
     eng::Weak footer;
     eng::Weak tree;         // the footer's WidgetTree: outer of everything built here
     eng::Weak gap;          // the empty Overlay before Discord: buttons sit at its right edge
-    eng::Weak menuRoot;     // the owning menu's root panel (Overlay or CanvasPanel): panels go there
+    eng::Weak menuRoot;     // the owning menu's root panel (Overlay or CanvasPanel), logged as a layout check
     eng::Weak refText;      // a footer text block whose font and colour are copied
 } gFooter;
 
@@ -47,7 +48,8 @@ void ForgetButton(FooterButton& b) {
 void ForgetWidgets() {
     for (auto& b : gButtons) ForgetButton(*b);
     for (auto& p : gPanels) {
-        p->border = p->box = {};
+        if (Obj host = eng::Get(p->host)) eng::Call(host, "RemoveFromParent");     // still up from the last footer
+        p->host = p->border = p->box = {};
         p->shownVisible = p->shownOnce = false;
         for (auto& b : p->buttons) ForgetButton(*b);
     }
@@ -78,9 +80,9 @@ bool Adopt(Obj footer) {
     return true;
 }
 
-// Text styled like the footer's own.
-Obj FooterText(const std::string& s, float sizeScale = 1.0f) {
-    Obj text = w::Spawn("TextBlock", eng::Get(gFooter.tree));
+// Text styled like the footer's own, owned by `tree` (the footer's, or a panel's).
+Obj FooterText(const std::string& s, float sizeScale = 1.0f, Obj tree = nullptr) {
+    Obj text = w::Spawn("TextBlock", tree ? tree : eng::Get(gFooter.tree));
     w::CopyFont(eng::Get(gFooter.refText), text, sizeScale);
     w::SetText(text, s);
     return text;
@@ -133,26 +135,28 @@ void SyncButton(FooterButton& b) {
     }
 }
 
+// A panel is an on-screen widget of its own in front of everything (the game's menus and plugin windows), placed
+// bottom-right just above the footer. It is built while a footer is live and goes when the footer does.
 void BuildPanel(Panel& p) {
-    Obj tree = eng::Get(gFooter.tree), root = eng::Get(gFooter.menuRoot);
+    Obj host = nullptr, tree = nullptr, canvas = nullptr;
+    if (!w::NewScreen(game::PlayerController(), &host, &tree, &canvas)) return;
     Obj border = w::Spawn("Border", tree), box = w::Spawn("VerticalBox", tree);
-    if (!border || !box || !root) return;
+    if (!border || !box) return;
     eng::Call(border, "SetBrushColor", Color{0.008f, 0.008f, 0.012f, 1.0f});
     eng::Call(border, "SetPadding", w::Margin{20, 14, 20, 16});
     eng::Call(border, "SetContent", box);
-    // Bottom-right, just above the footer.
-    const Obj slot = eng::IsA(root, eng::FindClass("Overlay")) ? w::AddToOverlay(root, border, w::kAlignEnd, w::kAlignEnd, {0, 0, 24, 56})
-                                                                : w::AddToCanvas(root, border, 1, 1, {1, 1}, {-24, -56});
-    if (!slot) return;
+    if (!w::AddToCanvas(canvas, border, 1, 1, {1, 1}, {-24, -56})) return;
     w::SetVisibility(border, w::kCollapsed);
+    eng::Call(host, "AddToViewport", w::kPanelLayer);
+    p.host = eng::MakeWeak(host);
     p.border = eng::MakeWeak(border);
     p.box = eng::MakeWeak(box);
     p.shownVisible = p.shownOnce = false;
 }
 
 // A panel button is a plain button with the footer's font, so it reads as clickable on the dark panel.
-Obj BuildPanelButton(FooterButton& b) {
-    Obj button = w::Spawn("Button", eng::Get(gFooter.tree)), text = FooterText(b.label);
+Obj BuildPanelButton(FooterButton& b, Obj tree) {
+    Obj button = w::Spawn("Button", tree), text = FooterText(b.label, 1.0f, tree);
     if (!button || !text) return nullptr;
     w::Unfocusable(button);
     eng::Call(button, "SetBackgroundColor", Color{0.15f, 0.15f, 0.15f, 1});
@@ -169,20 +173,21 @@ void SyncPanel(Panel& p) {
     if (!eng::Get(p.border) || !eng::Get(p.box)) BuildPanel(p);
     Obj border = eng::Get(p.border), box = eng::Get(p.box);
     if (!border || !box) return;
+    Obj tree = eng::OuterOf(box);               // the panel's own WidgetTree: everything in it is owned there
     if (!p.shownOnce || p.title != p.shownTitle || p.lines != p.shownLines || p.buttons.size() != p.shownButtons) {
         eng::Call(box, "ClearChildren");
         if (!p.title.empty()) {
-            Obj title = FooterText(p.title, 1.25f);
+            Obj title = FooterText(p.title, 1.25f, tree);
             w::SetTextColor(title, {1, 1, 1, 1});
             w::AddChild(box, title);
         }
         if (!p.buttons.empty()) {
-            Obj row = w::Spawn("HorizontalBox", eng::Get(gFooter.tree));
-            for (size_t i = 0; i < p.buttons.size(); ++i) w::AddToRow(row, BuildPanelButton(*p.buttons[i]), i == 0 ? 0.0f : 8.0f);
+            Obj row = w::Spawn("HorizontalBox", tree);
+            for (size_t i = 0; i < p.buttons.size(); ++i) w::AddToRow(row, BuildPanelButton(*p.buttons[i], tree), i == 0 ? 0.0f : 8.0f);
             if (Obj slot = w::AddChild(box, row)) eng::Call(slot, "SetPadding", w::Margin{0, 8, 0, 8});
         }
         for (const auto& line : p.lines) {
-            Obj text = FooterText(line);
+            Obj text = FooterText(line, 1.0f, tree);
             w::SetTextColor(text, {0.82f, 0.82f, 0.82f, 1});    // the footer's own grey is too dim on a panel
             w::AddChild(box, text);
         }
@@ -258,7 +263,7 @@ void RemoveOwner(int owner) {
             ++it;
             continue;
         }
-        if (Obj border = eng::Get((*it)->border)) eng::Call(border, "RemoveFromParent");
+        if (Obj host = eng::Get((*it)->host)) eng::Call(host, "RemoveFromParent");
         it = gPanels.erase(it);
     }
 }

@@ -37,8 +37,9 @@ struct Panel {
     std::vector<std::string> lines;
     std::vector<std::unique_ptr<FooterButton>> buttons;     // a row under the title
     bool visible = false;
-    // live widgets and what they last showed (rebuilt only when the title, lines or buttons actually change)
-    eng::Weak border, box;
+    // live widgets and what they last showed (rebuilt only when the title, lines or buttons actually change). The
+    // panel is an on-screen widget of its own (host) in front of everything, not part of the game's menu.
+    eng::Weak host, border, box;
     bool shownVisible = false, shownOnce = false;
     std::string shownTitle;
     std::vector<std::string> shownLines;
@@ -104,6 +105,7 @@ struct Window {
     float offsetX = 0, offsetY = -40;           // pixels from the anchor
     Color background{0, 0, 0, 0.65f};
     bool blocksClicks = false;                  // clicks on the window never reach what is underneath it
+    int zOrder = 100;                           // windows with a higher z-order are drawn in front
     // Movable: while the cursor is on screen the window can be dragged; its position is saved per plugin
     // (Storage "window.<n>.x/y", n = the plugin's nth window) and restored when it is made movable.
     bool movable = false;

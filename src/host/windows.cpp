@@ -206,14 +206,10 @@ void Forget(Window& win) {
 }
 
 void Build(Window& win) {
-    Obj controller = game::PlayerController();
-    Obj host = eng::Call(eng::FindCdo("WidgetBlueprintLibrary"), "Create", controller, eng::FindClass("UserWidget"), controller).ReturnObj();
-    if (!host) return;
-    Obj tree = eng::ReadObj(host, "WidgetTree");
-    if (!tree && (tree = w::Spawn("WidgetTree", host))) eng::WriteBytes(host, "WidgetTree", &tree, sizeof tree);
-    Obj canvas = w::Spawn("CanvasPanel", tree), border = w::Spawn("Border", tree), column = w::Spawn("VerticalBox", tree);
-    if (!tree || !canvas || !border || !column) return;
-    eng::WriteBytes(tree, "RootWidget", &canvas, sizeof canvas);
+    Obj host = nullptr, tree = nullptr, canvas = nullptr;
+    if (!w::NewScreen(game::PlayerController(), &host, &tree, &canvas)) return;
+    Obj border = w::Spawn("Border", tree), column = w::Spawn("VerticalBox", tree);
+    if (!border || !column) return;
     const bool sized = win.screenWidth > 0 && win.screenHeight > 0;
     if (sized) {
         const double marginX = (1.0 - win.screenWidth) / 2, marginY = (1.0 - win.screenHeight) / 2;
@@ -308,7 +304,7 @@ void Build(Window& win) {
         if (item.kind == Kind::TextArea && item.height <= 0) eng::Call(slot, "SetVerticalAlignment", w::kAlignFill);
     }
     w::SetVisibility(border, w::kSelfHitTestInvisible);
-    eng::Call(host, "AddToViewport", int32_t{100});
+    eng::Call(host, "AddToViewport", static_cast<int32_t>(win.zOrder));
     win.host = eng::MakeWeak(host);
     win.border = eng::MakeWeak(border);
     win.generation = game::Generation();
