@@ -1199,28 +1199,63 @@ what other players see, keep the last game cosmetic chosen. Files (images, model
 Ids must be unique per kind; start them with your plugin's id.
 
 == Cosmetics::AddBall
-Adds a ball. `image` is its texture: wrapped around the ball, left to right is around it and top to bottom is pole to
-pole, so make it twice as wide as it is tall (1024x512). `preview` is the picture on its tile (`""` shows the
-texture). `model` is an optional [model file](../../guides/cosmetics.md#models) of parts built around the ball and
-rolling with it: raised details, lights, a spinning blade. Returns false, and logs why, if it can't be added.
+Adds a ball. `AddBall(id, name, image, preview, model)`:
+
+| Argument | What it is |
+|---|---|
+| `id` | A unique key for this ball, never shown to players. What the player wears is remembered by it, so keep it the same across versions. Start it with your plugin's id and a dot so no two plugins pick the same one: `"my-balls.planet"`. |
+| `name` | The ball's name, shown in the game: `"planet"`. |
+| `image` | The ball's texture: the full path of a PNG in your plugin's folder, twice as wide as it is tall (1024x512). Left to right goes once around the ball, top to bottom from pole to pole. |
+| `preview` | The picture on its tile on the Customize page (a PNG in your folder), or `""` to show the texture. |
+| `model` | Optional: a [model file](../../guides/cosmetics.md#models) of 3D parts built around the ball and rolling with it (raised details, lights, a spinning blade), or `""` for none. |
+
+Returns false, and logs why, if it can't be added.
 --
-string f = Plugins::Folder();
-Cosmetics::AddBall("my-balls.planet", "planet", f + "planet.png", f + "planet_tile.png", f + "rings.txt");
+string f = Plugins::Folder();       // this plugin's own folder (where planet.png is)
+                   "planet",                // name on its tile
+                   f + "planet.png",        // texture (1024x512)
+                   f + "planet_tile.png",   // tile picture
+                   f + "rings.txt");        // model: rings around it ("" for none)
 
 == Cosmetics::AddHat
-Adds a hat: a game or engine mesh (`mesh`, an asset path), or `""` and a `model` file built where the game puts hats
-(the top of the ball). `scale` sizes it (1 = as it is).
+Adds a hat. `AddHat(id, name, mesh, scale, preview, model)`:
+
+| Argument | What it is |
+|---|---|
+| `id` | A unique key, as for balls: `"my-hats.cone"`. |
+| `name` | Its name, shown in the game. |
+| `mesh` | A mesh asset from the game or engine to wear (`"/Engine/BasicShapes/Cone.Cone"`), or `""` when the hat is a `model` instead. |
+| `scale` | Its size where the game puts hats (the top of the ball): 1 is as it is; the engine's 1 m shapes want about 0.45. |
+| `preview` | The picture on its tile, or `""` for none. |
+| `model` | Optional: a [model file](../../guides/cosmetics.md#models) built on the top of the ball, or `""`. |
 --
-Cosmetics::AddHat("my-hats.cone", "cone", "/Engine/BasicShapes/Cone.Cone", 0.45, Plugins::Folder() + "cone.png");
+string f = Plugins::Folder();
+// a mesh hat
+Cosmetics::AddHat("my-hats.cone", "cone", "/Engine/BasicShapes/Cone.Cone", 0.45, f + "cone.png", "");
+// a hat made from a model file
+Cosmetics::AddHat("my-hats.basket", "fruit basket", "", 1.0, f + "basket.png", f + "basket.txt");
 
 == Cosmetics::AddBfx
-Adds a goal explosion based on one of the game's (`base`, a data asset path) at another `scale`, optionally with
-another of the game's Niagara effects (`effect`) and sounds (`sound`). It plays at checkpoints and in the Customize
-preview.
+Adds a goal explosion, based on one of the game's. `AddBfx(id, name, base, scale, preview, effect, sound)`:
+
+| Argument | What it is |
+|---|---|
+| `id` | A unique key, as for balls: `"my-bfx.confetti"`. |
+| `name` | Its name, shown in the game. |
+| `base` | One of the game's goal explosions to start from (a data asset path, such as `"/Game/Art/DataAssets/GoalExplosions/Fire1/DA_Fire1.DA_Fire1"`). |
+| `scale` | Its size: 1 is the same as the base. |
+| `preview` | The picture on its tile, or `""` for none. |
+| `effect` | Optional: another of the game's Niagara effects to play instead of the base's, or `""`. |
+| `sound` | Optional: another of the game's sounds to play instead of the base's, or `""`. |
+
+It plays at checkpoints and in the Customize preview.
 --
-Cosmetics::AddBfx("my-bfx.confetti", "confetti", "/Game/Art/DataAssets/GoalExplosions/Fire1/DA_Fire1.DA_Fire1", 1.0,
-                  Plugins::Folder() + "confetti.png", "/Game/Art/NS_BallExplosion.NS_BallExplosion",
-                  "/Game/Sound/Menus/SFX_ConfettiGun.SFX_ConfettiGun");
+Cosmetics::AddBfx("my-bfx.confetti", "confetti",
+                  "/Game/Art/DataAssets/GoalExplosions/Fire1/DA_Fire1.DA_Fire1",   // base
+                  1.0,                                                             // scale
+                  Plugins::Folder() + "confetti.png",                              // tile picture
+                  "/Game/Art/NS_BallExplosion.NS_BallExplosion",                   // effect: the confetti burst
+                  "/Game/Sound/Menus/SFX_ConfettiGun.SFX_ConfettiGun");            // sound
 
 == Cosmetics::Count
 How many custom cosmetics of a kind there are.
