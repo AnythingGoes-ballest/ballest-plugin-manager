@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <map>
 #include <string>
@@ -12,9 +13,11 @@
 #include "game.hpp"
 #include "input.hpp"
 #include "log.hpp"
+#include "editor.hpp"
 #include "plugins.hpp"
 #include "registry.hpp"
 #include "replay.hpp"
+#include "settings.hpp"
 #include "ui.hpp"
 
 namespace testchannel {
@@ -119,6 +122,86 @@ void CallNoArgs(const std::string& className, const std::string& function, const
     Report("call " + eng::Describe(p.Fn()) + " on " + eng::PathOf(list.front()) + (p.Invoked() ? " ok" : " FAILED") + result);
 }
 
+// "callx <Class> <Function> [filter] | arg | arg ...": a call with arguments, for measuring the game.
+//   i:5  f:1.5  d:1.5  u8:3  b:1  s:text (FString)  t:text (FText)  n:name (FName)  o:Class[,filter] (an object)
+//   v:x,y,z (FVector)
+// Every output parameter and the return value are reported (hex, and the object's path for pointers).
+void CallWithArgs(const std::string& cmd) {
+    std::vector<std::string> parts;
+    for (size_t start = 0;;) {
+        const size_t bar = cmd.find('|', start);
+        std::string part = cmd.substr(start, bar == std::string::npos ? std::string::npos : bar - start);
+        while (!part.empty() && part.front() == ' ') part.erase(0, 1);
+        while (!part.empty() && part.back() == ' ') part.pop_back();
+        parts.push_back(part);
+        if (bar == std::string::npos) break;
+        start = bar + 1;
+    }
+    const std::vector<std::string> head = Words(parts[0]);
+    auto word = [&](size_t i) { return i < head.size() ? head[i] : std::string(); };
+    const auto list = Instances(word(1), word(3));
+    if (list.empty()) return Report("no instance of " + word(1));
+    eng::Obj target = list.front();
+    eng::Params p(eng::FunctionOn(target, word(2).c_str()));
+    std::vector<eng::Params> keepAlive;              // text and names built for arguments
+    std::vector<std::wstring> strings;
+    strings.reserve(parts.size());
+    for (size_t i = 1; i < parts.size(); ++i) {
+        const std::string& a = parts[i];
+        const size_t colon = a.find(':');
+        const std::string type = a.substr(0, colon), value = colon == std::string::npos ? "" : a.substr(colon + 1);
+        const int index = static_cast<int>(i - 1);
+        if (type == "i") p.SetArg(index, static_cast<int32_t>(std::atoi(value.c_str())));
+        else if (type == "f") p.SetArg(index, static_cast<float>(std::atof(value.c_str())));
+        else if (type == "d") p.SetArg(index, std::atof(value.c_str()));
+        else if (type == "u8") p.SetArg(index, static_cast<uint8_t>(std::atoi(value.c_str())));
+        else if (type == "b") p.SetArg(index, static_cast<uint8_t>(value == "1" || value == "true"));
+        else if (type == "s" || type == "n") {
+            strings.push_back(eng::Widen(value));
+            const std::wstring& w = strings.back();
+            const eng::FString fs{w.c_str(), static_cast<int32_t>(w.size() + 1), static_cast<int32_t>(w.size() + 1)};
+            if (type == "s") {
+                p.SetArg(index, fs);
+            } else {
+                keepAlive.push_back(eng::Call(eng::FindCdo("KismetStringLibrary"), "Conv_StringToName", fs));
+                size_t size = 0;
+                const uint8_t* name = keepAlive.back().Return(&size);
+                if (name) p.SetArg(index, name, size);
+            }
+        } else if (type == "t") {
+            keepAlive.push_back(eng::MakeText(value));
+            size_t size = 0;
+            const uint8_t* text = keepAlive.back().Return(&size);
+            if (text) p.SetArg(index, text, size);
+        } else if (type == "o") {
+            const size_t comma = value.find(',');
+            const auto objects = Instances(value.substr(0, comma), comma == std::string::npos ? "" : value.substr(comma + 1));
+            p.SetArg(index, objects.empty() ? nullptr : objects.front());
+        } else if (type == "v") {
+            double v[3] = {0, 0, 0};
+            std::sscanf(value.c_str(), "%lf,%lf,%lf", &v[0], &v[1], &v[2]);
+            p.SetArg(index, v, sizeof v);
+        } else {
+            return Report("callx: unknown argument type '" + type + "'");
+        }
+    }
+    const bool ok = eng::Invoke(target, p);
+    std::string result;
+    for (const auto& param : eng::ParamsOf(p.Fn())) {
+        if (!param.isOut && !param.isReturn) continue;
+        size_t size = 0;
+        const uint8_t* bytes = p.Get(param.name.c_str(), &size);
+        if (!bytes) continue;
+        result += " " + param.name + "=" + Hex(bytes, size);
+        eng::Obj o = nullptr;
+        if (size == sizeof o) {
+            std::memcpy(&o, bytes, sizeof o);
+            if (eng::IsLive(o)) result += " (" + eng::PathOf(o) + ")";
+        }
+    }
+    Report("callx " + eng::Describe(p.Fn()) + " on " + eng::PathOf(target) + (ok ? " ok" : " FAILED") + result);
+}
+
 void ViewTarget() {
     eng::Obj controller = game::PlayerController();
     Report("controller " + eng::PathOf(controller) + " view target " + eng::PathOf(eng::Call(controller, "GetViewTarget").ReturnObj()));
@@ -156,6 +239,17 @@ void Run(const std::string& cmd) {
              registry::Remove(Arg(a, 1));
              Report(c + " -> " + (registry::Pending(Arg(a, 1)).empty() ? "nothing to do" : registry::Pending(Arg(a, 1))));
          }},
+        {"setting", [](const Args& a, const std::string& c) {
+             const auto& list = settings::List();
+             for (size_t i = 0; i < list.size(); ++i)
+                 if (list[i].pluginId == Arg(a, 1) && list[i].variable == Arg(a, 2))
+                     return Report(c + (settings::Set(i, Arg(a, 3)) ? " -> " + settings::Get(i) : " -> not a value"));
+             Report(c + " -> no such setting");
+         }},
+        {"editor", [](const Args& a, const std::string&) {
+             if (Arg(a, 1) == "rotatecontext") editor::ForceRotateContext(Arg(a, 2) == "on");
+             Report(editor::Status());
+         }},
         {"open", [](const Args& a, const std::string& c) { Report(c + (game::OpenLevel(Arg(a, 1)) ? " -> ok" : " -> failed")); }},
         {"functions", [](const Args& a, const std::string&) { Functions(Arg(a, 1)); }},
         {"instances", [](const Args& a, const std::string&) {
@@ -165,6 +259,7 @@ void Run(const std::string& cmd) {
         {"find", [](const Args& a, const std::string&) { Find(Arg(a, 1)); }},
         {"struct", [](const Args& a, const std::string&) { Struct(Arg(a, 1), Arg(a, 2)); }},
         {"call", [](const Args& a, const std::string&) { CallNoArgs(Arg(a, 1), Arg(a, 2), Arg(a, 3)); }},
+        {"callx", [](const Args&, const std::string& c) { CallWithArgs(c); }},
         {"viewtarget", [](const Args&, const std::string&) { ViewTarget(); }},
     };
     const Args words = Words(cmd);

@@ -14,6 +14,7 @@
 #include "input.hpp"
 #include "log.hpp"
 #include "plugins.hpp"
+#include "editor.hpp"
 #include "engine.hpp"
 #include "race.hpp"
 #include "registry.hpp"
@@ -268,6 +269,67 @@ void InputFocus(ui::Widget* w) {
     w->focusAttempts = 0;
 }
 void InputSubmit(ui::Widget* w) { w->submitRequested = true; }
+void InputSetValue(ui::Widget* w, const std::string& s) {
+    w->pendingValue = s;
+    w->valuePending = true;
+}
+void InputClearOnSubmit(ui::Widget* w, bool on) { w->clearOnSubmit = on; }
+bool CheckGet(ui::Widget* w) { return w->checked; }
+void CheckSet(ui::Widget* w, bool on) { w->checked = on; }
+bool CheckChanged(ui::Widget* w) { return TakeFlag(w, &ui::Widget::changedPending); }
+ui::Widget* WinCheckBox(ui::Window* w, const std::string& label, float size) {
+    ui::Widget* box = ui::AddWidget(w, ui::Kind::CheckBox, label, 0);
+    box->size = size;
+    return box;
+}
+void WinDockInEditorDetails(ui::Window* w) {
+    w->dock = ui::Dock::EditorDetails;
+    w->layoutDirty = true;
+}
+
+// --- Editor ----------------------------------------------------------------------------------------------------------
+CScriptArray* IdArray(const std::vector<int>& ids) {
+    CScriptArray* array = CScriptArray::Create(e->GetTypeInfoByDecl("array<int>"), static_cast<asUINT>(ids.size()));
+    for (size_t i = 0; i < ids.size(); ++i) *static_cast<int*>(array->At(static_cast<asUINT>(i))) = ids[i];
+    return array;
+}
+std::vector<int> IdVector(const CScriptArray* array) {
+    std::vector<int> ids;
+    for (asUINT i = 0; array && i < array->GetSize(); ++i) ids.push_back(*static_cast<const int*>(array->At(i)));
+    return ids;
+}
+CScriptArray* EditorSelection() { return IdArray(editor::Selection()); }
+CScriptArray* EditorPlaced() { return IdArray(editor::Placed()); }
+CScriptArray* EditorDuplicate() {
+    plugins::GameWork work;
+    return IdArray(editor::DuplicateSelection());
+}
+bool EditorLocation(int id, double& x, double& y, double& z) {
+    editor::Vec3 v;
+    const bool ok = editor::Location(id, &v);
+    x = v.x, y = v.y, z = v.z;
+    return ok;
+}
+bool EditorRotation(int id, double& pitch, double& yaw, double& roll) {
+    editor::Rot r;
+    const bool ok = editor::Rotation(id, &r);
+    pitch = r.pitch, yaw = r.yaw, roll = r.roll;
+    return ok;
+}
+bool EditorSetLocation(int id, double x, double y, double z) { return editor::SetLocation(id, {x, y, z}); }
+bool EditorSetRotation(int id, double pitch, double yaw, double roll) { return editor::SetRotation(id, {pitch, yaw, roll}); }
+void EditorViewForward(double& x, double& y, double& z) {
+    const editor::Vec3 f = editor::ViewForward();
+    x = f.x, y = f.y, z = f.z;
+}
+void EditorSelect(const CScriptArray* ids) {
+    plugins::GameWork work;
+    editor::Select(IdVector(ids));
+}
+void EditorRotatePieces(const CScriptArray* ids, double cx, double cy, double cz, double dx, double dy, double dz) {
+    plugins::GameWork work;
+    editor::RotatePieces(IdVector(ids), {cx, cy, cz}, dx, dy, dz);
+}
 
 // --- Input, Replay -------------------------------------------------------------------------------------------------
 // While a text input has keyboard focus the keys are being typed there, so plugins see none of them.
@@ -348,7 +410,7 @@ void RegisterCore() {
 
 void RegisterUi() {
     e->SetDefaultNamespace("UI");
-    for (const char* type : {"FooterButton", "Panel", "Window", "Text", "Button", "Slider", "Dropdown", "TextArea", "TextInput", "Image"})
+    for (const char* type : {"FooterButton", "Panel", "Window", "Text", "Button", "Slider", "Dropdown", "TextArea", "TextInput", "Image", "CheckBox"})
         Check(e->RegisterObjectType(type, 0, asOBJ_REF | asOBJ_NOCOUNT), type);
     Global("void SetCursorVisible(bool)", asFUNCTION(SetCursorVisible));
     Global("bool CursorShown()", asFUNCTION(game::CursorShown));
@@ -387,6 +449,8 @@ void RegisterUi() {
     Method("Window", "void SetScreenSize(float width, float height)", asFUNCTION(WinScreenSize));
     Method("Window", "int StartView()", asFUNCTION(WinStartView));
     Method("Window", "void SetBlocksClicks(bool)", asFUNCTION(WinBlocksClicks));
+    Method("Window", "CheckBox@ AddCheckBox(const string &in label, float size = 16)", asFUNCTION(WinCheckBox));
+    Method("Window", "void DockInEditorDetails()", asFUNCTION(WinDockInEditorDetails));
     Method("Window", "void set_zOrder(int) property", asFUNCTION(WinSetZOrder));
     Method("Window", "int get_zOrder() property", asFUNCTION(WinGetZOrder));
     Method("Window", "void set_movable(bool) property", asFUNCTION(WinSetMovable));
@@ -427,6 +491,13 @@ void RegisterUi() {
     Method("TextInput", "bool get_focused() property", asFUNCTION(InputFocused));
     Method("TextInput", "void Focus()", asFUNCTION(InputFocus));
     Method("TextInput", "void Submit()", asFUNCTION(InputSubmit));
+    Method("TextInput", "void set_value(const string &in) property", asFUNCTION(InputSetValue));
+    Method("TextInput", "void set_clearOnSubmit(bool) property", asFUNCTION(InputClearOnSubmit));
+    Method("CheckBox", "bool get_checked() property", asFUNCTION(CheckGet));
+    Method("CheckBox", "void set_checked(bool) property", asFUNCTION(CheckSet));
+    Method("CheckBox", "bool Changed()", asFUNCTION(CheckChanged));
+    Method("CheckBox", "void set_visible(bool) property", asFUNCTION(SetWidgetVisible));
+    Method("CheckBox", "bool get_visible() property", asFUNCTION(GetWidgetVisible));
 }
 
 // Keys are Windows virtual-key codes; the common ones are named, plus A-Z and N0-N9.
@@ -452,6 +523,23 @@ void RegisterRace() {
     Global("int Restarts()", asFUNCTION(race::Restarts));
 }
 
+void RegisterEditor() {
+    e->SetDefaultNamespace("Editor");
+    Global("bool IsOpen()", asFUNCTION(editor::Open));
+    Global("array<int>@ Selection()", asFUNCTION(EditorSelection));
+    Global("array<int>@ Placed()", asFUNCTION(EditorPlaced));
+    Global("bool GetLocation(int, double &out, double &out, double &out)", asFUNCTION(EditorLocation));
+    Global("bool GetRotation(int, double &out, double &out, double &out)", asFUNCTION(EditorRotation));
+    Global("bool SetLocation(int, double, double, double)", asFUNCTION(EditorSetLocation));
+    Global("bool SetRotation(int, double, double, double)", asFUNCTION(EditorSetRotation));
+    Global("void ViewForward(double &out, double &out, double &out)", asFUNCTION(EditorViewForward));
+    Global("void Select(const array<int>@)", asFUNCTION(EditorSelect));
+    Global("array<int>@ DuplicateSelection()", asFUNCTION(EditorDuplicate));
+    Global("void RotatePieces(const array<int>@, double, double, double, double, double, double)", asFUNCTION(EditorRotatePieces));
+    Global("void SetTabCycling(bool)", asFUNCTION(editor::SetTabCycling));
+    Global("void SetRotateAroundCenter(bool)", asFUNCTION(editor::SetRotateAroundCenter));
+}
+
 void RegisterReplay() {
     e->SetDefaultNamespace("Replay");
     Check(e->RegisterEnum("Camera"), "Replay::Camera");
@@ -475,6 +563,7 @@ void Register(asIScriptEngine* engine) {
     RegisterUi();
     RegisterInput();
     RegisterRace();
+    RegisterEditor();
     RegisterReplay();
     e->SetDefaultNamespace("");
 }

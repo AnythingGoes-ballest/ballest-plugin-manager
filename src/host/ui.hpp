@@ -59,7 +59,11 @@ void HideOwner(int owner);              // a stopped plugin: its windows and pan
 // A window's main area holds one or more views (groups of rows); one view is shown at a time. A plugin can clear a
 // view and fill it again (a list that changes). Cleared widgets are retired, not freed: the plugin may still hold
 // handles to them, and those stay valid but show nothing.
-enum class Kind { Text, Button, IconButton, Slider, Dropdown, Space, TextArea, TextInput, Image };
+enum class Kind { Text, Button, IconButton, Slider, Dropdown, Space, TextArea, TextInput, Image, CheckBox };
+
+// Where a window lives: its own layer on screen, or docked as a section of the track editor's details panel
+// (shown only while pieces are selected, since the panel's section list is).
+enum class Dock { Screen, EditorDetails };
 
 struct Window;
 
@@ -84,7 +88,11 @@ struct Widget {
     std::vector<std::string> options;                                       // dropdown
     int selected = 0;
     bool changedPending = false;
+    bool checked = false, shownChecked = false;                             // check box (text is its label)
     std::string submitted;                                                  // text input: the last submitted text
+    bool clearOnSubmit = true;                                              // text input: empty the box after Enter
+    std::string pendingValue;                                               // text input: text for the box
+    bool valuePending = false;
     bool submitPending = false, submitRequested = false, focusRequested = false, focused = false;
     int focusAttempts = 0;
     bool scrollToEnd = false;                                               // text area
@@ -106,6 +114,8 @@ struct Window {
     Color background{0, 0, 0, 0.65f};
     bool blocksClicks = false;                  // clicks on the window never reach what is underneath it
     int zOrder = 100;                           // windows with a higher z-order are drawn in front
+    Dock dock = Dock::Screen;
+    eng::Weak dockedIn;                         // the container a docked window was built into
     // Movable: while the cursor is on screen the window can be dragged; its position is saved per plugin
     // (Storage "window.<n>.x/y", n = the plugin's nth window) and restored when it is made movable.
     bool movable = false;

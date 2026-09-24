@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <map>
 
+#include "editor.hpp"
 #include "game.hpp"
 #include "input.hpp"
 #include "log.hpp"
@@ -175,7 +176,24 @@ Obj BuildWidget(Obj tree, Widget& item) {
             if (!item.text.empty()) w::SetHintText(input, item.text);
             w::AddChild(box, input);
             item.main = eng::MakeWeak(input);
+            if (!item.pendingValue.empty()) item.valuePending = true;       // shown again after a rebuild
             return box;
+        }
+        case Kind::CheckBox: {
+            Obj row = w::Spawn("HorizontalBox", tree), box = w::Spawn("CheckBox", tree), text = w::Spawn("TextBlock", tree);
+            if (!row || !box || !text) return nullptr;
+            w::Unfocusable(box);
+            eng::Call(box, "SetIsChecked", static_cast<uint8_t>(item.checked));
+            w::SetFontSize(text, item.size);
+            w::SetText(text, item.text);
+            w::SetTextColor(text, kWhite);
+            w::SetVisibility(text, w::kHitTestInvisible);
+            w::AddToRow(row, box, 0);
+            w::AddToRow(row, text, 4);
+            item.main = eng::MakeWeak(box);
+            item.label = eng::MakeWeak(text);
+            item.shownChecked = item.checked;
+            return row;
         }
         case Kind::Image: {
             Obj box = w::Spawn("SizeBox", tree), image = w::Spawn("Image", tree);
@@ -206,12 +224,24 @@ void Forget(Window& win) {
 }
 
 void Build(Window& win) {
-    Obj host = nullptr, tree = nullptr, canvas = nullptr;
-    if (!w::NewScreen(game::PlayerController(), &host, &tree, &canvas)) return;
+    Obj host = nullptr, tree = nullptr, canvas = nullptr, dock = nullptr;
+    if (win.dock == Dock::EditorDetails) {
+        // A section of the editor's details panel: built into that panel's own widget tree.
+        dock = editor::DetailsContainer();
+        if (!dock) return;
+        tree = eng::OuterOf(dock);
+    } else if (!w::NewScreen(game::PlayerController(), &host, &tree, &canvas)) {
+        return;
+    }
     Obj border = w::Spawn("Border", tree), column = w::Spawn("VerticalBox", tree);
     if (!border || !column) return;
-    const bool sized = win.screenWidth > 0 && win.screenHeight > 0;
-    if (sized) {
+    const bool sized = !dock && win.screenWidth > 0 && win.screenHeight > 0;
+    if (dock) {
+        Obj slot = eng::Call(dock, "AddChildToVerticalBox", border).ReturnObj();
+        if (!slot) return;
+        eng::Call(slot, "SetPadding", w::Margin{0, 10, 0, 0});
+        host = border;                          // what is removed when the section is rebuilt
+    } else if (sized) {
         const double marginX = (1.0 - win.screenWidth) / 2, marginY = (1.0 - win.screenHeight) / 2;
         w::StretchOnCanvas(canvas, border, marginX, marginY, 1.0 - marginX, 1.0 - marginY);
     } else {
@@ -304,7 +334,8 @@ void Build(Window& win) {
         if (item.kind == Kind::TextArea && item.height <= 0) eng::Call(slot, "SetVerticalAlignment", w::kAlignFill);
     }
     w::SetVisibility(border, w::kSelfHitTestInvisible);
-    eng::Call(host, "AddToViewport", static_cast<int32_t>(win.zOrder));
+    if (!dock) eng::Call(host, "AddToViewport", static_cast<int32_t>(win.zOrder));
+    win.dockedIn = eng::MakeWeak(dock);
     win.host = eng::MakeWeak(host);
     win.border = eng::MakeWeak(border);
     win.generation = game::Generation();
@@ -418,6 +449,17 @@ void Sync(Widget& item) {
             break;
         case Kind::Space:
             break;
+        case Kind::CheckBox: {
+            const bool now = eng::Call(main, "IsChecked").ReturnBool();
+            if (now != item.shownChecked) {             // the player clicked it
+                item.checked = item.shownChecked = now;
+                item.changedPending = true;
+            } else if (item.checked != item.shownChecked) {
+                eng::Call(main, "SetIsChecked", static_cast<uint8_t>(item.checked));
+                item.shownChecked = item.checked;
+            }
+            break;
+        }
         case Kind::Image:
             if (item.text != item.shownText) {
                 ShowImage(main, item.text);
@@ -440,6 +482,10 @@ void Sync(Widget& item) {
             break;
         }
         case Kind::TextInput: {
+            if (item.valuePending) {
+                w::SetText(main, item.pendingValue);
+                item.valuePending = false;
+            }
             item.focused = eng::Call(main, "HasKeyboardFocus").ReturnBool();
             // Focus can only be taken once the box is on screen, so it is asked for until it sticks.
             if (item.focusRequested) {
@@ -452,7 +498,8 @@ void Sync(Widget& item) {
                 if (!typed.empty()) {
                     item.submitted = typed;
                     item.submitPending = true;
-                    w::SetText(main, "");
+                    if (item.clearOnSubmit) w::SetText(main, "");
+                    else item.pendingValue = typed;             // kept, and shown again after a rebuild
                 }
             }
             break;
@@ -570,6 +617,11 @@ void Frame() {
         Window& win = *winPtr;
         // Built in an earlier map: those widgets went with it. Forgotten without being touched.
         if (win.host.o && win.generation != game::Generation()) Forget(win);
+        // Docked into a panel that has been replaced (the editor was reopened): build it again in the new one.
+        if (win.dock == Dock::EditorDetails && eng::Get(win.host) && eng::Get(win.dockedIn) != editor::DetailsContainer()) {
+            eng::Call(eng::Get(win.host), "RemoveFromParent");
+            Forget(win);
+        }
         const bool built = eng::Get(win.host) != nullptr;
         if (win.visible && (!built || win.layoutDirty)) {
             if (built) {
@@ -649,10 +701,16 @@ bool SimulateSelect(const std::string& firstOption, int index) {
 
 void SimulateSlider(float value) { gSimulatedSlider = value; }
 
-bool SimulateSubmit(const std::string& text) {
+bool SimulateSubmit(const std::string& command) {
+    // "@<hint fragment>|<text>" picks the first text input whose hint contains the fragment; otherwise the first.
+    std::string hint, text = command;
+    if (command.rfind("@", 0) == 0 && command.find('|') != std::string::npos) {
+        hint = command.substr(1, command.find('|') - 1);
+        text = command.substr(command.find('|') + 1);
+    }
     for (auto& win : gWindows)
         for (auto& item : win->items)
-            if (!item->retired && item->kind == Kind::TextInput) {
+            if (!item->retired && item->kind == Kind::TextInput && item->text.find(hint) != std::string::npos) {
                 item->submitted = text;
                 return item->submitPending = true;
             }

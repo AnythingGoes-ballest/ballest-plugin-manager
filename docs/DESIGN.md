@@ -185,6 +185,21 @@ Main, and hot reload. Built: per-plugin storage (`Storage`) and Openplanet-style
   `SetPosition`; the position is saved per plugin and window on release. A stopped plugin's windows are hidden
   and its cursor request dropped, so nothing dead is left on screen.
 
+### 3.9 Track editor (built 2026-09-23)
+- `P_LevelEditorPawn_C.SKGMLEHandler` is the editor's SKGMLEHandlerComponent: `AllActors` lists the pieces,
+  `GetSelection`, `CopySelection` + `Paste(at copied location, with properties)` duplicates and leaves the copies
+  selected, `Deselect` + `GrabWithNotifications` selects. The handler caches the gizmo pivot, so pieces moved from
+  outside are selected again.
+- A palette tile spawns its piece at pawn + 150 x view forward + (0, 0, -300); new AllActors entries at that point
+  within 10 frames are placements, not pastes.
+- `W_Details_C.WS_Details` slot 1 is a VerticalBox (transform header, `W_Transform`, paint). Docked plugin windows
+  are appended to it; UMG has no runtime insert, so they sit under paint. Paint lists one entry per selected piece
+  type (the game's own; measured with no plugin touching it).
+- `W_MapEditor_C` has its own `WBP_Footer`, used like the main menu's and the race UI's.
+- Measured cost of the game's own work: paste about 4.5 ms and select about 3 ms a piece (535 ms for a first copy
+  of 15 new piece types). `plugins::GameWork` keeps that time off the calling plugin's budget, up to 5 s a
+  callback; the first release charged it, and a copy of a few pieces stopped Create Extensions at 30 ms.
+
 ## 5. First milestone plugins
 
 Mod manager (permissions `plugins.manage`, `ui.menu`)

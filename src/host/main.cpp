@@ -7,6 +7,7 @@
 #include <cstring>
 #include <string>
 
+#include "editor.hpp"
 #include "engine.hpp"
 #include "game.hpp"
 #include "input.hpp"
@@ -43,6 +44,7 @@ void HostFrame(float dt) {
     }
     input::Frame();
     game::Frame();
+    editor::Frame();
     race::Frame();
     replay::Frame(dt);
     ui::Frame();

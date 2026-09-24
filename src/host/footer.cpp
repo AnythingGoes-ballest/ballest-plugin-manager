@@ -1,6 +1,6 @@
 // Footer entries: plugin buttons in the game's own footer bar and panels above it. The footer exists on the main
-// menu (WBP_MainMenu_UIManager_C) and inside maps (WBP_RaceUIManager_C); whichever is live is used, and the
-// entries are rebuilt whenever the game replaces it. Measured tree: SizeBox > Overlay > [Image, HorizontalBox];
+// menu (WBP_MainMenu_UIManager_C), inside maps (WBP_RaceUIManager_C) and in the track editor (W_MapEditor_C,
+// measured); whichever is live is used, and the entries are rebuilt whenever the game replaces it. Measured tree: SizeBox > Overlay > [Image, HorizontalBox];
 // the HorizontalBox holds master volume, music, an empty Overlay (the flexible gap), Discord, language.
 #include "game.hpp"
 #include "log.hpp"
@@ -32,7 +32,8 @@ Obj FindLiveFooter() {
         if (eng::ClassOf(o) != cls || eng::IsDefaultObject(o)) return true;
         const std::string path = eng::PathOf(o);
         if (path.rfind("/Engine/Transient", 0) == 0 &&
-            (path.find("WBP_MainMenu_UIManager_C") != std::string::npos || path.find("WBP_RaceUIManager_C") != std::string::npos))
+            (path.find("WBP_MainMenu_UIManager_C") != std::string::npos || path.find("WBP_RaceUIManager_C") != std::string::npos ||
+             path.find("W_MapEditor_C") != std::string::npos))
             found = o;
         return found == nullptr;
     });

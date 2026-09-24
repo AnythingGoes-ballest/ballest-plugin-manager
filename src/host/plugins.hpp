@@ -8,7 +8,7 @@
 
 namespace plugins {
 
-constexpr const char* kHostVersion = "0.5.0";
+constexpr const char* kHostVersion = "0.6.0";
 
 void LoadAll(const std::wstring& pluginsDir);
 void Frame(float dt);
@@ -28,6 +28,20 @@ std::vector<Info> List();                   // loaded plugins, in load order
 bool Find(const std::string& id, Info* out);
 int Current();                              // index of the plugin whose code is running now, or -1
 std::string CurrentId();
+
+// Wraps game work a plugin asked the host for (pasting and selecting track pieces: measured at about 4.5 ms and 3 ms a
+// piece, and 535 ms for a first copy of 15 new piece types), so the game's time is not charged to the plugin's
+// budget, up to five seconds a callback: a script that loops on such calls is still stopped.
+class GameWork {
+public:
+    GameWork();
+    ~GameWork();
+    GameWork(const GameWork&) = delete;
+    GameWork& operator=(const GameWork&) = delete;
+
+private:
+    unsigned long long start_;
+};
 bool CurrentIsEssential();
 std::string Summary();                      // "id=status; ..." for logs and tests
 

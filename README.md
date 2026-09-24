@@ -11,9 +11,13 @@ runs as normal.
 
 ## Install (players)
 
-1. From the [latest release](../../releases), copy `version.dll` and the `plugins` folder into
-   `Ballest of Them All\Ballest\Binaries\Win64` (next to `Ballest-Win64-Shipping.exe`).
-2. Start the game. **plugins** appears in the footer of the main menu and the in-race menus.
+1. With Git Bash, run `./install.sh` from this repo: it finds the game through Steam (every library folder), downloads
+   the latest release, checks `version.dll` against the SHA-256 in `registry.json` and copies it in with the
+   `plugins` folder (`--dry-run` shows what it would do; `--game "<...\Ballest\Binaries\Win64>"` if the game is not
+   found; `--from-build` installs a local build). By hand instead: from the [latest release](../../releases), copy
+   `version.dll` and the `plugins` folder into `Ballest of Them All\Ballest\Binaries\Win64` (next to
+   `Ballest-Win64-Shipping.exe`).
+2. Start the game. **plugins** appears in the footer of the main menu, the in-race menus and the track editor.
 3. **plugins** > **open** > **plugins** lists every plugin in the registry: **install**, **update**, **remove**, or
    **github** to see its source. **settings** has each plugin's settings, and **open plugins folder** shows where
    they are installed.
@@ -95,6 +99,7 @@ plugin's GitHub repo and lists the SHA-256 of every file the game downloads:
 | `src/host/game.*` | World context, player controller, map changes, time, cursor, typing input mode, opening maps |
 | `src/host/input.*` | Keyboard and mouse, only while the game window has focus |
 | `src/host/race.*` | Whether a race is running, and restarts from the beginning (the ball's own counter) |
+| `src/host/editor.*` | The track editor: pieces, selection, placements, duplicate, rotate about a point, Tab between transform boxes |
 | `src/host/replay.*` | Replay detection, playback clock, seeking, true length, camera modes (default, follow 3D, free) |
 | `src/host/ui.hpp` | The retained UI model plugins describe (footer buttons, panels, windows of views, rows and widgets) |
 | `src/host/widgets.*` | Building and styling the game's own UMG widgets |
@@ -199,11 +204,12 @@ placed it.
 | `Registry` | `Refresh()`, `State()` ("loading", "ready", "error: ..."), `Count()`, `Id/Name/Description/Author/Version/Page/Icon(i)`, `HostVersion()` (the newest plugin manager released) |
 | `Console` | `Run(command)`: runs a host command (the list is in `src/host/testchannel.hpp`) on the next frame; output goes to the log |
 | `UI` footer | `AddFooterButton(label)`: `Clicked()`, `hovered`, `label`. `CreatePanel()`: `title`, `visible`, `Clear()`, `AddLine()`, `AddButton(label)` (a FooterButton in the panel) |
-| `UI` windows | `CreateWindow()`: `SetAnchor/SetPivot/SetOffset/SetBackground`, `visible`, `SetScreenSize(w, h)` (fractions of the screen; widths and heights of 0 then fill the space left), `SetBlocksClicks(bool)` (clicks on the window never reach the game underneath), `movable` (see Settings), `zOrder` (higher is in front; windows default to 100, the plugin menu uses 500, footer panels are at 1000). Widgets: `AddText(text, size)`, `AddButton(label)`, `AddIconButton("play"/"pause")`, `AddSlider(width)`, `AddDropdown(width)`, `AddSpace(width)`, `AddTextArea(width, height, size)`, `AddTextInput(width, hint, size)`, `AddImage(path, width, height)`. Layout: `NewRow()`, `StartSidebar(width)` / `StartMain()`, `StartView()` (returns its number), `ShowView(n)`, `ClearView(n)` (empties it and adds into it again). `SetCursorVisible(bool)` (per plugin: the cursor shows while any plugin asks), `CursorShown()`, `ResetPositions(pluginId)`, `HasMovable(pluginId)` |
-| widgets | every widget: `visible` (hidden widgets take no space); `Text.text`, `Text.SetColor(r,g,b,a)`, `Text.size`; `Button.Clicked()`, `hovered`, `label`, `icon`, `SetBackground(r,g,b,a)`; `Slider.value` (0..1), `dragging`; `Dropdown.AddOption()`, `selected`, `Changed()`; `TextArea.text` (scrolls, follows new text when at the end); `TextInput.Submitted()` (Enter), `text` (the submitted text), `Focus()`, `Submit()`, `focused`; `Image.path` |
+| `UI` windows | `CreateWindow()`: `SetAnchor/SetPivot/SetOffset/SetBackground`, `visible`, `SetScreenSize(w, h)` (fractions of the screen; widths and heights of 0 then fill the space left), `SetBlocksClicks(bool)` (clicks on the window never reach the game underneath), `movable` (see Settings), `zOrder` (higher is in front; windows default to 100, the plugin menu uses 500, footer panels are at 1000). Widgets: `AddText(text, size)`, `AddButton(label)`, `AddIconButton("play"/"pause")`, `AddSlider(width)`, `AddDropdown(width)`, `AddSpace(width)`, `AddTextArea(width, height, size)`, `AddTextInput(width, hint, size)`, `AddCheckBox(label, size)`, `AddImage(path, width, height)`. Layout: `NewRow()`, `StartSidebar(width)` / `StartMain()`, `StartView()` (returns its number), `ShowView(n)`, `ClearView(n)` (empties it and adds into it again). `SetCursorVisible(bool)` (per plugin: the cursor shows while any plugin asks), `CursorShown()`, `ResetPositions(pluginId)`, `HasMovable(pluginId)`. `DockInEditorDetails()`: the window becomes a section at the end of the track editor's details panel (under transform and paint), shown while something is selected |
+| widgets | every widget: `visible` (hidden widgets take no space); `Text.text`, `Text.SetColor(r,g,b,a)`, `Text.size`; `Button.Clicked()`, `hovered`, `label`, `icon`, `SetBackground(r,g,b,a)`; `Slider.value` (0..1), `dragging`; `Dropdown.AddOption()`, `selected`, `Changed()`; `TextArea.text` (scrolls, follows new text when at the end); `TextInput.Submitted()` (Enter), `text` (the submitted text), `value` (sets what the box shows), `clearOnSubmit` (default true), `Focus()`, `Submit()`, `focused`; `CheckBox.checked`, `Changed()`; `Image.path` |
 | `Input` | `Pressed(Key)`, `Down(Key)` with `Input::Space`, `Input::W`, `Input::MouseRight`, ... (nothing while a text input has focus) |
 | `Race` | `OnTrack()`, `IsActive()`, `Restarts()` (restarts from the beginning since the game started; checkpoint respawns and falls don't count) |
 | `Storage` | `Get(key, fallback)`, `Set(key, value)`: this plugin's saved values, kept across launches |
+| `Editor` | The track editor. Pieces are `int` ids. `IsOpen()`, `Selection()`, `Placed()` (pieces placed from the palette this frame), `GetLocation(id, x, y, z)`, `GetRotation(id, pitch, yaw, roll)`, `SetLocation(id, x, y, z)`, `SetRotation(id, pitch, yaw, roll)`, `ViewForward(x, y, z)`, `Select(ids)` (the editor's own selection and gizmo pivot; call it after moving pieces), `DuplicateSelection()` (copies in place, returns the copies, left selected), `RotatePieces(ids, cx, cy, cz, degX, degY, degZ)` (about a point, world X then Y then Z), `SetTabCycling(bool)` (Tab / Shift+Tab through the transform boxes), `SetRotateAroundCenter(bool)` (rotating several pieces turns them about their centre). The game's own time in `Select`, `DuplicateSelection` and `RotatePieces` does not count against the plugin's budget (up to 5 s a callback) |
 | `Replay` | `IsActive()`, `Time()`, `Length()`, `Seek(t)`, `Restart()`, `CameraMode()`, `SetCameraMode(Replay::Default/Follow3D/Free)` |
 
 UI handles stay valid for the plugin's lifetime; the host rebuilds the widgets behind them after menu changes and

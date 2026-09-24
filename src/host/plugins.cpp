@@ -42,7 +42,9 @@ asIScriptEngine* gEngine = nullptr;
 std::vector<Plugin> gPlugins;
 std::wstring gDir;
 ULONGLONG gDeadline = 0;
+ULONGLONG gGameWorkLeft = 0;            // how much more game work this callback may have off its budget
 bool gInFrame = false;
+constexpr ULONGLONG kMaxGameWorkMs = 5000;
 
 // --- manifest: the subset of TOML info.toml uses ([section], key = "string" | number | ["a", "b"]) ------------------
 
@@ -148,6 +150,7 @@ void Run(Plugin& p, asIScriptFunction* fn, const float* dt) {
     p.ctx->Prepare(fn);
     if (dt) p.ctx->SetArgFloat(0, *dt);
     gDeadline = GetTickCount64() + p.timeoutMs;
+    gGameWorkLeft = kMaxGameWorkMs;
     switch (const int r = p.ctx->Execute()) {
         case asEXECUTION_FINISHED:
             return;
@@ -359,6 +362,14 @@ int CompareVersions(const std::string& a, const std::string& b) {
         const long na = ha ? std::atol(pa.c_str()) : 0, nb = hb ? std::atol(pb.c_str()) : 0;
         if (na != nb) return na < nb ? -1 : 1;
     }
+}
+
+GameWork::GameWork() : start_(GetTickCount64()) {}
+
+GameWork::~GameWork() {
+    const ULONGLONG spent = std::min<ULONGLONG>(GetTickCount64() - start_, gGameWorkLeft);
+    gDeadline += spent;
+    gGameWorkLeft -= spent;
 }
 
 }  // namespace plugins

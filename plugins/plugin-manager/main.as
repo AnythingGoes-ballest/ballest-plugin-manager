@@ -10,8 +10,9 @@
 //             effect straight away.
 //             When the registry names a newer plugin manager (the host and this plugin), it says so here and in the
 //             footer panel, with an "update plugin manager" button; the update finishes when the game restarts.
-//   settings  each plugin's [Setting] variables: a slider for a number with min and max, on/off for a bool, a
-//             text box otherwise, and reset; plus "reset position" for a plugin with windows that can be dragged.
+//   settings  each plugin's [Setting] variables: a slider and a text box for a number with min and max, on/off for
+//             a bool, a text box otherwise, and reset; plus "reset position" for a plugin with windows that can be
+//             dragged.
 
 UI::FooterButton@ button;
 UI::Panel@ panel;
@@ -453,6 +454,8 @@ void AddSettingRow(uint i)
     {
         sliders.insertLast(menu.AddSlider(360));
         sliderSetting.insertLast(i);
+        inputs.insertLast(menu.AddTextInput(110, "value", 17));      // an exact value, clamped to the range
+        inputSetting.insertLast(i);
     }
     else
     {
