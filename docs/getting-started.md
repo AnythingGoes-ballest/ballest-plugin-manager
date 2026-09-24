@@ -5,7 +5,7 @@ racing, with a button to reset it. It takes about ten minutes.
 
 ## 1. Install the plugin manager
 
-Follow the [install steps](https://github.com/AnythingGoes-ballest/ballest-plugin-manager#install-players), then
+Follow the [install steps](https://github.com/AnythingGoes-ballest/ballest-plugin-manager#install), then
 start the game once. You should see **plugins** in the footer at the bottom of the main menu.
 
 The game folder is `...\steamapps\common\Ballest of Them All\Ballest\Binaries\Win64`. From here on, **the plugins

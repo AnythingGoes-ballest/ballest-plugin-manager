@@ -78,4 +78,6 @@ nav:
       - Settings: reference/api/settings.md
       - Registry: reference/api/registry.md
       - Console: reference/api/console.md
-  - Host internals: DESIGN.md
+  - Host internals:
+      - Working on the host: host.md
+      - Design notes: DESIGN.md

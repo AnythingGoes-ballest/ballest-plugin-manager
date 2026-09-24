@@ -1,6 +1,6 @@
 # Ballest plugin manager: design
 
-Status: first milestone working in game (2026-09-22). Implementation map: README.md. North star: a C++ host loaded through our own proxy DLL, running AngelScript plugins.
+Status: first milestone working in game (2026-09-22). Implementation map: [Working on the host](host.md). North star: a C++ host loaded through our own proxy DLL, running AngelScript plugins.
 The host is the only code that touches the game. Plugins see only the host's API.
 First milestone: the host plus two plugins, a mod manager and a replay manager.
 
@@ -166,7 +166,7 @@ wants = ["replay.control", "camera.control", "ui.overlay"]
 
 ## 4. Plugin API
 
-The API as built is documented in README.md ("Writing a plugin") and registered in one place, `src/host/api.cpp`.
+The API as built is documented in the [API reference](reference/api/ui.md) and registered in one place, `src/host/api.cpp`.
 Planned next: game events through a ProcessEvent hook (race start, checkpoints, replay start and end), coroutines in
 Main, and hot reload. Built: per-plugin storage (`Storage`) and Openplanet-style settings (section 3.8).
 
