@@ -1,0 +1,9 @@
+/* Home page cards: the link in each card's title covers the whole card, so the card is clickable anywhere. */
+.md-typeset .grid.cards > ul > li {
+  position: relative;
+}
+.md-typeset .grid.cards > ul > li a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
