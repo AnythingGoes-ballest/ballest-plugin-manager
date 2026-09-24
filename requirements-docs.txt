@@ -1,0 +1,2 @@
+# The docs site (mkdocs.yml): pip install -r requirements-docs.txt, then mkdocs serve
+mkdocs-material>=9.5,<10

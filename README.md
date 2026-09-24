@@ -3,7 +3,8 @@
 An Openplanet-style plugin host for Ballest of Them All. The game loads `version.dll` (this host) at startup; the
 host is the only code that touches the game, and plugins written in AngelScript use its API. Plugins are installed,
 updated and removed from inside the game, from a registry of GitHub repos. No UE4SS, no engine headers, no Visual
-Studio. Design notes and every measured engine layout: [docs/DESIGN.md](docs/DESIGN.md).
+Studio. **Writing a plugin? Start with the [plugin docs](https://anythinggoes-ballest.github.io/ballest-plugin-manager/).**
+Design notes and every measured engine layout: [docs/DESIGN.md](docs/DESIGN.md).
 
 **Game build:** the host only runs on the exact game build it was measured on (Ballest, UE 5.8,
 `++UE5+Release-5.8-CL-56702186`). On any other build it logs "unsupported game build" and stays inactive, and the game
@@ -195,22 +196,10 @@ A window that sets `movable = true` (after placing it with `SetOffset`) can be d
 cursor is on screen; its position is saved for the plugin, and **reset position** puts it back where the plugin
 placed it.
 
-| Namespace | API |
-|---|---|
-| `Log` | `Info`, `Warn`, `Error`; `LineCount()`, `Line(i)` (the host log's recent lines, numbered from the start of the session) |
-| `Host` | `Version()`, `Time()` (seconds, real time), `OpenUrl(url)` (a `https://github.com/` page, in the player's browser) |
-| `Plugins` | `Count()`, `Id/Name/Version/Status/Author/Description/Icon/Essential(i)`, `IsInstalled(id)`, `InstalledVersion(id)`, `DefaultIcon()`, `OpenFolder()`; plugin manager only: `Install(id)`, `Remove(id)`, `Pending(id)`, `UpdateHost()`, `HostUpdateState()` ("", "downloading", "restart", "error: ...") |
-| `Settings` | Every plugin's `[Setting]` variables: `Count()`, `Plugin/Name/Description/Kind/Hidden/HasRange/Min/Max/Get/IsDefault(i)`; plugin manager only: `Set(i, value)`, `Reset(i)` |
-| `Registry` | `Refresh()`, `State()` ("loading", "ready", "error: ..."), `Count()`, `Id/Name/Description/Author/Version/Page/Icon(i)`, `HostVersion()` (the newest plugin manager released) |
-| `Console` | `Run(command)`: runs a host command (the list is in `src/host/testchannel.hpp`) on the next frame; output goes to the log |
-| `UI` footer | `AddFooterButton(label)`: `Clicked()`, `hovered`, `label`. `CreatePanel()`: `title`, `visible`, `Clear()`, `AddLine()`, `AddButton(label)` (a FooterButton in the panel) |
-| `UI` windows | `CreateWindow()`: `SetAnchor/SetPivot/SetOffset/SetBackground`, `visible`, `SetScreenSize(w, h)` (fractions of the screen; widths and heights of 0 then fill the space left), `SetBlocksClicks(bool)` (clicks on the window never reach the game underneath), `movable` (see Settings), `zOrder` (higher is in front; windows default to 100, the plugin menu uses 500, footer panels are at 1000). Widgets: `AddText(text, size)`, `AddButton(label)`, `AddIconButton("play"/"pause")`, `AddSlider(width)`, `AddDropdown(width)`, `AddSpace(width)`, `AddTextArea(width, height, size)`, `AddTextInput(width, hint, size)`, `AddCheckBox(label, size)`, `AddImage(path, width, height)`. Layout: `NewRow()`, `StartSidebar(width)` / `StartMain()`, `StartView()` (returns its number), `ShowView(n)`, `ClearView(n)` (empties it and adds into it again). `SetCursorVisible(bool)` (per plugin: the cursor shows while any plugin asks), `CursorShown()`, `ResetPositions(pluginId)`, `HasMovable(pluginId)`. `DockInEditorDetails()`: the window becomes a section at the end of the track editor's details panel (under transform and paint), shown while something is selected |
-| widgets | every widget: `visible` (hidden widgets take no space); `Text.text`, `Text.SetColor(r,g,b,a)`, `Text.size`; `Button.Clicked()`, `hovered`, `label`, `icon`, `SetBackground(r,g,b,a)`; `Slider.value` (0..1), `dragging`; `Dropdown.AddOption()`, `selected`, `Changed()`; `TextArea.text` (scrolls, follows new text when at the end); `TextInput.Submitted()` (Enter), `text` (the submitted text), `value` (sets what the box shows), `clearOnSubmit` (default true), `Focus()`, `Submit()`, `focused`; `CheckBox.checked`, `Changed()`; `Image.path` |
-| `Input` | `Pressed(Key)`, `Down(Key)` with `Input::Space`, `Input::W`, `Input::MouseRight`, ... (nothing while a text input has focus) |
-| `Race` | `OnTrack()`, `IsActive()`, `Restarts()` (restarts from the beginning since the game started; checkpoint respawns and falls don't count) |
-| `Storage` | `Get(key, fallback)`, `Set(key, value)`: this plugin's saved values, kept across launches |
-| `Editor` | The track editor. Pieces are `int` ids. `IsOpen()`, `Selection()`, `Placed()` (pieces placed from the palette this frame), `GetLocation(id, x, y, z)`, `GetRotation(id, pitch, yaw, roll)`, `SetLocation(id, x, y, z)`, `SetRotation(id, pitch, yaw, roll)`, `ViewForward(x, y, z)`, `Select(ids)` (the editor's own selection and gizmo pivot; call it after moving pieces), `DuplicateSelection()` (copies in place, returns the copies, left selected), `RotatePieces(ids, cx, cy, cz, degX, degY, degZ)` (about a point, world X then Y then Z), `SetTabCycling(bool)` (Tab / Shift+Tab through the transform boxes), `SetRotateAroundCenter(bool)` (rotating several pieces turns them about their centre). The game's own time in `Select`, `DuplicateSelection` and `RotatePieces` does not count against the plugin's budget (up to 5 s a callback) |
-| `Replay` | `IsActive()`, `Time()`, `Length()`, `Seek(t)`, `Restart()`, `CameraMode()`, `SetCameraMode(Replay::Default/Follow3D/Free)` |
+The full API, with an example for every function, is in the
+**[plugin docs](https://anythinggoes-ballest.github.io/ballest-plugin-manager/)**. The site is built from `docs/` by
+`.github/workflows/docs.yml`, and its reference pages are generated from `src/host/api.cpp` by
+`tools/gen_api_docs.py`. A new API function needs an entry in `docs/api-examples.txt`, or the docs build fails.
 
 UI handles stay valid for the plugin's lifetime; the host rebuilds the widgets behind them after menu changes and
 map loads. `plugins/plugin-manager/main.as` is the fullest example; the

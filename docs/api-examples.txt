@@ -1,0 +1,1088 @@
+Descriptions and examples for the API reference. tools/gen_api_docs.py matches every function registered in
+src/host/api.cpp to an entry here and refuses to build the docs if one is missing or one names nothing.
+
+Format:
+  @@ <Namespace> or @@ <Namespace>::<Type>    the introduction at the top of that section (markdown)
+  == <key> [<key> ...]                        one entry; several keys share it (Log::Info, UI::Window.AddText,
+                                              UI::Window.visible for a property)
+  description (markdown), then a line "--", then the example (AngelScript) up to the next @@ or ==
+
+@@ Log
+Writes to the host log, `%LOCALAPPDATA%\Ballest\Saved\PluginManager\host.log`. It's recreated each time the game
+starts and is the first place to look when a plugin misbehaves. Every line is tagged with the plugin's id.
+
+== Log::Info
+Writes an information line to the host log.
+--
+// Shows up in host.log as "[info] [my-plugin] loaded, 3 tracks remembered"
+Log::Info("loaded, " + trackCount + " tracks remembered");
+
+== Log::Warn
+Writes a warning line to the host log. Use it for something that went wrong but that the plugin can carry on from.
+--
+// A saved value that can't be read: warn and fall back to the default
+if (parseFloat(saved) <= 0)
+    Log::Warn("saved size '" + saved + "' is not a size; using 56");
+
+== Log::Error
+Writes an error line to the host log. The plugin keeps running; this only records the problem.
+--
+// Something the player should report
+Log::Error("could not find the timer window after a map change");
+
+== Log::LineCount
+How many lines have been written to the log this session, by the host and every plugin. Use it with
+`Log::Line` to show the log inside the game.
+--
+// Only rebuild a log view when something new was written
+uint count = Log::LineCount();
+if (count != shownLines)
+{
+    RebuildLogView();
+    shownLines = count;
+}
+
+== Log::Line
+One line of this session's log, numbered from 0. Only the most recent lines are kept in memory. An older line comes
+back as `""`.
+--
+// The last 20 lines, oldest first
+string text;
+uint count = Log::LineCount();
+for (uint i = count > 20 ? count - 20 : 0; i < count; i++)
+    text += Log::Line(i) + "\n";
+logArea.text = text;
+
+@@ Host
+The plugin host itself: its version, a clock, and opening web pages.
+
+== Host::Version
+The host's version, for example `"0.6.0"`. To require a minimum version, set `min_host` in `info.toml` instead:
+older hosts then refuse to install or run the plugin.
+--
+// Shown in an about panel
+aboutText.text = "running on plugin host " + Host::Version();
+
+== Host::Time
+Seconds of real time since the plugin host started, which is when the game started. It keeps counting through
+pauses and loading screens. Use the difference between two readings to time things.
+--
+// Do something at most once every 5 seconds
+if (Host::Time() - lastSave > 5.0)
+{
+    Save();
+    lastSave = Host::Time();
+}
+
+== Host::OpenUrl
+Opens a page in the player's web browser. Only `https://github.com/` addresses are allowed. Anything else is refused
+and logged.
+--
+// A "source" button that opens the plugin's repo
+if (sourceButton.Clicked())
+    Host::OpenUrl("https://github.com/AnythingGoes-ballest/ballest-grind-timer-plugin");
+
+@@ Plugins
+The plugins currently loaded, in load order. Index `i` runs from `0` to `Count() - 1`. Installing, removing and
+updating the host are only allowed for the plugin manager. For any other plugin the call does nothing and a warning
+is logged.
+
+== Plugins::Count
+How many plugins are loaded.
+--
+// List every loaded plugin in the log
+for (uint i = 0; i < Plugins::Count(); i++)
+    Log::Info(Plugins::Name(i) + " " + Plugins::Version(i));
+
+== Plugins::Id
+The plugin's id: its folder name under `plugins\`.
+--
+// Find where another plugin sits in the list
+int IndexOf(const string &in id)
+{
+    for (uint i = 0; i < Plugins::Count(); i++)
+        if (Plugins::Id(i) == id)
+            return int(i);
+    return -1;
+}
+
+== Plugins::Name
+The plugin's display name, `name` in its `info.toml`.
+--
+// "Grind Timer"
+string title = Plugins::Name(i);
+
+== Plugins::Version
+The plugin's version, `version` in its `info.toml`.
+--
+// "Grind Timer   0.2.1"
+string row = Plugins::Name(i) + "   " + Plugins::Version(i);
+
+== Plugins::Status
+The plugin's status: `"running"`, or why it stopped, for example `"stopped: exceeded its 30 ms budget"` or
+`"exception: Null pointer access in void Update(float) line 10"`.
+--
+// Flag plugins that have stopped
+if (Plugins::Status(i) != "running")
+    Log::Warn(Plugins::Name(i) + ": " + Plugins::Status(i));
+
+== Plugins::Author
+The plugin's author, `author` in its `info.toml`.
+--
+string byline = "by " + Plugins::Author(i);
+
+== Plugins::Description
+The plugin's one-line description, `description` in its `info.toml`.
+--
+// Name on one line, description under it
+panel.AddLine(Plugins::Name(i));
+panel.AddLine(Plugins::Description(i));
+
+== Plugins::Icon
+The full path of the plugin's icon image, or `""` if it has none. It can be passed straight to `AddImage`.
+--
+// The plugin's icon, or the default one
+string icon = Plugins::Icon(i) != "" ? Plugins::Icon(i) : Plugins::DefaultIcon();
+window.AddImage(icon, 48, 48);
+
+== Plugins::Essential
+Whether the plugin is essential (`essential = true` in `[meta]`). Essential plugins are part of the host's own setup,
+like the plugin manager, and can't be removed.
+--
+// No remove button for essential plugins
+removeButton.visible = !Plugins::Essential(i);
+
+== Plugins::IsInstalled
+Whether a plugin with this id is loaded.
+--
+// Only offer the replay extras if the Replay Manager is there too
+bool haveReplayManager = Plugins::IsInstalled("replay-manager");
+
+== Plugins::InstalledVersion
+The version of the loaded plugin with this id, or `""` if there isn't one.
+--
+// Compare with the registry's version to offer an update
+bool outdated = Plugins::IsInstalled(id) && Plugins::InstalledVersion(id) != Registry::Version(i);
+
+== Plugins::Install
+**Plugin manager only.** Downloads a plugin from the registry, checks every file's SHA-256, and starts it without a
+restart. Use `Pending(id)` to follow the progress.
+--
+// The browser's install button
+if (installButton.Clicked())
+    Plugins::Install(Registry::Id(i));
+
+== Plugins::Remove
+**Plugin manager only.** Stops a plugin, removes its UI and deletes its folder.
+--
+if (removeButton.Clicked())
+    Plugins::Remove(id);
+
+== Plugins::Pending
+How an install or removal is going: `""` (nothing pending), `"installing"`, `"removing"`, or `"error: ..."`.
+--
+// Show progress on the button
+string state = Plugins::Pending(id);
+installButton.label = state == "" ? "install" : state;
+
+== Plugins::DefaultIcon
+The path of the default icon the plugin manager ships, used for plugins that have no icon of their own.
+--
+string icon = Plugins::Icon(i) == "" ? Plugins::DefaultIcon() : Plugins::Icon(i);
+
+== Plugins::OpenFolder
+Opens the plugins folder in File Explorer.
+--
+if (folderButton.Clicked())
+    Plugins::OpenFolder();
+
+== Plugins::UpdateHost
+**Plugin manager only.** Downloads the newest host the registry lists, checks it, and puts it in place. It takes over
+the next time the game starts. Use `HostUpdateState()` to follow the progress.
+--
+if (updateButton.Clicked() && Registry::HostVersion() != Host::Version())
+    Plugins::UpdateHost();
+
+== Plugins::HostUpdateState
+How a host update is going: `""`, `"downloading"`, `"restart"` (ready, restart the game), or `"error: ..."`.
+--
+if (Plugins::HostUpdateState() == "restart")
+    statusText.text = "restart the game to finish the update";
+
+@@ Settings
+Every loaded plugin's `[Setting]` variables, as a flat list. Index `i` runs from `0` to `Count() - 1`. A plugin
+normally just reads and assigns its own setting variables; these functions are for building a settings screen.
+`Set` and `Reset` are for the plugin manager only. See [Settings](../../guides/settings.md).
+
+== Settings::Count
+How many settings there are across all loaded plugins.
+--
+for (uint i = 0; i < Settings::Count(); i++)
+    Log::Info(Settings::Plugin(i) + ": " + Settings::Name(i) + " = " + Settings::Get(i));
+
+== Settings::Plugin
+The id of the plugin that owns the setting.
+--
+// Only this plugin's settings
+if (Settings::Plugin(i) == "grind-timer")
+    AddSettingRow(i);
+
+== Settings::Name
+The setting's display name (`name=` in its `[Setting]` tag, or the variable's name).
+--
+label.text = Settings::Name(i);
+
+== Settings::Description
+The setting's description (`description=` in its tag), or `""`.
+--
+if (Settings::Description(i) != "")
+    label.text += "\n" + Settings::Description(i);
+
+== Settings::Kind
+The variable's type: `"bool"`, `"int"`, `"uint"`, `"float"`, `"double"` or `"string"`.
+--
+// An on/off button for a bool, a text box for everything else
+if (Settings::Kind(i) == "bool")
+    window.AddButton(Settings::Get(i) == "true" ? "on" : "off");
+else
+    window.AddTextInput(200, "type a value, Enter");
+
+== Settings::Hidden
+Whether the setting is tagged `hidden`. Hidden settings are saved, but a settings screen doesn't show them.
+--
+if (Settings::Hidden(i))
+    continue;
+
+== Settings::HasRange
+Whether the setting has both `min` and `max`, so it can be shown as a slider.
+--
+if (Settings::HasRange(i))
+    window.AddSlider(360);
+
+== Settings::Min
+The setting's `min` (meaningful when `HasRange`).
+--
+// Slider position (0..1) for the current value
+float fraction = float((parseFloat(Settings::Get(i)) - Settings::Min(i)) / (Settings::Max(i) - Settings::Min(i)));
+
+== Settings::Max
+The setting's `max` (meaningful when `HasRange`).
+--
+// Value for a slider position (0..1)
+double value = Settings::Min(i) + slider.value * (Settings::Max(i) - Settings::Min(i));
+
+== Settings::Get
+The setting's current value as text (`"true"`, `"56"`, `"0.35"`, ...).
+--
+valueText.text = Settings::Get(i);
+
+== Settings::IsDefault
+Whether the setting is at its default value (the value the variable starts with in the script).
+--
+// Only show "reset" when there's something to reset
+resetButton.visible = !Settings::IsDefault(i);
+
+== Settings::Set
+**Plugin manager only.** Sets another plugin's setting from text. Numbers are clamped to `min`/`max`. Returns false
+if the text isn't a value of the setting's type. The owner's `OnSettingsChanged()` runs before its next `Update`.
+--
+if (input.Submitted() && !Settings::Set(i, input.text))
+    Log::Warn("not a value for " + Settings::Name(i) + ": " + input.text);
+
+== Settings::Reset
+**Plugin manager only.** Puts a setting back to its default.
+--
+if (resetButton.Clicked())
+    Settings::Reset(i);
+
+@@ Registry
+The plugin registry: the list of plugins the game can install, read from `registry.json` on GitHub. Index `i` runs
+from `0` to `Count() - 1` once `State()` is `"ready"`.
+
+== Registry::Refresh
+Downloads the registry again. It's already loaded once when the game starts.
+--
+if (refreshButton.Clicked())
+    Registry::Refresh();
+
+== Registry::State
+`""` (not asked for yet), `"loading"`, `"ready"`, or `"error: ..."`.
+--
+if (Registry::State() != "ready")
+{
+    statusText.text = "registry: " + (Registry::State() == "" ? "not loaded" : Registry::State());
+    return;
+}
+
+== Registry::Count
+How many plugins the registry lists.
+--
+countText.text = Registry::Count() + " in the registry";
+
+== Registry::Id
+The listed plugin's id, the name its folder will have.
+--
+bool installed = Plugins::IsInstalled(Registry::Id(i));
+
+== Registry::Name
+The listed plugin's display name.
+--
+row.text = Registry::Name(i) + "   " + Registry::Version(i);
+
+== Registry::Description
+The listed plugin's one-line description.
+--
+panel.AddLine(Registry::Description(i));
+
+== Registry::Author
+The listed plugin's author.
+--
+string byline = "by " + Registry::Author(i);
+
+== Registry::Version
+The newest version the registry lists for the plugin.
+--
+bool update = Plugins::InstalledVersion(Registry::Id(i)) != "" &&
+              Plugins::InstalledVersion(Registry::Id(i)) != Registry::Version(i);
+
+== Registry::Page
+The plugin's GitHub page, `https://github.com/<owner>/<repo>`.
+--
+if (githubButton.Clicked())
+    Host::OpenUrl(Registry::Page(i));
+
+== Registry::Icon
+The path of the downloaded copy of the plugin's icon, or `""` while it hasn't been downloaded (or if there is none).
+--
+window.AddImage(Registry::Icon(i) != "" ? Registry::Icon(i) : Plugins::DefaultIcon(), 64, 64);
+
+== Registry::HostVersion
+The newest plugin host version the registry lists.
+--
+if (Registry::HostVersion() != "" && Registry::HostVersion() != Host::Version())
+    statusText.text = "plugin manager " + Registry::HostVersion() + " is available";
+
+@@ Console
+Runs the host's own commands, the same ones as the in-game console (footer **plugins** > **open** > **console**).
+They're for measuring and debugging. The list is in `src/host/testchannel.hpp`.
+
+== Console::Run
+Runs a host command on the next frame. Its output goes to the log.
+--
+// Log the current view target (the camera the game is looking through)
+Console::Run("viewtarget");
+
+@@ Storage
+This plugin's saved values: text by key, kept across launches, one file per plugin in
+`%LOCALAPPDATA%\Ballest\Saved\PluginManager\storage\`. Each plugin only sees its own. Settings are saved
+automatically; use Storage for everything else.
+
+== Storage::Get
+The saved value for a key, or `fallback` if there's none.
+--
+// Load on start
+void Main()
+{
+    seconds = parseFloat(Storage::Get("seconds", "0"));
+    paused = Storage::Get("paused", "false") == "true";
+}
+
+== Storage::Set
+Saves a value for a key. A changed value is written to disk straight away (setting the same value again writes
+nothing), so don't save a value that changes every frame. Save it every few seconds instead.
+--
+// Save every 5 seconds while something changed
+if (dirty && Host::Time() - lastSave > 5.0)
+{
+    Storage::Set("seconds", formatFloat(seconds, "", 0, 3));
+    lastSave = Host::Time();
+    dirty = false;
+}
+
+@@ UI
+User interface, built from the game's own widgets so it looks like part of the game. A plugin creates
+**footer buttons**, **panels** above the footer, and **windows**. The handles it gets back stay valid for the
+plugin's whole life: when the game rebuilds its menus or loads a map, the host rebuilds the widgets behind them.
+Build the UI once in `Main()`; in `Update()` read what the player did and change what's shown. See
+[Windows and widgets](../../guides/ui.md).
+
+== UI::SetCursorVisible
+Asks for the mouse cursor to be shown (`true`) or releases that request (`false`). The cursor shows while any
+plugin asks for it.
+--
+// A window you can click while it's open
+window.visible = open;
+UI::SetCursorVisible(open);
+
+== UI::CursorShown
+Whether the mouse cursor is on screen at all: because a plugin asked, or because the game shows it (pause menu,
+menus).
+--
+// Only show the buttons when they can be clicked
+pauseButton.visible = UI::CursorShown();
+
+== UI::ResetPositions
+Puts every movable window of a plugin back where the plugin placed it, forgetting where the player dragged it.
+--
+if (resetPositionButton.Clicked())
+    UI::ResetPositions("grind-timer");
+
+== UI::HasMovable
+Whether a plugin has any window the player can drag.
+--
+resetPositionButton.visible = UI::HasMovable(Settings::Plugin(i));
+
+== UI::AddFooterButton
+Adds a button to the game's footer bar, the one at the bottom of the main menu, the in-race menus and the track
+editor. It stays there in every menu.
+--
+UI::FooterButton@ button;
+
+void Main()
+{
+    @button = UI::AddFooterButton("timer");
+}
+
+void Update(float dt)
+{
+    if (button.Clicked())
+        panel.visible = !panel.visible;
+}
+
+== UI::CreatePanel
+Creates a panel: a small box of lines and buttons that opens above the footer. It starts hidden.
+--
+UI::Panel@ panel = UI::CreatePanel();
+panel.title = "grind timer";
+panel.AddLine("0:42:17 on this track");
+UI::FooterButton@ resetButton = panel.AddButton("reset");
+
+== UI::CreateWindow
+Creates a window: a box on screen that holds rows of widgets. It starts visible, centred at the bottom of the
+screen 40 pixels above the edge, with a black background at 65% opacity.
+--
+UI::Window@ window = UI::CreateWindow();
+window.SetAnchor(1, 0);        // top right of the screen
+window.SetPivot(1, 0);         // ... by the window's own top right corner
+window.SetOffset(-40, 40);     // 40 pixels in from the edges
+window.AddText("hello", 24);
+
+@@ UI::FooterButton
+A button in the footer bar (from `UI::AddFooterButton`), or in a panel (from `Panel.AddButton`).
+
+== UI::FooterButton.Clicked
+True once per click. Reading it clears it, so check it in one place each frame.
+--
+if (button.Clicked())
+    panel.visible = !panel.visible;
+
+== UI::FooterButton.hovered
+**Read only.** Whether the mouse is over the button.
+--
+// Show a hint while hovering
+hintText.visible = button.hovered;
+
+== UI::FooterButton.label
+**Write only.** The button's text.
+--
+button.label = paused ? "start" : "pause";
+
+@@ UI::Panel
+A box of lines and buttons above the footer (from `UI::CreatePanel`).
+
+== UI::Panel.Clear
+Removes every line (buttons stay).
+--
+// Rebuild the lines when something changes
+panel.Clear();
+for (uint i = 0; i < names.length(); i++)
+    panel.AddLine(names[i]);
+
+== UI::Panel.AddLine
+Adds a line of text under the ones already there.
+--
+panel.AddLine("restarts: " + restarts);
+
+== UI::Panel.title
+**Write only.** The heading at the top of the panel.
+--
+panel.title = "plugins";
+
+== UI::Panel.visible
+Whether the panel is open.
+--
+if (button.Clicked())
+    panel.visible = !panel.visible;
+
+== UI::Panel.AddButton
+Adds a button at the bottom of the panel. It's the same type as a footer button.
+--
+UI::FooterButton@ openButton = panel.AddButton("open");
+// later, in Update:
+if (openButton.Clicked())
+    window.visible = true;
+
+@@ UI::Window
+A box on screen holding widgets in rows (from `UI::CreateWindow`). Widgets are added left to right; `NewRow()`
+starts the next row. A window can also have a sidebar and several views, one shown at a time, like the plugin
+manager's menu.
+
+== UI::Window.SetAnchor
+The point of the screen the window is placed from, as fractions: `(0, 0)` top left, `(0.5, 0.5)` centre,
+`(1, 1)` bottom right.
+--
+window.SetAnchor(0.5, 0);      // top centre of the screen
+
+== UI::Window.SetPivot
+The point of the window that sits on the anchor, as fractions of the window's size.
+--
+// Centred horizontally at the top of the screen
+window.SetAnchor(0.5, 0);
+window.SetPivot(0.5, 0);
+
+== UI::Window.SetOffset
+Moves the window from its anchor, in pixels.
+--
+window.SetAnchor(0, 0);
+window.SetOffset(40, 40);      // 40 pixels from the top left corner
+
+== UI::Window.SetBackground
+The window's background colour, red, green, blue and opacity from 0 to 1. Opacity `0` removes the background.
+--
+window.SetBackground(0, 0, 0, 0.35f);   // a light dark tint
+
+== UI::Window.visible
+Whether the window is shown.
+--
+// Only on a track
+window.visible = Race::OnTrack();
+
+== UI::Window.AddText
+Adds a text. `size` is the font height in pixels (16 if left out).
+--
+UI::Text@ timeText = window.AddText("0:00:00", 56);
+timeText.SetColor(0.24f, 1, 0.35f, 1);
+
+== UI::Window.AddButton
+Adds a button with a text label.
+--
+UI::Button@ resetButton = window.AddButton("reset");
+
+== UI::Window.AddIconButton
+Adds a button that shows a drawn icon: `"play"` or `"pause"`.
+--
+UI::Button@ playButton = window.AddIconButton("pause");
+// later: playButton.icon = paused ? "play" : "pause";
+
+== UI::Window.AddSlider
+Adds a slider `width` pixels wide. Its value runs from 0 to 1.
+--
+UI::Slider@ slider = window.AddSlider(600);
+
+== UI::Window.AddDropdown
+Adds a dropdown `width` pixels wide. Add its choices with `AddOption`.
+--
+UI::Dropdown@ speed = window.AddDropdown(90);
+speed.AddOption("1x");
+speed.AddOption("2x");
+speed.selected = 0;
+
+== UI::Window.AddSpace
+Adds empty space `width` pixels wide. `0` takes up all the leftover room in the row, pushing the widgets after it to
+the right edge.
+--
+// Label on the left, button on the right
+window.AddText("Show timer");
+window.AddSpace(0);
+window.AddButton("on");
+
+== UI::Window.NewRow
+Starts a new row: widgets added afterwards go underneath.
+--
+window.AddText("0:42:17", 56);
+window.NewRow();
+window.AddText("restarts 36", 22);
+
+== UI::Window.StartSidebar
+Widgets added after this stack in a column `width` pixels wide on the left of the window, until `StartMain()`.
+--
+window.StartSidebar(220);
+UI::Button@ logNav = window.AddButton("console");
+UI::Button@ pluginsNav = window.AddButton("plugins");
+window.StartMain();
+
+== UI::Window.StartMain
+Ends the sidebar: widgets added after this go back into the rows on the right.
+--
+window.StartSidebar(220);
+window.AddButton("settings");
+window.StartMain();
+window.AddText("settings", 28);
+
+== UI::Window.SetScreenSize
+Gives the window a fixed size as fractions of the screen. Without one, the window is as big as its contents.
+--
+window.SetScreenSize(0.8f, 0.85f);   // most of the screen, for a menu
+
+== UI::Window.StartView
+Starts a new view and returns its number. Widgets added afterwards belong to it. Only one view shows at a time,
+chosen with `ShowView`.
+--
+int logView = window.StartView();
+window.AddTextArea(900, 600);
+int settingsView = window.StartView();
+window.AddText("settings");
+window.ShowView(logView);
+
+== UI::Window.SetBlocksClicks
+With `true`, clicks on the window never reach the game underneath it.
+--
+menu.SetBlocksClicks(true);    // a menu over the game
+
+== UI::Window.AddCheckBox
+Adds a tick box with a label next to it. `size` is the label's font height (16 if left out).
+--
+UI::CheckBox@ xAxis = window.AddCheckBox("X", 16);
+xAxis.checked = true;
+
+== UI::Window.DockInEditorDetails
+Makes the window a section of the track editor's details panel, under the game's transform and paint sections, shown
+while pieces are selected. Call it before adding widgets. `SetAnchor`, `SetOffset` and `movable` don't apply to a
+docked window.
+--
+UI::Window@ section = UI::CreateWindow();
+section.DockInEditorDetails();
+section.SetBackground(0, 0, 0, 0);
+section.AddText("rotated copy", 18);
+
+== UI::Window.zOrder
+Which windows are in front: higher is in front. Windows start at 100, the plugin manager's menu uses 500, and footer
+panels are at 1000.
+--
+menu.zOrder = 500;    // above other plugins' windows
+
+== UI::Window.movable
+With `true`, the player can drag the window whenever the cursor is on screen. Where they leave it is saved, and
+**reset position** in the settings puts it back. Set it after `SetOffset`: that's the position reset returns to.
+--
+timerWindow.SetOffset(40, 40);
+timerWindow.movable = true;
+
+== UI::Window.ShowView
+Shows one view (a number from `StartView`) and hides the others.
+--
+if (logNav.Clicked())
+    window.ShowView(logView);
+
+== UI::Window.ClearView
+Removes every widget in a view. Widgets added afterwards go into that view, so it can be rebuilt.
+--
+// Rebuild the settings view when the list of settings changes
+window.ClearView(settingsView);
+for (uint i = 0; i < Settings::Count(); i++)
+    AddSettingRow(i);
+
+== UI::Window.AddImage
+Adds an image from a PNG file (full path), shown `width` by `height` pixels.
+--
+window.AddImage(Plugins::Icon(i), 48, 48);
+
+== UI::Window.AddTextArea
+Adds a scrolling text box `width` by `height` pixels. `size` is the font height (14 if left out). While it's
+scrolled to the end, it follows new text.
+--
+UI::TextArea@ logArea = window.AddTextArea(900, 520, 14);
+logArea.text = "first line\nsecond line";
+
+== UI::Window.AddTextInput
+Adds a box the player can type in. `width` in pixels (0 fills the rest of the row), a grey `hint` shown while it's
+empty, and `size` for the font height.
+--
+UI::TextInput@ command = window.AddTextInput(0, "type a command, Enter", 20);
+
+@@ UI::Text
+A piece of text in a window (from `Window.AddText`).
+
+== UI::Text.text
+The text shown.
+--
+timeText.text = FormatTime(seconds);
+
+== UI::Text.SetColor
+The text's colour, red, green, blue and opacity from 0 to 1.
+--
+// Green while counting, dark green while paused
+if (counting)
+    timeText.SetColor(0.24f, 1, 0.35f, 1);
+else
+    timeText.SetColor(0.16f, 0.55f, 0.24f, 1);
+
+== UI::Text.visible UI::Button.visible UI::Slider.visible UI::Dropdown.visible UI::TextArea.visible UI::TextInput.visible UI::Image.visible UI::CheckBox.visible
+Whether the widget is shown. A hidden widget takes no space, so the rest of its row closes up.
+--
+// Buttons only while the cursor is on screen
+pauseButton.visible = UI::CursorShown();
+resetButton.visible = UI::CursorShown();
+
+== UI::Text.size
+The font height in pixels.
+--
+// From a setting
+timeText.size = TimeSize;
+
+@@ UI::Button
+A clickable button in a window (from `Window.AddButton` or `Window.AddIconButton`).
+
+== UI::Button.Clicked
+True once per click (a press that's released over the button). Reading it clears it.
+--
+if (resetButton.Clicked())
+{
+    seconds = 0;
+    Save();
+}
+
+== UI::Button.hovered
+**Read only.** Whether the mouse is over the button.
+--
+tooltip.visible = sourceButton.hovered;
+
+== UI::Button.SetBackground
+The button's colour, red, green, blue and opacity from 0 to 1.
+--
+// Highlight the selected entry in a sidebar
+nav.SetBackground(0.30f, 0.30f, 0.36f, 1);
+
+== UI::Button.label
+**Write only.** A text button's label.
+--
+pauseButton.label = paused ? "start timer" : "pause timer";
+
+== UI::Button.icon
+**Write only.** An icon button's icon: `"play"` or `"pause"`.
+--
+playButton.icon = paused ? "play" : "pause";
+
+@@ UI::Slider
+A slider in a window (from `Window.AddSlider`). Its value runs from 0 to 1.
+
+== UI::Slider.value
+The slider's position from 0 to 1. Setting it while the player is dragging does nothing: their drag wins.
+--
+// Follow playback unless the player is scrubbing
+if (!slider.dragging)
+    slider.value = float(Replay::Time() / Replay::Length());
+
+== UI::Slider.dragging
+**Read only.** Whether the player is dragging the slider right now.
+--
+if (slider.dragging)
+    Replay::Seek(slider.value * Replay::Length());
+
+@@ UI::Dropdown
+A dropdown in a window (from `Window.AddDropdown`).
+
+== UI::Dropdown.AddOption
+Adds a choice at the end of the list.
+--
+array<string> speeds = {".5x", "1x", "2x"};
+for (uint i = 0; i < speeds.length(); i++)
+    speedBox.AddOption(speeds[i]);
+
+== UI::Dropdown.selected
+The index of the chosen option. Setting it doesn't count as a change (`Changed()` stays false). An index outside the
+list is ignored.
+--
+cameraBox.selected = Replay::CameraMode();
+
+== UI::Dropdown.Changed
+True once after the player picks an option. Reading it clears it.
+--
+if (cameraBox.Changed())
+    Replay::SetCameraMode(cameraBox.selected);
+
+@@ UI::TextArea
+A scrolling box of text (from `Window.AddTextArea`).
+
+== UI::TextArea.text
+All the text in the box. Use `\n` for new lines.
+--
+logArea.text += Log::Line(i) + "\n";
+
+@@ UI::TextInput
+A box the player can type in (from `Window.AddTextInput`). While it has focus, the keys go to it: the game doesn't
+get them, and neither does `Input::Pressed`.
+
+== UI::TextInput.Submitted
+True once after the player presses Enter in the box, or after `Submit()`. Reading it clears it. The text is then in
+`text`.
+--
+if (command.Submitted())
+    Console::Run(command.text);
+
+== UI::TextInput.text
+**Read only.** The text as it was last submitted.
+--
+if (nameInput.Submitted())
+    Storage::Set("name", nameInput.text);
+
+== UI::TextInput.focused
+**Read only.** Whether the box has keyboard focus (the player is typing in it).
+--
+// Don't treat Space as "pause" while typing
+if (!command.focused && Input::Pressed(Input::Space))
+    TogglePause();
+
+== UI::TextInput.Focus
+Puts the keyboard focus in the box, as if the player had clicked it.
+--
+// Ready to type as soon as the console opens
+if (consoleNav.Clicked())
+{
+    window.ShowView(consoleView);
+    command.Focus();
+}
+
+== UI::TextInput.Submit
+Submits what's typed in the box, as if the player had pressed Enter.
+--
+// A button next to the box does the same as Enter
+if (goButton.Clicked())
+    command.Submit();
+
+== UI::TextInput.value
+**Write only.** Replaces what's typed in the box.
+--
+angleInput.value = "180";
+
+== UI::TextInput.clearOnSubmit
+**Write only.** Whether the box empties after a submit (the default) or keeps its text.
+--
+// A number box that keeps showing its value
+angleInput.clearOnSubmit = false;
+
+@@ UI::Image
+A picture in a window (from `Window.AddImage`).
+
+== UI::Image.path
+The PNG file shown.
+--
+icon.path = Registry::Icon(i) != "" ? Registry::Icon(i) : Plugins::DefaultIcon();
+
+@@ UI::CheckBox
+A tick box with a label (from `Window.AddCheckBox`).
+
+== UI::CheckBox.checked
+Whether it's ticked. Setting it doesn't count as a change.
+--
+float angle = xBox.checked ? parseFloat(xAngle.text) : 0;
+
+== UI::CheckBox.Changed
+True once after the player ticks or unticks it. Reading it clears it.
+--
+if (showBox.Changed())
+    timerWindow.visible = showBox.checked;
+
+@@ Input
+The keyboard and mouse, read only while the game window has focus. While the player is typing in a plugin's text
+box, every key reads as up. Keys are `Input::Key` values: named keys (below), `Input::A` to `Input::Z`, and
+`Input::N0` to `Input::N9` for the number row.
+
+== Input::Pressed
+True in the frame the key goes down.
+--
+// F6 toggles the window
+if (Input::Pressed(Input::F6))
+    window.visible = !window.visible;
+
+== Input::Down
+True for as long as the key is held.
+--
+// Only snap once the drag has finished
+if (!Input::Down(Input::MouseLeft))
+    SnapSelection();
+
+@@ Race
+The race the player is in.
+
+== Race::OnTrack
+Whether the player is on a track (a map with a race), as opposed to the menus.
+--
+timerWindow.visible = Race::OnTrack() && ShowTimer;
+
+== Race::IsActive
+Whether a race is running. It stays on through checkpoint respawns. It's off in the menus, after the finish, and
+for a moment during a restart.
+--
+if (Race::OnTrack() && Race::IsActive())
+    seconds += dt;
+
+== Race::Restarts
+Restarts from the beginning of the track since the game started: Backspace, or R before the first checkpoint.
+Checkpoint respawns and falls don't count. It comes from the game's own counter, so rebinding keys changes nothing.
+--
+// Count new restarts
+int now = Race::Restarts();
+if (now > seenRestarts)
+    restarts += now - seenRestarts;
+seenRestarts = now;
+
+@@ Editor
+The track editor. Pieces are identified by `int` ids. An id stops working once its piece is deleted: the functions
+taking it return false or skip it. Positions are in game units (`x`, `y`, `z`, with `z` up), rotations in degrees.
+`Select`, `DuplicateSelection` and `RotatePieces` do their work through the game's editor. The game's time for
+that doesn't count against the plugin's time budget (up to 5 seconds a frame).
+
+== Editor::IsOpen
+Whether the track editor is running.
+--
+section.visible = Editor::IsOpen();
+if (!Editor::IsOpen())
+    return;
+
+== Editor::Selection
+The selected pieces.
+--
+array<int>@ selected = Editor::Selection();
+Log::Info(selected.length() + " pieces selected");
+
+== Editor::Placed
+Pieces placed from the palette this frame. Pastes and duplicates aren't included.
+--
+// Put every new piece on whole-unit coordinates
+array<int>@ placed = Editor::Placed();
+for (uint i = 0; i < placed.length(); i++)
+{
+    double x, y, z;
+    if (Editor::GetLocation(placed[i], x, y, z))
+        Editor::SetLocation(placed[i], Round(x), Round(y), Round(z));
+}
+
+== Editor::GetLocation
+A piece's position. Returns false if the piece no longer exists.
+--
+double x, y, z;
+if (Editor::GetLocation(id, x, y, z))
+    Log::Info("at " + x + ", " + y + ", " + z);
+
+== Editor::GetRotation
+A piece's rotation in degrees: pitch, yaw, roll. Returns false if the piece no longer exists.
+--
+double pitch, yaw, roll;
+Editor::GetRotation(id, pitch, yaw, roll);
+
+== Editor::SetLocation
+Moves a piece. After moving selected pieces, call `Select` with them so the editor's gizmo follows.
+--
+Editor::SetLocation(id, x + 100, y, z);    // 100 units along X
+Editor::Select(Editor::Selection());
+
+== Editor::SetRotation
+Rotates a piece to an absolute rotation in degrees: pitch, yaw, roll.
+--
+// Face the other way
+double pitch, yaw, roll;
+Editor::GetRotation(id, pitch, yaw, roll);
+Editor::SetRotation(id, pitch, yaw + 180, roll);
+
+== Editor::ViewForward
+The direction the editor camera is looking, as a unit vector.
+--
+// 500 units in front of the camera
+double fx, fy, fz;
+Editor::ViewForward(fx, fy, fz);
+Editor::SetLocation(id, x + fx * 500, y + fy * 500, z + fz * 500);
+
+== Editor::Select
+Selects exactly these pieces, with the editor's own highlight and gizmo.
+--
+// Select the copies after duplicating
+Editor::Select(copies);
+
+== Editor::DuplicateSelection
+Copies the selected pieces in place and returns the copies, which are left selected.
+--
+array<int>@ copies = Editor::DuplicateSelection();
+if (copies.length() == 0)
+    Log::Warn("nothing selected to copy");
+
+== Editor::RotatePieces
+Turns pieces about a point by the given degrees around the world X, Y and Z axes (X first, then Y, then Z). Both
+their positions and their rotations turn.
+--
+// Turn the selection 90 degrees around the vertical axis through its centre
+array<int>@ ids = Editor::Selection();
+double cx = 0, cy = 0, cz = 0;
+for (uint i = 0; i < ids.length(); i++)
+{
+    double x, y, z;
+    Editor::GetLocation(ids[i], x, y, z);
+    cx += x / ids.length(); cy += y / ids.length(); cz += z / ids.length();
+}
+Editor::RotatePieces(ids, cx, cy, cz, 0, 0, 90);
+Editor::Select(ids);
+
+== Editor::SetTabCycling
+While on, Tab and Shift+Tab move between the nine transform boxes in the details panel (location, rotation, scale;
+X, Y, Z).
+--
+// On only while the editor is open
+Editor::SetTabCycling(Editor::IsOpen());
+
+== Editor::SetRotateAroundCenter
+While on, rotating two or more pieces turns them about the centre of the selection instead of the last selected
+piece.
+--
+[Setting name="Rotate multiple pieces around their centre"]
+bool RotateAroundCenter = false;
+
+void OnSettingsChanged()
+{
+    Editor::SetRotateAroundCenter(RotateAroundCenter);
+}
+
+@@ Replay
+The replay being watched: a ghost's run, with the camera following it. Times are in seconds.
+
+== Replay::IsActive
+Whether a replay is being watched.
+--
+window.visible = Replay::IsActive();
+
+== Replay::Time
+How far into the replay playback is, in seconds.
+--
+timeText.text = FormatTime(Replay::Time()) + " / " + FormatTime(Replay::Length());
+
+== Replay::Length
+The replay's length in seconds, or a negative number while it's unknown (a downloaded replay fills it in once it has
+loaded).
+--
+double length = Replay::Length();
+if (length > 0)
+    slider.value = float(Replay::Time() / length);
+
+== Replay::Seek
+Jumps playback to a time in seconds.
+--
+if (slider.dragging)
+    Replay::Seek(slider.value * Replay::Length());
+
+== Replay::Restart
+Starts the replay again from the beginning.
+--
+if (restartButton.Clicked())
+    Replay::Restart();
+
+== Replay::CameraMode
+The current camera mode: `Replay::Default`, `Replay::Follow3D` or `Replay::Free`.
+--
+if (Replay::CameraMode() == Replay::Free)
+    hintText.text = "right mouse to look, WASD to move, E/Q up and down";
+
+== Replay::SetCameraMode
+Sets the camera: `Replay::Default` (the game's own), `Replay::Follow3D` (behind the ball along its direction of
+travel, turning smoothly), or `Replay::Free` (fly around: hold the right mouse button to look, WASD to move, E/Q
+up and down, Shift for speed).
+--
+Replay::SetCameraMode(Replay::Follow3D);

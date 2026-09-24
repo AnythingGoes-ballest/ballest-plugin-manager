@@ -1,0 +1,78 @@
+site_name: Ballest plugin docs
+site_description: Writing plugins for the Ballest plugin manager
+repo_url: https://github.com/AnythingGoes-ballest/ballest-plugin-manager
+repo_name: ballest-plugin-manager
+edit_uri: edit/main/docs/
+
+# docs/reference/api/ is generated from src/host/api.cpp: python tools/gen_api_docs.py
+exclude_docs: |
+  api-examples.txt
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: green
+      accent: light green
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: green
+      accent: light green
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Your first plugin: getting-started.md
+      - How plugins run: concepts.md
+  - Guides:
+      - Windows and widgets: guides/ui.md
+      - Settings: guides/settings.md
+      - Saving data and timing: guides/storage.md
+      - Debugging: guides/debugging.md
+      - Publishing a plugin: guides/publishing.md
+  - Reference:
+      - info.toml: reference/manifest.md
+      - Callbacks: reference/callbacks.md
+      - Log: reference/api/log.md
+      - Host: reference/api/host.md
+      - Storage: reference/api/storage.md
+      - UI: reference/api/ui.md
+      - Input: reference/api/input.md
+      - Race: reference/api/race.md
+      - Replay: reference/api/replay.md
+      - Editor: reference/api/editor.md
+      - Plugins: reference/api/plugins.md
+      - Settings: reference/api/settings.md
+      - Registry: reference/api/registry.md
+      - Console: reference/api/console.md
+  - Host internals: DESIGN.md
