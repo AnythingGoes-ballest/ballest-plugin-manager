@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -403,14 +404,17 @@ void Run(const std::string& cmd) {
              }
              Report("fnbytes " + Arg(a, 2) + " base " + hostlog::Hex(eng::Base()) + ": " + line);
          }},
-        {"matparams", [](const Args& a, const std::string&) {    // a material instance's parameter names and values
+        {"matparams", [](const Args& a, const std::string&) {    // matparams <material>: its parameter names and values
              eng::Obj m = cosmetics::LoadAsset(eng::Widen(Arg(a, 1)));
+             if (!m) m = eng::FindObjectByName(Arg(a, 1));          // a material made at runtime, by its name
              if (!m) return Report("matparams: not loaded");
-             for (const char* list : {"ScalarParameterValues", "VectorParameterValues", "TextureParameterValues"}) {
+             // Entry sizes, measured: FScalarParameterValue 36, FVectorParameterValue 48, FTextureParameterValue 40.
+             for (const auto& [list, entrySize] : {std::pair{"ScalarParameterValues", 36}, std::pair{"VectorParameterValues", 48},
+                                                   std::pair{"TextureParameterValues", 40}}) {
                  struct { uint8_t* data; int32_t num, max; } arr{};
                  const eng::Prop prop = eng::FindProp(eng::ClassOf(m), list);
                  if (!prop || !eng::ReadBytes(m, list, &arr, sizeof arr)) continue;
-                 const int stride = std::atoi(Arg(a, 2).c_str()) > 0 ? std::atoi(Arg(a, 2).c_str()) : 0;
+                 const int stride = entrySize;
                  std::string line = std::string(list) + " (" + std::to_string(arr.num) + "):";
                  for (int i = 0; i < arr.num && stride; ++i) {
                      uint32_t ci = 0; int32_t num = 0;
@@ -450,6 +454,58 @@ void Run(const std::string& cmd) {
          }},
         {"enable", [](const Args& a, const std::string& c) {       // enable <plugin id> 0|1: turn a plugin off or on
              Report(c + (plugins::SetEnabled(Arg(a, 1), Arg(a, 2) == "1") ? " -> ok" : " -> nothing to do"));
+         }},
+        {"ballstate", [](const Args&, const std::string&) {        // the racing balls: skin actor, sphere, mesh, material
+             eng::Obj cls = eng::FindClass("BP_RollingBall_C");
+             eng::ForEachObject([&](eng::Obj o) {
+                 if (eng::ClassOf(o) != cls || eng::IsDefaultObject(o)) return true;
+                 eng::Obj skin = eng::ReadObj(o, "CustomSkinChild"), sphere = eng::ReadObj(o, "Sphere");
+                 bool hidden = false;
+                 if (skin && eng::IsLive(skin)) eng::ReadBool(skin, "bHidden", &hidden);
+                 struct V { double x, y, z; };
+                 const V v = eng::Call(o, "GetVelocity").ReturnAs<V>();
+                 Report("ball " + eng::ObjName(o) + " speed " + std::to_string(static_cast<int>(std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z))) +
+                        " skin " + (skin && eng::IsLive(skin) ? eng::ObjName(skin) + (hidden ? " hidden" : " SHOWN") : std::string("none")) +
+                        " sphere " + (eng::Call(sphere, "IsVisible").ReturnBool() ? "visible" : "hidden") + " mesh " +
+                        eng::ObjName(eng::ReadObj(sphere, "StaticMesh")) + " material " +
+                        eng::ObjName(eng::Call(sphere, "GetMaterial", int32_t{0}).ReturnObj()));
+                 return true;
+             });
+             eng::Obj menu = eng::FindClass("BP_MenuBall_C");          // and the menu balls' hats: mesh and size
+             eng::ForEachObject([&](eng::Obj o) {
+                 if (eng::ClassOf(o) != menu || eng::IsDefaultObject(o)) return true;
+                 eng::Obj slot = eng::ReadObj(o, "AccessorySlot");
+                 double scale[3] = {};
+                 if (slot) eng::ReadBytes(slot, "RelativeScale3D", scale, sizeof scale);
+                 Report("menu ball " + eng::ObjName(o) + " hat " + eng::ObjName(slot ? eng::ReadObj(slot, "StaticMesh") : nullptr) +
+                        " scale " + std::to_string(scale[0]) + "," + std::to_string(scale[1]) + "," + std::to_string(scale[2]));
+                 return true;
+             });
+         }},
+        {"slomo", [](const Args& a, const std::string& c) {        // slomo <dilation>: game time runs this fast (1 = normal)
+             const bool ok = eng::Call(eng::FindCdo("GameplayStatics"), "SetGlobalTimeDilation", game::PlayerController(),
+                                       static_cast<float>(std::atof(Arg(a, 1).c_str()))).Invoked();
+             Report(c + (ok ? " -> ok" : " -> failed"));
+         }},
+        {"skinmats", [](const Args&, const std::string&) {        // every ball skin: material, parent, texture params
+             eng::Obj cls = eng::FindClass("PDA_BallSkin_C"), inst = eng::FindClass("MaterialInstance");
+             eng::ForEachObject([&](eng::Obj o) {
+                 if (eng::ClassOf(o) != cls || eng::IsDefaultObject(o)) return true;
+                 eng::Obj m = eng::ReadObj(o, "SkinMaterial");
+                 std::string line = eng::ObjName(o) + ": " + (m ? eng::PathOf(m) : "none");
+                 if (m && eng::IsA(m, inst)) {
+                     line += " parent " + eng::ObjName(eng::ReadObj(m, "Parent")) + " textures";
+                     struct { uint8_t* data; int32_t num, max; } arr{};
+                     if (eng::ReadBytes(m, "TextureParameterValues", &arr, sizeof arr))
+                         for (int i = 0; i < arr.num && i < 12; ++i) {          // FTextureParameterValue: 40 bytes (measured)
+                             uint32_t ci = 0; int32_t num = 0;
+                             std::memcpy(&ci, arr.data + i * 40, 4); std::memcpy(&num, arr.data + i * 40 + 4, 4);
+                             line += " [" + eng::Name(ci, num) + "]";
+                         }
+                 }
+                 Report(line);
+                 return true;
+             });
          }},
         {"gc", [](const Args&, const std::string&) {
              eng::Call(eng::FindCdo("KismetSystemLibrary"), "CollectGarbage");

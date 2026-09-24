@@ -159,6 +159,14 @@ void SetVector(Obj material, const std::string& parameter, float r, float g, flo
     eng::Invoke(material, p);
 }
 
+void SetScalar(Obj material, const std::string& parameter, float value) {
+    Params p(eng::FunctionOn(material, "SetScalarParameterValue"));
+    const Name name = MakeName(parameter);
+    p.Set("ParameterName", name);
+    p.Set("Value", value);
+    eng::Invoke(material, p);
+}
+
 void SetTexture(Obj material, const std::string& parameter, Obj texture) {
     Params p(eng::FunctionOn(material, "SetTextureParameterValue"));
     const Name name = MakeName(parameter);
@@ -584,10 +592,11 @@ void WearHat(Obj ball, Obj slot, const Custom* hat) {
         if (hat->hasModel) WearModel(slot, hat, ball);
         else RemoveModel(slot);
     } else if (r) {
-        if (!mesh || IsCustomMesh(mesh)) {             // otherwise the game has put its own on since
+        if (!mesh || IsCustomMesh(mesh))                // otherwise the game has put its own on since
             eng::Call(slot, "SetStaticMesh", eng::Get(r->mesh));
-            eng::Call(slot, "SetRelativeScale3D", Vector{{r->scale[0], r->scale[1], r->scale[2]}});
-        }
+        // The slot's size goes back whatever mesh is on it now: the host changed it, and a custom hat's size left on it
+        // made every hat after it bigger (reported).
+        eng::Call(slot, "SetRelativeScale3D", Vector{{r->scale[0], r->scale[1], r->scale[2]}});
         Forget(r);
         RemoveModel(slot);
     }
@@ -782,6 +791,12 @@ bool AddBall(const std::string& id, const std::string& name, const std::wstring&
         SetVector(material, "[Metallic] Metallic Channel", 0, 0, 0, 0);
         SetVector(material, "[AO] Ambient Occlusion Channel", 1, 0, 0, 0);
     }
+    // No LBall glow: its master (M_LBall05_Master, read from the cooked package) adds EmissiveColor through
+    // T_LBall05_EmissiveMask, strength from EmissiveStrengthLow to EmissiveStrengthHigh by MPC_BallProperties'
+    // BallSpeed, which drew LBall's yellow panels over the image at speed (reported).
+    SetVector(material, "EmissiveColor", 0, 0, 0, 0);
+    SetScalar(material, "EmissiveStrengthLow", 0);
+    SetScalar(material, "EmissiveStrengthHigh", 0);
     Obj asset = Create(Kind::Ball, id, name, preview.empty() ? texture : Texture(preview));
     if (!asset) return false;
     SetObject(asset, "SkinMaterial", material);
@@ -913,6 +928,15 @@ std::string Equipped(Kind kind) { return gEquipped[static_cast<int>(kind)]; }
 
 bool ClickTile(int index) {
     Obj tile = index >= 0 && index < static_cast<int>(gTiles.size()) ? eng::Get(gTiles[static_cast<size_t>(index)]) : nullptr;
+    Obj page = eng::Get(gPage), cls = gSectionTab >= 0 ? eng::FindClass(kAssetClass[gSectionTab]) : nullptr;
+    if (index < 0 && page && cls) {             // -n: the game's own n-th tile shown on this tab
+        int n = -index;
+        ForEachGameTile(page, [&](Obj t) {
+            if (n > 0 && eng::Call(t, "GetVisibility").ReturnAs<uint8_t>(w::kCollapsed) != w::kCollapsed &&
+                eng::IsA(eng::ReadObj(t, "CosmeticData"), cls) && --n == 0)
+                tile = t;
+        });
+    }
     return tile && eng::Call(tile, "BndEvt__WBP_BasicBallSelect_Hitbox_K2Node_ComponentBoundEvent_5_OnButtonClickedEvent__DelegateSignature").Invoked();
 }
 
