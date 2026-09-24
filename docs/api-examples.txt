@@ -1212,6 +1212,7 @@ Adds a ball. `AddBall(id, name, image, preview, model)`:
 Returns false, and logs why, if it can't be added.
 --
 string f = Plugins::Folder();       // this plugin's own folder (where planet.png is)
+Cosmetics::AddBall("my-balls.planet",       // id: "<plugin id>.<ball>"
                    "planet",                // name on its tile
                    f + "planet.png",        // texture (1024x512)
                    f + "planet_tile.png",   // tile picture
