@@ -87,6 +87,7 @@ plugin's GitHub repo and lists the SHA-256 of every file the game downloads:
 | `src/host/storage.*` | Per-plugin saved values |
 | `src/host/api.*` | The script API (all bindings in one file) |
 | `src/host/cosmetics.*` | Custom balls, hats and goal explosions: the Customize page's custom sections, what the player picks (the page's handler, wrapped), and wearing them on the player's own balls |
+| `src/host/leaderboard.*` | The leaderboard inside a map: its player count (Steam's entry count) and a note after its title |
 | `src/host/models.*` | Models: shapes described in text, built as Geometry Script dynamic meshes and attached to a ball or hat slot |
 | `src/host/testchannel.*` | Test and measurement commands, from the console and from the tools below |
 | `src/proxy/` | The `version.dll` export stubs (generated from the system DLL's export table) |
