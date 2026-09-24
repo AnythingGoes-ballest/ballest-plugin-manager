@@ -86,6 +86,19 @@ def command(text, settle=0.0):
     time.sleep(settle)
 
 
+def click_when_there(label, timeout=5):
+    """Clicks a button that may only appear once the UI has caught up (cards rebuild a few times a second)."""
+    end = time.time() + timeout
+    while time.time() < end:
+        c = Cursor()
+        command(f"click {label}")
+        line = c.wait(r"test: click ", 3) or ""
+        if line.endswith("-> ok"):
+            return True
+        time.sleep(0.3)
+    return False
+
+
 def replay_time():
     c = Cursor()
     command("replaytime")
@@ -161,13 +174,20 @@ def plugin_browser(mirrored):
     check("plugins view lists the installed plugins as cards", "text[Plugin Manager" in state and "text[Hello World" in state)
     if mirrored:
         check("registry read from the local copy", any(re.search(r"registry: \d+ plugin\(s\) from file:", l) for l in lines()))
+        # Start from a known state whatever an earlier run left: both registry plugins installed. The grind timer's
+        # card then comes first, so the first "remove" button is its.
+        for plugin in ("grind-timer", "replay-manager"):
+            if not (GAME_PLUGINS / plugin).exists():
+                c = Cursor()
+                command(f"install {plugin}")
+                c.wait(rf"registry: installed {plugin}", 20)
         screenshot("regression_browser")
         c = Cursor()
         command("click remove")      # the first card with a remove button: the grind timer
         check("remove takes the plugin out straight away", c.wait(r"\[grind-timer\] unloaded", 10) and c.wait(r"registry: removed grind-timer", 10))
         check("its folder is gone", not (GAME_PLUGINS / "grind-timer").exists())
         c = Cursor()
-        command("click install")
+        click_when_there("install")
         check("install downloads, verifies and starts it", c.wait(r"registry: installed grind-timer", 20) and c.wait(r"\[grind-timer\] loaded", 5))
     if (GAME_PLUGINS / "grind-timer").exists():
         command("click window:settings", 1.0)

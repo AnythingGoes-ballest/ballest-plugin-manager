@@ -6,6 +6,7 @@
 //   state                                  UI and plugin status
 //   click <label> | select <first option> <index> | slider <0..1> | press <virtual key> | submit <text>
 //   fakereplay on [length] | fakereplay off | replaytime
+//   install <id> | remove <id>             through the registry, as the plugin browser's buttons do
 //   open <map>                             load a map directly (skips the menu's level setup)
 //   functions <Class> | instances <Class> [fragment+fragment] | props <Class> [filter] | find <name fragment>
 //   struct <Class> <Function> | call <Class> <Function> [filter] | viewtarget

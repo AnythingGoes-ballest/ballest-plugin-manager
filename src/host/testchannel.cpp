@@ -13,6 +13,7 @@
 #include "input.hpp"
 #include "log.hpp"
 #include "plugins.hpp"
+#include "registry.hpp"
 #include "replay.hpp"
 #include "ui.hpp"
 
@@ -146,6 +147,14 @@ void Run(const std::string& cmd) {
         {"fakereplay", [](const Args& a, const std::string&) { replay::Simulate(Arg(a, 1) == "on", a.size() > 2 ? std::atof(Arg(a, 2).c_str()) : 30); }},
         {"replaytime", [](const Args&, const std::string&) {
              Report("replay time " + std::to_string(replay::Time()) + " of " + std::to_string(replay::Length()));
+         }},
+        {"install", [](const Args& a, const std::string& c) {
+             registry::Install(Arg(a, 1));
+             Report(c + " -> " + (registry::Pending(Arg(a, 1)).empty() ? "nothing to do" : registry::Pending(Arg(a, 1))));
+         }},
+        {"remove", [](const Args& a, const std::string& c) {
+             registry::Remove(Arg(a, 1));
+             Report(c + " -> " + (registry::Pending(Arg(a, 1)).empty() ? "nothing to do" : registry::Pending(Arg(a, 1))));
          }},
         {"open", [](const Args& a, const std::string& c) { Report(c + (game::OpenLevel(Arg(a, 1)) ? " -> ok" : " -> failed")); }},
         {"functions", [](const Args& a, const std::string&) { Functions(Arg(a, 1)); }},

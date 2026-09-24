@@ -61,6 +61,14 @@ std::vector<Entry> gEntries;
 std::string gState;
 std::string gRawBase = "https://raw.githubusercontent.com/";
 std::map<std::string, std::string> gPending;
+bool gLocalRegistry = false;                         // read from file:/// (a test copy)
+
+struct HostRelease {
+    std::string version, repo, commit, dll, dllSha;
+    std::vector<std::pair<std::string, std::string>> files;     // path under the game folder, sha256
+};
+HostRelease gHost;
+std::string gHostState;
 std::vector<std::string> gRemovals;                  // applied at the start of the next Frame
 
 // --- validation: registry values end up in paths and URLs, so only plain names are accepted -------------------------
@@ -185,6 +193,45 @@ void FetchIcon(const Entry& e) {
     });
 }
 
+// "plugins/<id>/<file>": the only paths a host release may write besides version.dll.
+bool ValidBundledPath(const std::string& path) {
+    const size_t a = path.find('/'), b = a == std::string::npos ? a : path.find('/', a + 1);
+    return a != std::string::npos && b != std::string::npos && path.substr(0, a) == "plugins" &&
+           ValidId(path.substr(a + 1, b - a - 1)) && ValidFile(path.substr(b + 1));
+}
+
+void ReadHost(const json::Value* v) {
+    gHost = HostRelease{};
+    if (!v || v->type != json::Value::Object) return;
+    HostRelease h;
+    h.version = v->Str("version");
+    h.repo = v->Str("repo");
+    h.commit = v->Str("commit");
+    h.dll = v->Str("dll");
+    h.dllSha = v->Str("dll_sha256");
+    const bool fromRelease = h.dll.rfind("https://github.com/" + h.repo + "/releases/download/", 0) == 0;
+    const bool fromTestCopy = gLocalRegistry && h.dll.rfind("file:///", 0) == 0;
+    std::string why;
+    if (h.version.empty() || !ValidRepo(h.repo) || !Hex(h.commit, 40, 40) || !Hex(h.dllSha, 64, 64)) why = "incomplete";
+    else if (!fromRelease && !fromTestCopy) why = "the DLL must come from the repo's GitHub releases";
+    const json::Value* files = v->Get("files");
+    if (why.empty() && files && files->type == json::Value::Object)
+        for (const auto& [path, sha] : files->members) {
+            if (!ValidBundledPath(path) || sha.type != json::Value::String || !Hex(sha.string, 64, 64)) {
+                why = "bad file '" + path + "'";
+                break;
+            }
+            h.files.emplace_back(path, sha.string);
+        }
+    if (!why.empty()) return hostlog::Warn("registry: host entry ignored: " + why);
+    gHost = h;
+}
+
+std::wstring GameDir() {
+    const std::wstring dir = plugins::Dir();
+    return dir.substr(0, dir.find_last_of(L'\\'));
+}
+
 void Loaded(const std::string& body, const std::string& fetchError, const std::string& url) {
     json::Value root;
     std::string error = fetchError;
@@ -198,6 +245,8 @@ void Loaded(const std::string& body, const std::string& fetchError, const std::s
     }
     gRawBase = root.Str("raw_base", "https://raw.githubusercontent.com/");
     if (gRawBase.back() != '/') gRawBase += '/';
+    gLocalRegistry = url.rfind("file:///", 0) == 0;
+    ReadHost(root.Get("host"));
     gEntries.clear();
     for (const auto& item : list->items) {
         Entry e;
@@ -206,7 +255,8 @@ void Loaded(const std::string& body, const std::string& fetchError, const std::s
         else hostlog::Warn("registry: skipped an entry: " + why);
     }
     gState = "ready";
-    hostlog::Info("registry: " + std::to_string(gEntries.size()) + " plugin(s) from " + url);
+    hostlog::Info("registry: " + std::to_string(gEntries.size()) + " plugin(s) from " + url +
+                  (gHost.version.empty() ? "" : "; host " + gHost.version + " (this is " + plugins::kHostVersion + ")"));
     for (const auto& e : gEntries)
         if (!e.iconFile.empty()) FetchIcon(e);
 }
@@ -327,6 +377,76 @@ void Remove(const std::string& id) {
 std::string Pending(const std::string& id) {
     const auto it = gPending.find(id);
     return it == gPending.end() ? "" : it->second;
+}
+
+std::string HostVersion() { return gHost.version; }
+std::string HostUpdateState() { return gHostState; }
+
+void UpdateHost() {
+    if (gHost.version.empty() || gHostState == "downloading" || gHostState == "restart") return;
+    if (plugins::CompareVersions(gHost.version, plugins::kHostVersion) <= 0) return;
+    gHostState = "downloading";
+    const HostRelease h = gHost;
+    const std::string rawBase = gRawBase;
+    const std::wstring game = GameDir();
+    Post([h, rawBase, game] {
+        // Everything is downloaded and checked first; the new DLL waits beside the old one as version.dll.new.
+        std::string dll, error;
+        std::vector<std::pair<std::string, std::string>> bodies;
+        if (!net::Fetch(h.dll, dll, error)) error = "version.dll: " + error;
+        else if (net::Sha256(dll) != h.dllSha) error = "version.dll does not match the registry's SHA-256";
+        for (const auto& [path, sha] : h.files) {
+            if (!error.empty()) break;
+            std::string body;
+            if (!net::Fetch(rawBase + h.repo + "/" + h.commit + "/" + path, body, error)) error = path + ": " + error;
+            else if (net::Sha256(body) != sha) error = path + " does not match the registry's SHA-256";
+            else bodies.emplace_back(path, std::move(body));
+        }
+        const std::wstring fresh = game + L"\\version.dll.new";
+        if (error.empty() && !WriteAll(fresh, dll)) error = "could not write version.dll.new";
+        Deliver([h, bodies, error, game, fresh] {
+            if (!error.empty()) {
+                DeleteFileW(fresh.c_str());
+                gHostState = "error: " + error;
+                return hostlog::Warn("registry: host update failed: " + error);
+            }
+            // The running DLL can be renamed but not replaced: move it aside, then the new one into its place.
+            const std::wstring current = game + L"\\version.dll";
+            const std::wstring old = game + L"\\version.dll.old-" + std::to_wstring(GetTickCount64());
+            if (!MoveFileExW(current.c_str(), old.c_str(), 0)) {
+                DeleteFileW(fresh.c_str());
+                gHostState = "error: could not move the running version.dll aside (" + std::to_string(GetLastError()) + ")";
+                return hostlog::Warn("registry: " + gHostState);
+            }
+            if (!MoveFileExW(fresh.c_str(), current.c_str(), 0)) {
+                const DWORD code = GetLastError();
+                MoveFileExW(old.c_str(), current.c_str(), 0);
+                gHostState = "error: could not put the new version.dll in place (" + std::to_string(code) + ")";
+                return hostlog::Warn("registry: " + gHostState);
+            }
+            // The bundled plugins' files; the running scripts are not reloaded, so both change at the restart.
+            for (const auto& [path, body] : bodies) {
+                std::wstring target = game + L"\\" + eng::Widen(path);
+                for (auto& c : target)
+                    if (c == L'/') c = L'\\';
+                CreateDirectoryW(target.substr(0, target.find_last_of(L'\\')).c_str(), nullptr);
+                if (!WriteAll(target, body)) hostlog::Warn("registry: could not write " + path);
+            }
+            gHostState = "restart";
+            hostlog::Info("registry: host " + h.version + " installed; it runs from the next start of the game");
+        });
+    });
+}
+
+void CleanUpOldHost(const std::wstring& gameDir) {
+    WIN32_FIND_DATAW fd;
+    HANDLE find = FindFirstFileW((gameDir + L"\\version.dll.old-*").c_str(), &fd);
+    if (find != INVALID_HANDLE_VALUE) {
+        do DeleteFileW((gameDir + L"\\" + fd.cFileName).c_str());
+        while (FindNextFileW(find, &fd));
+        FindClose(find);
+    }
+    DeleteFileW((gameDir + L"\\version.dll.new").c_str());       // an update that never finished
 }
 
 std::string DefaultIcon() {

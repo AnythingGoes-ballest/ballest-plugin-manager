@@ -8,6 +8,8 @@
 //   plugins   every plugin in the registry plus the ones installed here, one card each: icon, name, version,
 //             author, description, and install / update / remove / github buttons. Installs and removals take
 //             effect straight away.
+//             When the registry names a newer plugin manager (the host and this plugin), it says so here and in the
+//             footer panel, with an "update plugin manager" button; the update finishes when the game restarts.
 //   settings  each plugin's [Setting] variables: a slider for a number with min and max, on/off for a bool, a
 //             text box otherwise, and reset; plus "reset position" for a plugin with windows that can be dragged.
 
@@ -71,9 +73,19 @@ void Main()
     BuildMenu();
 }
 
+// A newer plugin manager in the registry than the one running, or "".
+string HostUpdate()
+{
+    string latest = Registry::HostVersion();
+    return latest != "" && CompareVersions(latest, Host::Version()) > 0 ? latest : "";
+}
+
 void Refresh()
 {
     panel.Clear();
+    if (HostUpdate() != "")
+        panel.AddLine(Plugins::HostUpdateState() == "restart" ? "plugin manager " + HostUpdate() + " installed: restart the game"
+                                                              : "plugin manager " + HostUpdate() + " available: open > plugins");
     for (uint i = 0; i < Plugins::Count(); i++)
         panel.AddLine(Plugins::Name(i) + "   " + Plugins::Version(i) + "   " + Plugins::Status(i));
     lastRefresh = Host::Time();
@@ -220,7 +232,7 @@ array<string> CardIds()
 // Everything the cards show, as one string: when it changes, the cards are rebuilt.
 string CardState()
 {
-    string state = Registry::State();
+    string state = Registry::State() + "|host:" + HostUpdate() + ":" + Plugins::HostUpdateState();
     array<string> ids = CardIds();
     for (uint n = 0; n < ids.length(); n++)
     {
@@ -312,6 +324,32 @@ void AddCard(const string &in id)
         AddCardButton("github", "open:" + Registry::Page(r));
 }
 
+// The plugin manager itself (the host and this plugin), when the registry has a newer one.
+void AddHostUpdateRow()
+{
+    string latest = HostUpdate();
+    if (latest == "")
+        return;
+    string state = Plugins::HostUpdateState();
+    menu.NewRow();
+    menu.AddImage(Plugins::Icon(uint(InstalledIndex("plugin-manager"))), 48, 48);
+    string text;
+    if (state == "restart")
+        text = "Plugin manager " + latest + " is installed: restart the game to finish.";
+    else if (state == "downloading")
+        text = "Updating the plugin manager to " + latest + "...";
+    else
+        text = "Plugin manager " + latest + " is available (you have " + Host::Version() + ").";
+    UI::Text@ line = menu.AddText(text + (state.findFirst("error") == 0 ? "\n" + state : ""), 18);
+    if (state.findFirst("error") == 0)
+        line.SetColor(1.0f, 0.45f, 0.4f, 1);
+    else
+        line.SetColor(0.55f, 0.85f, 0.0f, 1);
+    menu.AddSpace(0);
+    if (state != "restart" && state != "downloading")
+        AddCardButton("update plugin manager", "host:" + latest);
+}
+
 void BuildCards()
 {
     menu.ClearView(pluginsView);
@@ -324,6 +362,7 @@ void BuildCards()
     string summary = state == "ready" ? Registry::Count() + " in the registry" : "registry: " + (state == "" ? "not loaded" : state);
     menu.AddText(summary, 16).SetColor(0.7f, 0.7f, 0.75f, 1);
     @refreshButton = menu.AddButton("refresh");
+    AddHostUpdateRow();
 
     array<string> ids = CardIds();
     for (uint n = 0; n < ids.length(); n++)
@@ -350,6 +389,8 @@ void UpdatePlugins()
             Plugins::Remove(target);
         else if (verb == "open")
             Host::OpenUrl(target);
+        else if (verb == "host")
+            Plugins::UpdateHost();
     }
     if (Host::Time() - lastCardCheck > 0.25)
     {

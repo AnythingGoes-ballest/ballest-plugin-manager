@@ -1,6 +1,6 @@
 [meta]
 name = "Plugin Manager"
-version = "0.3.1"
+version = "0.4.0"
 author = "AnythingGoes"
 description = "The plugins button in the footer, the plugin browser (install, update, remove) and the console."
 essential = true

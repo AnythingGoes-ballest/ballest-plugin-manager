@@ -97,6 +97,7 @@ DWORD WINAPI InitThread(LPVOID) {
     gGameDir = exe.substr(0, exe.find_last_of(L'\\'));
     hostlog::Open();
     hostlog::Info(std::string("Ballest plugin host ") + plugins::kHostVersion + " starting");
+    registry::CleanUpOldHost(gGameDir);      // the previous version.dll, if an update replaced it
     if (GetFileAttributesW((gGameDir + L"\\plugins\\DISABLED").c_str()) != INVALID_FILE_ATTRIBUTES) {
         hostlog::Info("plugins\\DISABLED exists; host stays inactive");
         return 0;

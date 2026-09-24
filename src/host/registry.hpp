@@ -38,4 +38,17 @@ std::string Pending(const std::string& id); // "", "installing", "removing", or 
 
 std::string DefaultIcon();          // the plugin manager's default-icon.png, or ""
 
+// The host itself. registry.json's "host" entry names the newest release:
+//   "host": { "version": "0.4.2", "repo": "owner/name", "commit": "<the tag's full SHA>",
+//             "dll": "https://github.com/<repo>/releases/download/v0.4.2/version.dll", "dll_sha256": "<sha256>",
+//             "files": { "plugins/plugin-manager/main.as": "<sha256>", ... } }       (the bundled plugins)
+// The running version.dll cannot be overwritten, but Windows lets it be renamed: an update renames it to
+// version.dll.old-<n>, puts the new one in its place, replaces the bundled plugin files, and asks for a restart.
+// The old copies are deleted at the next start. The DLL is only taken from the repo's GitHub releases (or a
+// file:/// URL when the registry itself is a local test copy), and only with the registry's SHA-256.
+std::string HostVersion();          // the newest host in the registry, or ""
+void UpdateHost();                  // plugin manager only (checked in the API)
+std::string HostUpdateState();      // "", "downloading", "restart", or "error: ..."
+void CleanUpOldHost(const std::wstring& gameDir);  // at startup: deletes what an update left behind
+
 }  // namespace registry

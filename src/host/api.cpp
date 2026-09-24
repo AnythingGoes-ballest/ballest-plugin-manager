@@ -79,6 +79,9 @@ void PluginInstall(const std::string& id) {
 void PluginRemove(const std::string& id) {
     if (MayManage()) registry::Remove(id);
 }
+void UpdateHost() {
+    if (MayManage()) registry::UpdateHost();
+}
 
 // --- Settings ------------------------------------------------------------------------------------------------------
 settings::Setting SettingAt(unsigned i) {
@@ -304,6 +307,8 @@ void RegisterCore() {
     Global("string Pending(const string &in id)", asFUNCTION(registry::Pending));
     Global("string DefaultIcon()", asFUNCTION(registry::DefaultIcon));
     Global("void OpenFolder()", asFUNCTION(plugins::OpenFolder));
+    Global("void UpdateHost()", asFUNCTION(UpdateHost));
+    Global("string HostUpdateState()", asFUNCTION(registry::HostUpdateState));
 
     e->SetDefaultNamespace("Settings");
     Global("uint Count()", asFUNCTION(SettingCount));
@@ -331,6 +336,7 @@ void RegisterCore() {
     Global("string Version(uint)", asFUNCTION(RegistryVersion));
     Global("string Page(uint)", asFUNCTION(RegistryPage));
     Global("string Icon(uint)", asFUNCTION(RegistryIcon));
+    Global("string HostVersion()", asFUNCTION(registry::HostVersion));
 
     e->SetDefaultNamespace("Console");
     Global("void Run(const string &in)", asFUNCTION(ConsoleRun));

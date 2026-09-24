@@ -251,5 +251,9 @@ Gate mechanism: the host intercepts the game's score-submission call and drops i
   camera spawns in a real replay but its controls are not yet confirmed.
 - M7: trust tiers and the leaderboard gate. Not started.
 - M8: registry and live install, update and remove from GitHub. Done and verified in game from GitHub.
+- M10: the host updates itself from the registry's "host" entry (release asset version.dll + bundled plugins at the
+  tag, all SHA-256 checked): the loaded version.dll is renamed aside (measured: Windows allows renaming a loaded
+  DLL), the new one takes its name, and the old copy is deleted at the next start. Done; tested end to end against a
+  local registry (banner, update, swap, cleanup and restart).
 - M9: Openplanet-style settings and movable windows. Done (settings, saving, restore and reset tested in game; the
   drag itself shown working by a real mouse drag).

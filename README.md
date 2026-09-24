@@ -17,7 +17,10 @@ runs as normal.
 3. **plugins** > **open** > **plugins** lists every plugin in the registry: **install**, **update**, **remove**, or
    **github** to see its source. **settings** has each plugin's settings, and **open plugins folder** shows where
    they are installed.
-4. Plugin windows that can be moved (the Grind Timer, for example) are dragged with the mouse whenever the cursor is
+4. When a newer plugin manager is released, the footer panel and the **plugins** view say so; **update plugin
+   manager** installs it and it takes over when the game restarts. (Hosts before 0.5.0 cannot update themselves:
+   install 0.5.0 by hand once.)
+5. Plugin windows that can be moved (the Grind Timer, for example) are dragged with the mouse whenever the cursor is
    on screen; **settings** > **reset position** puts them back.
 
 - Temporarily off: create an empty file `plugins\DISABLED` next to the game exe.
@@ -61,6 +64,18 @@ plugin's GitHub repo and lists the SHA-256 of every file the game downloads:
   be removed.
 - To test a registry before publishing, put a `file:///` URL in
   `%LOCALAPPDATA%\Ballest\Saved\PluginManager\registry_url.txt` (see `tools/registry.py mirror`).
+
+### Releasing the host
+
+1. Bump `kHostVersion` in `src/host/plugins.hpp` (and the plugin manager's version if it changed), commit, tag
+   (`v0.5.0`) and push the tag.
+2. `./build.sh`, then create the GitHub release for the tag with two assets: `build/version.dll` (exactly that name:
+   the game downloads it) and a zip of `version.dll` plus `plugins/` for manual installs.
+3. `python tools/registry.py host v0.5.0 build/version.dll`, then commit and push `registry.json`. Every host from
+   0.5.0 on offers the update: it downloads `version.dll` from the release and the bundled plugins from the tag,
+   checks each against the registry's SHA-256, renames the running `version.dll` aside (a loaded DLL can be renamed
+   but not replaced), puts the new one in its place, and asks for a restart; the old copy is deleted at the next
+   start.
 
 ### Publishing a plugin
 
@@ -179,9 +194,9 @@ placed it.
 |---|---|
 | `Log` | `Info`, `Warn`, `Error`; `LineCount()`, `Line(i)` (the host log's recent lines, numbered from the start of the session) |
 | `Host` | `Version()`, `Time()` (seconds, real time), `OpenUrl(url)` (a `https://github.com/` page, in the player's browser) |
-| `Plugins` | `Count()`, `Id/Name/Version/Status/Author/Description/Icon/Essential(i)`, `IsInstalled(id)`, `InstalledVersion(id)`, `DefaultIcon()`, `OpenFolder()`; plugin manager only: `Install(id)`, `Remove(id)`, `Pending(id)` |
+| `Plugins` | `Count()`, `Id/Name/Version/Status/Author/Description/Icon/Essential(i)`, `IsInstalled(id)`, `InstalledVersion(id)`, `DefaultIcon()`, `OpenFolder()`; plugin manager only: `Install(id)`, `Remove(id)`, `Pending(id)`, `UpdateHost()`, `HostUpdateState()` ("", "downloading", "restart", "error: ...") |
 | `Settings` | Every plugin's `[Setting]` variables: `Count()`, `Plugin/Name/Description/Kind/Hidden/HasRange/Min/Max/Get/IsDefault(i)`; plugin manager only: `Set(i, value)`, `Reset(i)` |
-| `Registry` | `Refresh()`, `State()` ("loading", "ready", "error: ..."), `Count()`, `Id/Name/Description/Author/Version/Page/Icon(i)` |
+| `Registry` | `Refresh()`, `State()` ("loading", "ready", "error: ..."), `Count()`, `Id/Name/Description/Author/Version/Page/Icon(i)`, `HostVersion()` (the newest plugin manager released) |
 | `Console` | `Run(command)`: runs a host command (the list is in `src/host/testchannel.hpp`) on the next frame; output goes to the log |
 | `UI` footer | `AddFooterButton(label)`: `Clicked()`, `hovered`, `label`. `CreatePanel()`: `title`, `visible`, `Clear()`, `AddLine()`, `AddButton(label)` (a FooterButton in the panel) |
 | `UI` windows | `CreateWindow()`: `SetAnchor/SetPivot/SetOffset/SetBackground`, `visible`, `SetScreenSize(w, h)` (fractions of the screen; widths and heights of 0 then fill the space left), `SetBlocksClicks(bool)` (clicks on the window never reach the game underneath), `movable` (see Settings), `zOrder` (higher is in front; windows default to 100, the plugin menu uses 500, footer panels are at 1000). Widgets: `AddText(text, size)`, `AddButton(label)`, `AddIconButton("play"/"pause")`, `AddSlider(width)`, `AddDropdown(width)`, `AddSpace(width)`, `AddTextArea(width, height, size)`, `AddTextInput(width, hint, size)`, `AddImage(path, width, height)`. Layout: `NewRow()`, `StartSidebar(width)` / `StartMain()`, `StartView()` (returns its number), `ShowView(n)`, `ClearView(n)` (empties it and adds into it again). `SetCursorVisible(bool)` (per plugin: the cursor shows while any plugin asks), `CursorShown()`, `ResetPositions(pluginId)`, `HasMovable(pluginId)` |
