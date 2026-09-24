@@ -7,7 +7,7 @@
       "author": "AnythingGoes",
       "repo": "AnythingGoes-ballest/ballest-create-extensions",
       "version": "0.1.0",
-      "commit": "ffe77b8e870dba3eb9c89bd229331df7bcd1e751",
+      "commit": "384d39bba439d65c6cf43963136323082b15ac89",
       "min_host": "0.6.0",
       "icon": "icon.png",
       "files": {
@@ -23,7 +23,7 @@
       "author": "AnythingGoes",
       "repo": "AnythingGoes-ballest/ballest-grind-timer-plugin",
       "version": "0.2.1",
-      "commit": "0fafa79cddca46f1aee5dfc887bd3e81e4540f28",
+      "commit": "7cee7ad73c575129c0d22dad0fad7a2f2b897593",
       "min_host": "0.4.0",
       "icon": "icon.png",
       "files": {
@@ -39,7 +39,7 @@
       "author": "AnythingGoes",
       "repo": "AnythingGoes-ballest/ballest-replay-manager",
       "version": "0.1.0",
-      "commit": "70a2b08bbe9ee04a8bfe86b4ee3869551cb093b0",
+      "commit": "69a8d00d650b989bb50026eeef7921d7e21c6f99",
       "min_host": "0.3.0",
       "icon": "icon.png",
       "files": {
@@ -52,7 +52,7 @@
   "host": {
     "version": "0.6.0",
     "repo": "AnythingGoes-ballest/ballest-plugin-manager",
-    "commit": "a21a1a6008ca05db4e50717c309dc3767539bea5",
+    "commit": "642d308767d8815a4c030914099839eb367ec7cc",
     "dll": "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/download/v0.6.0/version.dll",
     "dll_sha256": "57988645b9cef8fa4f45f9b7d2ddaec00b3c1fed52b33e3e87a65943ce3ff0ad",
     "files": {
