@@ -1,0 +1,6 @@
+[meta]
+name = "Test: hangs"
+version = "0.0.1"
+
+[script]
+timeout = 20

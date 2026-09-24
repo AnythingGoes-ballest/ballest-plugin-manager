@@ -1,0 +1,195 @@
+#include "testchannel.hpp"
+
+#include <windows.h>
+
+#include <cstdio>
+#include <cstdlib>
+#include <map>
+#include <string>
+#include <vector>
+
+#include "engine.hpp"
+#include "game.hpp"
+#include "input.hpp"
+#include "log.hpp"
+#include "plugins.hpp"
+#include "replay.hpp"
+#include "ui.hpp"
+
+namespace testchannel {
+namespace {
+
+std::vector<std::string> Words(const std::string& s) {
+    std::vector<std::string> out;
+    for (size_t i = 0; i < s.size();) {
+        size_t j = s.find(' ', i);
+        if (j == std::string::npos) j = s.size();
+        if (j > i) out.push_back(s.substr(i, j - i));
+        i = j + 1;
+    }
+    return out;
+}
+
+// Live, non-default instances of a class, filtered by path fragments joined with '+' (all must appear).
+std::vector<eng::Obj> Instances(const std::string& className, const std::string& filter) {
+    std::vector<std::string> parts;
+    for (size_t start = 0; start <= filter.size();) {
+        size_t end = filter.find('+', start);
+        if (end == std::string::npos) end = filter.size();
+        if (end > start) parts.push_back(filter.substr(start, end - start));
+        start = end + 1;
+    }
+    std::vector<eng::Obj> out;
+    eng::Obj cls = eng::FindClass(className);
+    eng::ForEachObject([&](eng::Obj o) {
+        if (!eng::IsA(o, cls) || eng::IsDefaultObject(o)) return true;
+        const std::string path = eng::PathOf(o);
+        for (const auto& part : parts)
+            if (path.find(part) == std::string::npos) return true;
+        out.push_back(o);
+        return true;
+    });
+    return out;
+}
+
+std::string Hex(const uint8_t* p, size_t n) {
+    std::string s;
+    char b[4];
+    for (size_t i = 0; i < n && i < 64; ++i) {
+        std::snprintf(b, sizeof b, "%02x", p[i]);
+        s += b;
+    }
+    return s;
+}
+
+void Report(const std::string& line) { hostlog::Info("test: " + line); }
+
+// --- measurement commands ------------------------------------------------------------------------------------------
+
+void Functions(const std::string& className) {
+    eng::Obj cls = eng::FindClass(className);
+    for (const auto& name : eng::FunctionNames(cls)) Report(className + "." + eng::Describe(eng::FindFunction(cls, name)));
+}
+
+void Props(const std::string& className, const std::string& filter) {
+    const auto list = Instances(className, filter);
+    if (list.empty()) return Report("no instance of " + className);
+    eng::Obj o = list.front();
+    Report("props of " + eng::PathOf(o));
+    for (const auto& name : eng::PropertyNames(eng::ClassOf(o))) {
+        const eng::Prop p = eng::FindProp(eng::ClassOf(o), name);
+        Report("  " + name + " (" + eng::KindOf(p) + ") @" + hostlog::Hex(p.offset) + " size " + std::to_string(p.size) + " = " +
+               Hex(o + p.offset, p.size));
+    }
+}
+
+void Find(const std::string& fragment) {
+    int shown = 0;
+    eng::ForEachObject([&](eng::Obj o) {
+        if (eng::ObjName(o).find(fragment) == std::string::npos) return true;
+        Report("found " + eng::ObjName(eng::ClassOf(o)) + " " + eng::PathOf(o));
+        return ++shown < 60;
+    });
+}
+
+void Struct(const std::string& className, const std::string& function) {
+    eng::Obj fn = eng::FindFunction(eng::FindClass(className), function);
+    if (!fn) return Report("no function " + className + "." + function);
+    for (const auto& param : eng::ParamsOf(fn)) {
+        eng::Obj st = eng::StructOf(eng::FindProp(fn, param.name));
+        if (!st) continue;
+        Report(param.name + " is " + eng::ObjName(st));
+        for (const auto& field : eng::PropertyNames(st)) {
+            const eng::Prop fp = eng::FindProp(st, field);
+            Report("  " + field + " @" + hostlog::Hex(fp.offset) + " size " + std::to_string(fp.size));
+        }
+    }
+}
+
+void CallNoArgs(const std::string& className, const std::string& function, const std::string& filter) {
+    const auto list = Instances(className, filter);
+    if (list.empty()) return Report("no instance of " + className);
+    const eng::Params p = eng::Call(list.front(), function.c_str());
+    size_t size = 0;
+    const uint8_t* ret = p.Return(&size);
+    std::string result = ret ? " return " + Hex(ret, size) : "";
+    if (ret && size == sizeof(eng::Obj))
+        if (eng::Obj o = p.ReturnObj(); eng::IsLive(o)) result += " (" + eng::PathOf(o) + ")";
+    Report("call " + eng::Describe(p.Fn()) + " on " + eng::PathOf(list.front()) + (p.Invoked() ? " ok" : " FAILED") + result);
+}
+
+void ViewTarget() {
+    eng::Obj controller = game::PlayerController();
+    Report("controller " + eng::PathOf(controller) + " view target " + eng::PathOf(eng::Call(controller, "GetViewTarget").ReturnObj()));
+}
+
+using Args = std::vector<std::string>;
+
+std::string Arg(const Args& a, size_t i) { return i < a.size() ? a[i] : std::string(); }
+
+void Run(const std::string& cmd) {
+    static const std::map<std::string, void (*)(const Args&, const std::string&)> commands = {
+        {"state", [](const Args&, const std::string&) { Report("state " + ui::Status() + " | plugins: " + plugins::Summary()); }},
+        {"click", [](const Args&, const std::string& c) { Report(c + (ui::SimulateClick(c.substr(6)) ? " -> ok" : " -> no such button")); }},
+        {"select", [](const Args& a, const std::string& c) {
+             Report(c + (ui::SimulateSelect(Arg(a, 1), std::atoi(Arg(a, 2).c_str())) ? " -> ok" : " -> no such dropdown"));
+         }},
+        {"slider", [](const Args& a, const std::string& c) {
+             ui::SimulateSlider(static_cast<float>(std::atof(Arg(a, 1).c_str())));
+             Report(c);
+         }},
+        {"submit", [](const Args&, const std::string& c) { Report(c + (ui::SimulateSubmit(c.substr(7)) ? " -> ok" : " -> no text input")); }},
+        {"press", [](const Args& a, const std::string& c) {
+             input::Simulate(std::atoi(Arg(a, 1).c_str()));
+             Report(c);
+         }},
+        {"fakereplay", [](const Args& a, const std::string&) { replay::Simulate(Arg(a, 1) == "on", a.size() > 2 ? std::atof(Arg(a, 2).c_str()) : 30); }},
+        {"replaytime", [](const Args&, const std::string&) {
+             Report("replay time " + std::to_string(replay::Time()) + " of " + std::to_string(replay::Length()));
+         }},
+        {"open", [](const Args& a, const std::string& c) { Report(c + (game::OpenLevel(Arg(a, 1)) ? " -> ok" : " -> failed")); }},
+        {"functions", [](const Args& a, const std::string&) { Functions(Arg(a, 1)); }},
+        {"instances", [](const Args& a, const std::string&) {
+             for (eng::Obj o : Instances(Arg(a, 1), Arg(a, 2))) Report("instance " + eng::PathOf(o));
+         }},
+        {"props", [](const Args& a, const std::string&) { Props(Arg(a, 1), Arg(a, 2)); }},
+        {"find", [](const Args& a, const std::string&) { Find(Arg(a, 1)); }},
+        {"struct", [](const Args& a, const std::string&) { Struct(Arg(a, 1), Arg(a, 2)); }},
+        {"call", [](const Args& a, const std::string&) { CallNoArgs(Arg(a, 1), Arg(a, 2), Arg(a, 3)); }},
+        {"viewtarget", [](const Args&, const std::string&) { ViewTarget(); }},
+    };
+    const Args words = Words(cmd);
+    const auto it = words.empty() ? commands.end() : commands.find(words[0]);
+    if (it == commands.end()) hostlog::Warn("test: unknown command '" + cmd + "'");
+    else it->second(words, cmd);
+}
+
+std::vector<std::string> gQueue;
+unsigned gFrames = 0;
+
+void PollFile() {
+    const std::wstring path = hostlog::DataDir() + L"\\test_command.txt";
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    char buf[512] = {};
+    DWORD read = 0;
+    ReadFile(f, buf, sizeof buf - 1, &read, nullptr);
+    CloseHandle(f);
+    DeleteFileW(path.c_str());
+    std::string cmd(buf, read);
+    while (!cmd.empty() && (cmd.back() == '\n' || cmd.back() == '\r' || cmd.back() == ' ')) cmd.pop_back();
+    Run(cmd);
+}
+
+}  // namespace
+
+void Frame() {
+    std::vector<std::string> queued;
+    queued.swap(gQueue);            // a command that queues another runs it next frame
+    for (const auto& cmd : queued) Run(cmd);
+    if (++gFrames % 30 == 0) PollFile();
+}
+
+void Enqueue(const std::string& command) { gQueue.push_back(command); }
+
+}  // namespace testchannel

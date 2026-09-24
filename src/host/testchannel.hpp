@@ -1,0 +1,20 @@
+// Test and measurement commands, from two sources: the in-game console (Console::Run in the script API) and the
+// file %LOCALAPPDATA%\Ballest\Saved\PluginManager\test_command.txt, one command per write, read twice a second
+// and used by tools/regression.py and tools/dev_session.py so the game can be driven and measured without a
+// mouse, focus changes, or UE4SS. Results go to host.log.
+//
+//   state                                  UI and plugin status
+//   click <label> | select <first option> <index> | slider <0..1> | press <virtual key> | submit <text>
+//   fakereplay on [length] | fakereplay off | replaytime
+//   open <map>                             load a map directly (skips the menu's level setup)
+//   functions <Class> | instances <Class> [fragment+fragment] | props <Class> [filter] | find <name fragment>
+//   struct <Class> <Function> | call <Class> <Function> [filter] | viewtarget
+#pragma once
+#include <string>
+
+namespace testchannel {
+
+void Frame();                               // game thread, every frame: runs queued commands, reads the file
+void Enqueue(const std::string& command);   // run on the next Frame, outside any plugin's time budget
+
+}  // namespace testchannel

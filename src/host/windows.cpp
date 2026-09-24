@@ -1,0 +1,573 @@
+// Windows: rows of widgets anywhere on screen, in any map. Each is a plain UserWidget added to the viewport
+// (the viewport keeps it alive) holding CanvasPanel > Border > [sidebar] + VerticalBox of views, each view a
+// VerticalBox of rows (HorizontalBoxes). Built when the window is visible and a player controller exists, rebuilt
+// after a map change or a layout change. Switching views only changes visibility.
+#include <windows.h>
+
+#include <map>
+
+#include "game.hpp"
+#include "input.hpp"
+#include "log.hpp"
+#include "ui.hpp"
+#include "widgets.hpp"
+
+using eng::Obj;
+namespace w = ui::widgets;
+
+namespace ui {
+namespace {
+
+std::vector<std::unique_ptr<Window>> gWindows;
+float gSimulatedSlider = -1;
+bool gTyping = false;
+constexpr int kEnterKey = 0x0D;             // VK_RETURN
+constexpr int kFocusAttempts = 60;          // frames to keep asking for keyboard focus
+constexpr Color kButtonColor{0.15f, 0.15f, 0.15f, 1};
+constexpr Color kWhite{1, 1, 1, 1};
+constexpr Color kInputBackground{0.08f, 0.08f, 0.1f, 1};
+
+// A PNG or JPG file as a texture. Loaded once per file while the texture lives (textures nothing shows any more are
+// collected by the engine and loaded again when needed).
+Obj LoadTexture(const std::string& path) {
+    static std::map<std::string, eng::Weak> textures;
+    if (Obj cached = eng::Get(textures[path])) return cached;
+    const std::wstring wide = eng::Widen(path);
+    if (path.empty() || GetFileAttributesW(wide.c_str()) == INVALID_FILE_ATTRIBUTES) return nullptr;
+    const eng::FString file{wide.c_str(), static_cast<int32_t>(wide.size() + 1), static_cast<int32_t>(wide.size() + 1)};
+    Obj texture = eng::Call(eng::FindCdo("KismetRenderingLibrary"), "ImportFileAsTexture2D", game::PlayerController(), file).ReturnObj();
+    if (!texture) hostlog::Warn("image could not be loaded: " + path);
+    textures[path] = eng::MakeWeak(texture);
+    return texture;
+}
+
+void ShowImage(Obj image, const std::string& path) {
+    Obj texture = LoadTexture(path);
+    if (image && texture) eng::Call(image, "SetBrushFromTexture", texture, uint8_t{0});
+}
+
+// Play is a right-pointing triangle built from stacked bars; pause is two bars. Drawn from rectangles rather
+// than glyphs the game's font may not have. Icons never take hits, so the button under them gets the click.
+Obj BuildIconButton(Obj tree, Widget& item) {
+    Obj button = w::Spawn("Button", tree), frame = w::Spawn("SizeBox", tree), overlay = w::Spawn("Overlay", tree);
+    Obj pause = w::Spawn("HorizontalBox", tree), play = w::Spawn("VerticalBox", tree);
+    if (!button || !frame || !overlay || !pause || !play) return nullptr;
+    w::Unfocusable(button);
+    eng::Call(button, "SetBackgroundColor", kButtonColor);
+    eng::Call(frame, "SetWidthOverride", 56.0f);
+    eng::Call(frame, "SetHeightOverride", 22.0f);
+    for (int i = 0; i < 2; ++i) w::AddToRow(pause, w::Block(tree, 5, 18, kWhite), i == 0 ? 0.0f : 5.0f);
+    constexpr int kRows = 9;
+    for (int r = 0; r < kRows; ++r) {
+        const float width = static_cast<float>(std::min(r, kRows - 1 - r) + 1) * 3.5f;
+        if (Obj slot = eng::Call(play, "AddChildToVerticalBox", w::Block(tree, width, 2, kWhite)).ReturnObj())
+            eng::Call(slot, "SetHorizontalAlignment", w::kAlignLeft);
+    }
+    for (Obj icon : {pause, play}) w::AddToOverlay(overlay, icon, w::kAlignCenter, w::kAlignCenter, {0, 0, 0, 0});
+    w::AddChild(frame, overlay);
+    w::AddChild(button, frame);
+    item.main = eng::MakeWeak(button);
+    item.iconA = eng::MakeWeak(play);
+    item.iconB = eng::MakeWeak(pause);
+    item.shownText.clear();                 // the right icon is shown on the first sync
+    return button;
+}
+
+Obj BuildWidget(Obj tree, Widget& item) {
+    switch (item.kind) {
+        case Kind::Text: {
+            Obj text = w::Spawn("TextBlock", tree);
+            w::SetFontSize(text, item.size);
+            w::SetText(text, item.text);
+            w::SetTextColor(text, item.color);
+            item.main = eng::MakeWeak(text);
+            item.shownText = item.text;
+            item.colorDirty = false;
+            return text;
+        }
+        case Kind::Button: {
+            Obj button = w::Spawn("Button", tree), text = w::Spawn("TextBlock", tree);
+            if (!button || !text) return nullptr;
+            w::Unfocusable(button);
+            eng::Call(button, "SetBackgroundColor", item.background);
+            item.backgroundDirty = false;
+            w::SetFontSize(text, 15);
+            w::SetText(text, item.text);
+            w::SetTextColor(text, kWhite);
+            w::AddChild(button, text);
+            item.main = eng::MakeWeak(button);
+            item.label = eng::MakeWeak(text);
+            item.shownText = item.text;
+            return button;
+        }
+        case Kind::IconButton:
+            return BuildIconButton(tree, item);
+        case Kind::Slider: {
+            Obj box = w::Spawn("SizeBox", tree), slider = w::Spawn("Slider", tree);
+            if (!box || !slider) return nullptr;
+            w::Unfocusable(slider);
+            eng::Call(box, "SetWidthOverride", item.width);
+            eng::Call(slider, "SetMinValue", 0.0f);
+            eng::Call(slider, "SetMaxValue", 1.0f);
+            eng::Call(slider, "SetSliderBarColor", Color{0.4f, 0.4f, 0.4f, 1});
+            eng::Call(slider, "SetSliderHandleColor", Color{0.55f, 0.85f, 0.0f, 1});    // the game's lime green
+            w::AddChild(box, slider);
+            item.main = eng::MakeWeak(slider);
+            item.shownValue = -1;
+            return box;
+        }
+        case Kind::Dropdown: {
+            Obj box = w::Spawn("SizeBox", tree), combo = w::Spawn("ComboBoxString", tree);
+            if (!box || !combo) return nullptr;
+            w::Unfocusable(combo);
+            // Left alone, the open list's text is black on the dark panel. The styles are read when the dropdown's
+            // Slate widget is built, so they are set before it is on screen.
+            w::WriteSlateColor(combo, {"ForegroundColor"}, kWhite);
+            w::WriteSlateColor(combo, {"ItemStyle", "TextColor"}, kWhite);
+            w::WriteSlateColor(combo, {"ItemStyle", "SelectedTextColor"}, kWhite);
+            eng::Call(box, "SetWidthOverride", item.width);
+            w::AddChild(box, combo);
+            for (const auto& option : item.options) {
+                const std::wstring ws = eng::Widen(option);
+                eng::Call(combo, "AddOption", eng::FString{ws.c_str(), static_cast<int32_t>(ws.size() + 1), static_cast<int32_t>(ws.size() + 1)});
+            }
+            item.main = eng::MakeWeak(combo);
+            item.shownSelected = -2;        // the selection is applied once it is on screen
+            return box;
+        }
+        case Kind::Space: {
+            Obj box = w::Spawn("SizeBox", tree);
+            if (item.width > 0) eng::Call(box, "SetWidthOverride", item.width);
+            item.main = eng::MakeWeak(box);
+            return box;
+        }
+        case Kind::TextArea: {
+            Obj box = w::Spawn("SizeBox", tree), scroll = w::Spawn("ScrollBox", tree), text = w::Spawn("TextBlock", tree);
+            if (!box || !scroll || !text) return nullptr;
+            if (item.width > 0) eng::Call(box, "SetWidthOverride", item.width);
+            if (item.height > 0) eng::Call(box, "SetHeightOverride", item.height);
+            w::SetFontSize(text, item.size);
+            eng::Call(text, "SetAutoWrapText", uint8_t{1});
+            w::SetTextColor(text, item.color);
+            w::SetText(text, item.text);
+            w::AddChild(scroll, text);
+            w::AddChild(box, scroll);
+            item.main = eng::MakeWeak(scroll);
+            item.label = eng::MakeWeak(text);
+            item.shownText = item.text;
+            item.scrollToEnd = true;
+            return box;
+        }
+        case Kind::TextInput: {
+            Obj box = w::Spawn("SizeBox", tree), input = w::Spawn("EditableTextBox", tree);
+            if (!box || !input) return nullptr;
+            if (item.width > 0) eng::Call(box, "SetWidthOverride", item.width);
+            eng::WriteBool(input, "ClearKeyboardFocusOnCommit", false);    // keep typing after Enter
+            // Left alone the typed text is light grey on a light box. Styles are read when the Slate widget is
+            // built, so they are set before it is on screen.
+            for (const char* member : {"ForegroundColor", "FocusedForegroundColor"}) w::WriteSlateColor(input, {"WidgetStyle", member}, kWhite);
+            w::WriteSlateColor(input, {"WidgetStyle", "TextStyle", "ColorAndOpacity"}, kWhite);
+            w::WriteSlateColor(input, {"WidgetStyle", "BackgroundColor"}, kInputBackground);
+            w::SetFontSize(input, item.size, {"WidgetStyle", "TextStyle", "Font"});
+            if (!item.text.empty()) w::SetHintText(input, item.text);
+            w::AddChild(box, input);
+            item.main = eng::MakeWeak(input);
+            return box;
+        }
+        case Kind::Image: {
+            Obj box = w::Spawn("SizeBox", tree), image = w::Spawn("Image", tree);
+            if (!box || !image) return nullptr;
+            if (item.width > 0) eng::Call(box, "SetWidthOverride", item.width);
+            if (item.height > 0) eng::Call(box, "SetHeightOverride", item.height);
+            ShowImage(image, item.text);
+            w::AddChild(box, image);
+            item.main = eng::MakeWeak(image);
+            item.shownText = item.text;
+            return box;
+        }
+    }
+    return nullptr;
+}
+
+void Forget(Window& win) {
+    win.host = win.border = {};
+    win.viewBoxes.clear();
+    win.shownVisible = false;
+    win.appliedView = -1;
+    for (auto& item : win.items) {
+        item->main = item->label = item->iconA = item->iconB = {};
+        item->wasPressed = item->dragging = item->focused = false;
+    }
+}
+
+void Build(Window& win) {
+    Obj controller = game::PlayerController();
+    Obj host = eng::Call(eng::FindCdo("WidgetBlueprintLibrary"), "Create", controller, eng::FindClass("UserWidget"), controller).ReturnObj();
+    if (!host) return;
+    Obj tree = eng::ReadObj(host, "WidgetTree");
+    if (!tree && (tree = w::Spawn("WidgetTree", host))) eng::WriteBytes(host, "WidgetTree", &tree, sizeof tree);
+    Obj canvas = w::Spawn("CanvasPanel", tree), border = w::Spawn("Border", tree), column = w::Spawn("VerticalBox", tree);
+    if (!tree || !canvas || !border || !column) return;
+    eng::WriteBytes(tree, "RootWidget", &canvas, sizeof canvas);
+    const bool sized = win.screenWidth > 0 && win.screenHeight > 0;
+    if (sized) {
+        const double marginX = (1.0 - win.screenWidth) / 2, marginY = (1.0 - win.screenHeight) / 2;
+        w::StretchOnCanvas(canvas, border, marginX, marginY, 1.0 - marginX, 1.0 - marginY);
+    } else {
+        w::AddToCanvas(canvas, border, win.anchorX, win.anchorY, {win.pivotX, win.pivotY}, {win.offsetX, win.offsetY});
+    }
+    eng::Call(border, "SetBrushColor", win.background);
+    eng::Call(border, "SetPadding", sized ? w::Margin{16, 16, 16, 16} : w::Margin{12, 8, 12, 8});
+
+    // With a sidebar: Border > HorizontalBox > [SizeBox > sidebar VerticalBox, rows VerticalBox (fills)].
+    Obj sidebar = nullptr;
+    if (win.sidebarWidth > 0) {
+        Obj body = w::Spawn("HorizontalBox", tree), sideBox = w::Spawn("SizeBox", tree);
+        sidebar = w::Spawn("VerticalBox", tree);
+        if (!body || !sideBox || !sidebar) return;
+        eng::Call(sideBox, "SetWidthOverride", win.sidebarWidth);
+        w::AddChild(sideBox, sidebar);
+        w::AddChild(border, body);
+        if (Obj slot = eng::Call(body, "AddChildToHorizontalBox", sideBox).ReturnObj())
+            eng::Call(slot, "SetPadding", w::Margin{0, 0, 16, 0});
+        w::FillSlot(eng::Call(body, "AddChildToHorizontalBox", column).ReturnObj());
+    } else {
+        w::AddChild(border, column);
+    }
+
+    // One VerticalBox per view, each taking all the height; only the shown view is visible.
+    std::vector<Obj> viewBoxes;
+    for (int v = 0; v < win.views; ++v) {
+        Obj box = w::Spawn("VerticalBox", tree);
+        w::FillSlot(eng::Call(column, "AddChildToVerticalBox", box).ReturnObj());
+        viewBoxes.push_back(box);
+        win.viewBoxes.push_back(eng::MakeWeak(box));
+    }
+
+    // A row that holds something with a fill height (a text area of height 0) takes the leftover height.
+    std::vector<Obj> rows(win.rowView.size(), nullptr);
+    std::vector<int> rowsInView(static_cast<size_t>(win.views), 0);
+    for (size_t r = 0; r < rows.size(); ++r) {
+        if (win.rowRetired[r]) continue;
+        Obj row = w::Spawn("HorizontalBox", tree);
+        Obj slot = eng::Call(viewBoxes[static_cast<size_t>(win.rowView[r])], "AddChildToVerticalBox", row).ReturnObj();
+        if (!slot) return;
+        if (rowsInView[static_cast<size_t>(win.rowView[r])]++ > 0) eng::Call(slot, "SetPadding", w::Margin{0, 8, 0, 0});
+        for (const auto& item : win.items)
+            if (!item->retired && !item->inSidebar && item->row == static_cast<int>(r) && item->kind == Kind::TextArea && item->height <= 0)
+                w::FillSlot(slot);
+        rows[r] = row;
+    }
+    std::vector<int> placedInRow(rows.size(), 0);
+    int placedInSidebar = 0;
+    for (auto& itemPtr : win.items) {
+        Widget& item = *itemPtr;
+        if (item.retired) continue;
+        Obj widget = BuildWidget(tree, item);
+        if (item.inSidebar) {
+            // One per line, as wide as the sidebar.
+            Obj slot = sidebar && widget ? eng::Call(sidebar, "AddChildToVerticalBox", widget).ReturnObj() : nullptr;
+            if (slot) {
+                eng::Call(slot, "SetHorizontalAlignment", w::kAlignFill);
+                if (placedInSidebar++ > 0) eng::Call(slot, "SetPadding", w::Margin{0, 6, 0, 0});
+            }
+            continue;
+        }
+        int& placed = placedInRow[static_cast<size_t>(item.row)];
+        Obj slot = w::AddToRow(rows[static_cast<size_t>(item.row)], widget, placed++ == 0 ? 0.0f : (item.kind == Kind::Text ? 14.0f : 8.0f));
+        const bool fillsWidth =
+            (item.kind == Kind::Space || item.kind == Kind::TextArea || item.kind == Kind::TextInput || item.kind == Kind::Image) && item.width <= 0;
+        if (fillsWidth) w::FillSlot(slot);
+        if (item.kind == Kind::TextArea && item.height <= 0) eng::Call(slot, "SetVerticalAlignment", w::kAlignFill);
+    }
+    w::SetVisibility(border, w::kSelfHitTestInvisible);
+    eng::Call(host, "AddToViewport", int32_t{100});
+    win.host = eng::MakeWeak(host);
+    win.border = eng::MakeWeak(border);
+    win.generation = game::Generation();
+    win.shownVisible = true;
+    win.layoutDirty = false;
+    int live = 0;
+    for (const auto& item : win.items) live += item->retired ? 0 : 1;
+    hostlog::Info("window built with " + std::to_string(live) + " widgets");
+}
+
+void Sync(Widget& item) {
+    Obj main = eng::Get(item.main);
+    if (!main) return;
+    switch (item.kind) {
+        case Kind::Text:
+            if (item.text != item.shownText) {
+                w::SetText(main, item.text);
+                item.shownText = item.text;
+            }
+            if (item.colorDirty) {
+                w::SetTextColor(main, item.color);
+                item.colorDirty = false;
+            }
+            break;
+        case Kind::Button:
+        case Kind::IconButton: {
+            if (item.backgroundDirty) {
+                eng::Call(main, "SetBackgroundColor", item.background);
+                item.backgroundDirty = false;
+            }
+            if (item.text != item.shownText) {
+                if (item.kind == Kind::Button) {
+                    w::SetText(eng::Get(item.label), item.text);
+                } else {
+                    const bool play = item.text == "play";
+                    w::SetVisibility(eng::Get(item.iconA), play ? w::kHitTestInvisible : w::kCollapsed);
+                    w::SetVisibility(eng::Get(item.iconB), play ? w::kCollapsed : w::kHitTestInvisible);
+                }
+                item.shownText = item.text;
+            }
+            // A click is a press that ends while the pointer is still over the button.
+            const bool pressed = eng::Call(main, "IsPressed").ReturnBool();
+            item.hovered = eng::Call(main, "IsHovered").ReturnBool();
+            if (item.wasPressed && !pressed && item.hovered) item.clickPending = true;
+            item.wasPressed = pressed;
+            break;
+        }
+        case Kind::Slider:
+            item.dragging = eng::Call(main, "HasMouseCapture").ReturnBool();
+            if (gSimulatedSlider >= 0) {
+                item.dragging = true;
+                item.value = gSimulatedSlider;
+            } else if (item.dragging) {
+                item.value = eng::Call(main, "GetValue").ReturnAs<float>(item.value);
+            } else if (item.value != item.shownValue) {
+                eng::Call(main, "SetValue", item.value);
+            }
+            item.shownValue = item.value;
+            break;
+        case Kind::Dropdown:
+            if (item.selected != item.shownSelected) {
+                eng::Call(main, "SetSelectedIndex", static_cast<int32_t>(item.selected));
+                item.shownSelected = item.selected;
+            } else {
+                const int32_t index = eng::Call(main, "GetSelectedIndex").ReturnAs<int32_t>(item.selected);
+                if (index >= 0 && index != item.selected) {
+                    item.selected = item.shownSelected = index;
+                    item.changedPending = true;
+                }
+            }
+            break;
+        case Kind::Space:
+            break;
+        case Kind::Image:
+            if (item.text != item.shownText) {
+                ShowImage(main, item.text);
+                item.shownText = item.text;
+            }
+            break;
+        case Kind::TextArea: {
+            // Follow new text only when already scrolled to the end, so reading further up is not interrupted.
+            const float offset = eng::Call(main, "GetScrollOffset").ReturnAs<float>(0);
+            const float end = eng::Call(main, "GetScrollOffsetOfEnd").ReturnAs<float>(0);
+            if (item.text != item.shownText) {
+                w::SetText(eng::Get(item.label), item.text);
+                item.shownText = item.text;
+                if (offset >= end - 2) item.scrollToEnd = true;
+            }
+            if (item.scrollToEnd) {
+                eng::Call(main, "ScrollToEnd");
+                item.scrollToEnd = false;
+            }
+            break;
+        }
+        case Kind::TextInput: {
+            item.focused = eng::Call(main, "HasKeyboardFocus").ReturnBool();
+            // Focus can only be taken once the box is on screen, so it is asked for until it sticks.
+            if (item.focusRequested) {
+                if (item.focused || ++item.focusAttempts > kFocusAttempts) item.focusRequested = false;
+                else eng::Call(main, "SetKeyboardFocus");
+            }
+            if ((item.focused && input::Pressed(kEnterKey)) || item.submitRequested) {
+                item.submitRequested = false;
+                const std::string typed = w::ReadText(main);
+                if (!typed.empty()) {
+                    item.submitted = typed;
+                    item.submitPending = true;
+                    w::SetText(main, "");
+                }
+            }
+            break;
+        }
+    }
+}
+
+}  // namespace
+
+namespace {
+void AddRow(Window* win, int view) {
+    win->rowView.push_back(view);
+    win->rowRetired.push_back(false);
+    win->addRow = static_cast<int>(win->rowView.size()) - 1;
+    win->layoutDirty = true;
+}
+}  // namespace
+
+void NewRow(Window* win) { AddRow(win, win->rowView[static_cast<size_t>(win->addRow)]); }
+
+int StartView(Window* win) {
+    win->addingToSidebar = false;
+    AddRow(win, win->views++);
+    return win->views - 1;
+}
+
+void ShowView(Window* win, int view) {
+    if (view >= 0 && view < win->views) win->shownView = view;
+}
+
+void ClearView(Window* win, int view) {
+    if (view < 0 || view >= win->views) return;
+    for (size_t r = 0; r < win->rowView.size(); ++r)
+        if (win->rowView[r] == view) win->rowRetired[r] = true;
+    for (auto& item : win->items)
+        if (!item->inSidebar && win->rowView[static_cast<size_t>(item->row)] == view) item->retired = true;
+    win->addingToSidebar = false;
+    AddRow(win, view);
+}
+
+void StartSidebar(Window* win, float width) {
+    win->sidebarWidth = width;
+    win->addingToSidebar = true;
+    win->layoutDirty = true;
+}
+
+void StartMain(Window* win) { win->addingToSidebar = false; }
+
+Window* MakeWindow(int owner) {
+    gWindows.push_back(std::make_unique<Window>());
+    gWindows.back()->owner = owner;
+    return gWindows.back().get();
+}
+
+Widget* AddWidget(Window* win, Kind kind, const std::string& text, float sizeOrWidth) {
+    auto item = std::make_unique<Widget>();
+    item->window = win;
+    item->kind = kind;
+    item->row = win->addRow;
+    item->inSidebar = win->addingToSidebar;
+    item->text = text;
+    (kind == Kind::Text ? item->size : item->width) = sizeOrWidth;
+    win->items.push_back(std::move(item));
+    win->layoutDirty = true;
+    return win->items.back().get();
+}
+
+void AddOption(Widget* dropdown, const std::string& option) {
+    dropdown->options.push_back(option);
+    dropdown->window->layoutDirty = true;
+}
+
+namespace windows {
+
+void Frame() {
+    gTyping = false;
+    Obj typingWidget = nullptr;
+    for (auto& winPtr : gWindows) {
+        Window& win = *winPtr;
+        // Built in an earlier map: those widgets went with it. Forgotten without being touched.
+        if (win.host.o && win.generation != game::Generation()) Forget(win);
+        const bool built = eng::Get(win.host) != nullptr;
+        if (win.visible && (!built || win.layoutDirty)) {
+            if (built) {
+                eng::Call(eng::Get(win.host), "RemoveFromParent");
+                Forget(win);
+            }
+            if (game::PlayerController()) Build(win);
+        }
+        Obj border = eng::Get(win.border);
+        if (!border) continue;
+        if (win.visible != win.shownVisible) {
+            w::SetVisibility(border, win.visible ? w::kSelfHitTestInvisible : w::kCollapsed);
+            win.shownVisible = win.visible;
+        }
+        if (win.shownView != win.appliedView) {
+            for (size_t v = 0; v < win.viewBoxes.size(); ++v)
+                w::SetVisibility(eng::Get(win.viewBoxes[v]), static_cast<int>(v) == win.shownView ? w::kSelfHitTestInvisible : w::kCollapsed);
+            win.appliedView = win.shownView;
+        }
+        if (win.visible)
+            for (auto& item : win.items) {
+                if (item->retired) continue;
+                // Widgets of hidden views are not synced; their text inputs cannot have focus.
+                if (!item->inSidebar && win.rowView[static_cast<size_t>(item->row)] != win.shownView) {
+                    item->focused = false;
+                    continue;
+                }
+                Sync(*item);
+                gTyping = gTyping || item->focused;
+                // A requested focus is given through the input mode too, which also keeps keys from the game.
+                if (item->kind == Kind::TextInput && (item->focused || item->focusRequested) && !typingWidget)
+                    typingWidget = eng::Get(item->main);
+            }
+    }
+    game::SetTypingWidget(typingWidget);
+    gSimulatedSlider = -1;
+}
+
+bool Typing() { return gTyping; }
+
+void RemoveOwner(int owner) {
+    for (auto it = gWindows.begin(); it != gWindows.end();) {
+        if ((*it)->owner != owner) {
+            ++it;
+            continue;
+        }
+        if (Obj host = eng::Get((*it)->host)) eng::Call(host, "RemoveFromParent");
+        it = gWindows.erase(it);
+    }
+}
+
+bool SimulateClick(const std::string& label) {
+    for (auto& win : gWindows)
+        for (auto& item : win->items)
+            if (!item->retired && (item->kind == Kind::Button || item->kind == Kind::IconButton) && (item->text == label || label == "icon"))
+                return item->clickPending = true;
+    return false;
+}
+
+bool SimulateSelect(const std::string& firstOption, int index) {
+    for (auto& win : gWindows)
+        for (auto& item : win->items)
+            if (!item->retired && item->kind == Kind::Dropdown && !item->options.empty() && item->options[0] == firstOption && index >= 0 &&
+                index < static_cast<int>(item->options.size())) {
+                item->selected = index;
+                item->changedPending = true;
+                return true;
+            }
+    return false;
+}
+
+void SimulateSlider(float value) { gSimulatedSlider = value; }
+
+bool SimulateSubmit(const std::string& text) {
+    for (auto& win : gWindows)
+        for (auto& item : win->items)
+            if (!item->retired && item->kind == Kind::TextInput) {
+                item->submitted = text;
+                return item->submitPending = true;
+            }
+    return false;
+}
+
+std::string Status() {
+    std::string s;
+    for (auto& win : gWindows) {
+        s += std::string(s.empty() ? "" : " ") + "window=" + (eng::Get(win->host) ? (win->shownVisible ? "shown" : "hidden") : "absent");
+        for (auto& item : win->items)
+            if (!item->retired && item->kind == Kind::Text) {
+                std::string text = item->text;
+                for (char& c : text)
+                    if (c == '\n') c = '/';        // one log line per status
+                s += " text[" + text + "]";
+            }
+    }
+    return s;
+}
+
+}  // namespace windows
+}  // namespace ui

@@ -1,0 +1,8 @@
+[meta]
+name = "Hello World"
+version = "0.1.0"
+author = "AnythingGoes"
+description = "The smallest plugin: logs once when it loads and once a minute. A starting point for your own."
+
+[script]
+files = ["main.as"]

@@ -1,0 +1,7 @@
+# build output
+build/
+# the compiler (tools/llvm-mingw) and the AngelScript SDK download are fetched locally, see README
+tools/llvm-mingw/
+tools/angelscript/
+__pycache__/
+*.pyc
