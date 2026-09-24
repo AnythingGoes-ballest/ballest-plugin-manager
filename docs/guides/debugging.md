@@ -2,8 +2,10 @@
 
 ## The log
 
-Everything goes to one log: `%LOCALAPPDATA%\Ballest\Saved\PluginManager\host.log`, started fresh each time the game
-starts. The same lines are in the game: footer **plugins** > **open** > **console**.
+Everything goes to one log, which you read in the game: footer **plugins** > **open** > **console**. It shows the
+last 400 lines and updates live. The whole log is also saved to
+`%LOCALAPPDATA%\Ballest\Saved\PluginManager\host.log`, started fresh each time the game starts: use it for older
+lines, or when the game won't start.
 
 ```
 [21:25:25.230] [info] [replay-manager] loaded Replay Manager 0.1.0

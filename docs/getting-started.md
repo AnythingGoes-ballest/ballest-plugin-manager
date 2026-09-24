@@ -50,17 +50,20 @@ void Main()
 }
 ```
 
-`Main()` runs once, when the plugin loads. Start the game (or restart it). Open
-`%LOCALAPPDATA%\Ballest\Saved\PluginManager\host.log` and you'll find:
+`Main()` runs once, when the plugin loads. Start the game (or restart it), then open the log: footer **plugins** >
+**open** > **console**. You'll find:
 
 ```
 [info] [race-clock] loaded Race Clock 0.1.0
 [info] [race-clock] race clock loaded
 ```
 
+The console shows the last 400 lines of the log and updates as new lines arrive. If your plugin has a mistake, the
+compiler's message appears here too, with the file and line.
+
 !!! tip
-    The same log is in the game: footer **plugins** > **open** > **console**. If your plugin has a mistake, the
-    compiler's message appears there, with the file and line.
+    The whole log is also saved to `%LOCALAPPDATA%\Ballest\Saved\PluginManager\host.log`, started fresh each time
+    the game starts. It's useful for older lines, or when the game won't start.
 
 ## 5. Show a window
 
