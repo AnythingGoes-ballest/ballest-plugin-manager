@@ -8,6 +8,8 @@
 //   plugins   every plugin in the registry plus the ones installed here, one card each: icon, name, version,
 //             author, description, and install / update / remove / github buttons. Installs and removals take
 //             effect straight away.
+//   settings  each plugin's [Setting] variables: a slider for a number with min and max, on/off for a bool, a
+//             text box otherwise, and reset; plus "reset position" for a plugin with windows that can be dragged.
 
 UI::FooterButton@ button;
 UI::Panel@ panel;
@@ -21,9 +23,12 @@ const int DESCRIPTION_LENGTH = 120;
 UI::Window@ menu;
 UI::Button@ consoleNav;
 UI::Button@ pluginsNav;
+UI::Button@ settingsNav;
+UI::Button@ folderButton;
 UI::Button@ closeButton;
 int consoleView = 0;            // the first view, the one rows go into before StartView
 int pluginsView = -1;
+int settingsView = -1;
 int shownView = 0;
 
 // console
@@ -39,6 +44,21 @@ array<UI::Button@> cardButtons;
 array<string> cardActions;      // "install:<id>", "remove:<id>" or "open:<url>"
 string shownCards;              // what the cards were built from; rebuilt when it changes
 double lastCardCheck = 0;
+
+// settings: every control and the setting (its index in Settings::) it edits
+array<UI::Button@> toggles;
+array<uint> toggleSetting;
+array<UI::Slider@> sliders;
+array<uint> sliderSetting;
+array<UI::TextInput@> inputs;
+array<uint> inputSetting;
+array<UI::Text@> values;
+array<uint> valueSetting;
+array<UI::Button@> resets;
+array<uint> resetSetting;
+array<UI::Button@> positionResets;
+array<string> positionPlugin;
+string shownSettings;           // what the settings view was built from
 
 void Main()
 {
@@ -63,20 +83,24 @@ void Refresh()
 //   [console]       | +------------------------------------------+   | [icon] Replay Manager  0.1.0   status [..]
 //   [plugins]       | | host log                                 |   | [icon] Grind Timer     0.1.0   status [..]
 //                   | +------------------------------------------+   |
-//   [close]         | >  [ command                         ] [run]   |
+//   [open folder]   | >  [ command                         ] [run]   |
+//   [close]         |                                                |
 // Widths and heights of 0 fill the space left over.
 void BuildMenu()
 {
     @menu = UI::CreateWindow();
     menu.SetScreenSize(0.9f, 0.9f);
     menu.SetBackground(0.02f, 0.02f, 0.03f, 0.94f);
+    menu.SetBlocksClicks(true);         // the game's menu underneath must not get clicks through it
     menu.visible = false;
 
     menu.StartSidebar(220);
     menu.AddText("plugin manager", 24);
     @consoleNav = menu.AddButton("console");
     @pluginsNav = menu.AddButton("plugins");
+    @settingsNav = menu.AddButton("settings");
     menu.AddText(" ", 16);
+    @folderButton = menu.AddButton("open plugins folder");
     @closeButton = menu.AddButton("close");
 
     menu.StartMain();
@@ -90,6 +114,8 @@ void BuildMenu()
 
     pluginsView = menu.StartView();
     BuildCards();
+    settingsView = menu.StartView();
+    BuildSettings();
     ShowView(consoleView);
 }
 
@@ -97,11 +123,19 @@ void ShowView(int view)
 {
     shownView = view;
     menu.ShowView(view);
-    bool console = view == consoleView;
-    consoleNav.SetBackground(console ? NAV_SELECTED_R : NAV_R, console ? NAV_SELECTED_G : NAV_G, console ? NAV_SELECTED_B : NAV_B, 1);
-    pluginsNav.SetBackground(console ? NAV_R : NAV_SELECTED_R, console ? NAV_G : NAV_SELECTED_G, console ? NAV_B : NAV_SELECTED_B, 1);
-    if (console)
+    Highlight(consoleNav, view == consoleView);
+    Highlight(pluginsNav, view == pluginsView);
+    Highlight(settingsNav, view == settingsView);
+    if (view == consoleView)
         commandInput.Focus();
+}
+
+void Highlight(UI::Button@ nav, bool selected)
+{
+    if (selected)
+        nav.SetBackground(NAV_SELECTED_R, NAV_SELECTED_G, NAV_SELECTED_B, 1);
+    else
+        nav.SetBackground(NAV_R, NAV_G, NAV_B, 1);
 }
 
 void OpenMenu()
@@ -324,6 +358,150 @@ void UpdatePlugins()
     }
 }
 
+// --- settings -----------------------------------------------------------------------------------------------------
+
+string PluginName(const string &in id)
+{
+    int p = InstalledIndex(id);
+    return p >= 0 ? Plugins::Name(p) : id;
+}
+
+// The plugins with something to show here, in load order: settings, or windows that can be dragged.
+array<string> SettingsPlugins()
+{
+    array<string> ids;
+    for (uint p = 0; p < Plugins::Count(); p++)
+    {
+        string id = Plugins::Id(p);
+        bool any = UI::HasMovable(id);
+        for (uint i = 0; i < Settings::Count() && !any; i++)
+            any = Settings::Plugin(i) == id && !Settings::Hidden(i);
+        if (any)
+            ids.insertLast(id);
+    }
+    return ids;
+}
+
+string SettingsState()
+{
+    string state;
+    array<string> ids = SettingsPlugins();
+    for (uint n = 0; n < ids.length(); n++)
+        state += ids[n] + "|";
+    for (uint i = 0; i < Settings::Count(); i++)
+        state += Settings::Plugin(i) + ":" + Settings::Name(i) + "|";
+    return state;
+}
+
+void AddSettingRow(uint i)
+{
+    menu.NewRow();
+    string label = Settings::Name(i);
+    if (Settings::Description(i) != "")
+        label += "\n" + Settings::Description(i);
+    menu.AddText(label, 17);
+    menu.AddSpace(0);
+    string kind = Settings::Kind(i);
+    if (kind == "bool")
+    {
+        toggles.insertLast(menu.AddButton(Settings::Get(i) == "true" ? "on" : "off"));
+        toggleSetting.insertLast(i);
+    }
+    else if (kind != "string" && Settings::HasRange(i))
+    {
+        sliders.insertLast(menu.AddSlider(360));
+        sliderSetting.insertLast(i);
+    }
+    else
+    {
+        inputs.insertLast(menu.AddTextInput(260, "type a value, Enter", 17));
+        inputSetting.insertLast(i);
+    }
+    UI::Text@ value = menu.AddText(Settings::Get(i), 17);
+    value.SetColor(0.7f, 0.7f, 0.75f, 1);
+    values.insertLast(value);
+    valueSetting.insertLast(i);
+    resets.insertLast(menu.AddButton("reset"));
+    resetSetting.insertLast(i);
+}
+
+void BuildSettings()
+{
+    menu.ClearView(settingsView);
+    toggles.resize(0);
+    toggleSetting.resize(0);
+    sliders.resize(0);
+    sliderSetting.resize(0);
+    inputs.resize(0);
+    inputSetting.resize(0);
+    values.resize(0);
+    valueSetting.resize(0);
+    resets.resize(0);
+    resetSetting.resize(0);
+    positionResets.resize(0);
+    positionPlugin.resize(0);
+
+    menu.AddText("settings", 24);
+    array<string> ids = SettingsPlugins();
+    if (ids.length() == 0)
+    {
+        menu.NewRow();
+        menu.AddText("No installed plugin has settings.", 17).SetColor(0.7f, 0.7f, 0.75f, 1);
+    }
+    for (uint n = 0; n < ids.length(); n++)
+    {
+        menu.NewRow();
+        menu.AddText(PluginName(ids[n]), 21).SetColor(0.55f, 0.85f, 0.0f, 1);
+        menu.AddSpace(0);
+        if (UI::HasMovable(ids[n]))
+        {
+            menu.AddText("drag it on screen while the cursor shows", 16).SetColor(0.7f, 0.7f, 0.75f, 1);
+            positionResets.insertLast(menu.AddButton("reset position"));
+            positionPlugin.insertLast(ids[n]);
+        }
+        for (uint i = 0; i < Settings::Count(); i++)
+            if (Settings::Plugin(i) == ids[n] && !Settings::Hidden(i))
+                AddSettingRow(i);
+    }
+    shownSettings = SettingsState();
+}
+
+double Fraction(uint i)
+{
+    double range = Settings::Max(i) - Settings::Min(i);
+    return range > 0 ? (parseFloat(Settings::Get(i)) - Settings::Min(i)) / range : 0;
+}
+
+void UpdateSettings()
+{
+    if (SettingsState() != shownSettings)
+        BuildSettings();
+    for (uint n = 0; n < toggles.length(); n++)
+        if (toggles[n].Clicked())
+            Settings::Set(toggleSetting[n], Settings::Get(toggleSetting[n]) == "true" ? "false" : "true");
+    for (uint n = 0; n < sliders.length(); n++)
+    {
+        uint i = sliderSetting[n];
+        if (sliders[n].dragging)
+            Settings::Set(i, formatFloat(Settings::Min(i) + sliders[n].value * (Settings::Max(i) - Settings::Min(i)), "", 0, 3));
+        else
+            sliders[n].value = float(Fraction(i));
+    }
+    for (uint n = 0; n < inputs.length(); n++)
+        if (inputs[n].Submitted() && !Settings::Set(inputSetting[n], inputs[n].text))
+            Log::Warn("not a value for " + Settings::Name(inputSetting[n]) + ": " + inputs[n].text);
+    for (uint n = 0; n < resets.length(); n++)
+        if (resets[n].Clicked())
+            Settings::Reset(resetSetting[n]);
+    for (uint n = 0; n < positionResets.length(); n++)
+        if (positionResets[n].Clicked())
+            UI::ResetPositions(positionPlugin[n]);
+    for (uint n = 0; n < values.length(); n++)
+        values[n].text = Settings::Get(valueSetting[n]);
+    for (uint n = 0; n < toggles.length(); n++)
+        toggles[n].label = Settings::Get(toggleSetting[n]) == "true" ? "on" : "off";
+}
+
 // --- frame ----------------------------------------------------------------------------------------------------------
 
 void UpdateMenu()
@@ -333,14 +511,20 @@ void UpdateMenu()
         CloseMenu();
         return;
     }
+    if (folderButton.Clicked())
+        Plugins::OpenFolder();
     if (consoleNav.Clicked())
         ShowView(consoleView);
     if (pluginsNav.Clicked())
         ShowView(pluginsView);
+    if (settingsNav.Clicked())
+        ShowView(settingsView);
     if (shownView == consoleView)
         UpdateConsole();
-    else
+    else if (shownView == pluginsView)
         UpdatePlugins();
+    else
+        UpdateSettings();
 }
 
 void Update(float dt)

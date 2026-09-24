@@ -239,6 +239,11 @@ void Frame() {
     for (auto& p : gPanels) SyncPanel(*p);
 }
 
+void HideOwner(int owner) {
+    for (auto& p : gPanels)
+        if (p->owner == owner) p->visible = false;
+}
+
 void RemoveOwner(int owner) {
     for (auto it = gButtons.begin(); it != gButtons.end();) {
         if ((*it)->owner != owner) {

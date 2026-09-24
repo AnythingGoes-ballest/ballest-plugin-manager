@@ -6,13 +6,13 @@
       "description": "A green Trackmania-style timer of total time racing, with restarts from the beginning counted.",
       "author": "AnythingGoes",
       "repo": "AnythingGoes-ballest/ballest-grind-timer-plugin",
-      "version": "0.1.0",
-      "commit": "43e057af6cb08b758cb1dac314c63bfb7e429a72",
-      "min_host": "0.3.0",
+      "version": "0.2.0",
+      "commit": "3bd31f03b723763cc527377826d1cf6a3e166ba9",
+      "min_host": "0.4.0",
       "icon": "icon.png",
       "files": {
-        "info.toml": "0ff910449b7b01131f1381647bbb0caea25bcabb5091decdd99e93d4a4763af0",
-        "main.as": "73435c9a8987393cab58a6ec664ff7fa702cf640f0da7a8c273215d20691ca68",
+        "info.toml": "b58836792ce92fd00ab74ad93015a408561247657c318b562e2ef791d8449f35",
+        "main.as": "b0ac55214bba3abb21b64e191ac0a6b2e9247dc16dd5756dcb4c14908271de64",
         "icon.png": "0cadd031d4d60b4bca0d120356bd6999e5dd55fcb1e4cd235c923c1b0c9eeb77"
       }
     },

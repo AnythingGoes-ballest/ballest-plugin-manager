@@ -3,17 +3,20 @@
 #include <windows.h>
 
 #include <angelscript.h>
+#include <scriptbuilder/scriptbuilder.h>
 
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <map>
 #include <sstream>
+#include <thread>
 
 #include "api.hpp"
 #include "engine.hpp"
 #include "game.hpp"
 #include "log.hpp"
+#include "settings.hpp"
 #include "ui.hpp"
 
 namespace plugins {
@@ -32,6 +35,7 @@ struct Plugin {
     asIScriptModule* module = nullptr;
     asIScriptContext* ctx = nullptr;
     asIScriptFunction* update = nullptr;
+    asIScriptFunction* onSettingsChanged = nullptr;
 };
 
 asIScriptEngine* gEngine = nullptr;
@@ -127,10 +131,15 @@ void LineCallback(asIScriptContext* ctx, void*) {
     if (GetTickCount64() > gDeadline) ctx->Abort();
 }
 
+// A stopped plugin's script never runs again this session, so nothing it put on screen would answer any more:
+// its windows and panels are hidden and its cursor request dropped, so nothing dead is left blocking clicks.
 void Stop(Plugin& p, const std::string& why) {
     p.running = false;
     p.status = why;
     hostlog::Write("error", p.id, why);
+    const int index = static_cast<int>(&p - gPlugins.data());
+    ui::HideOwner(index);
+    game::RequestCursor(index, false);
 }
 
 // Runs one callback within the plugin's time budget; an exception or overrun stops the plugin.
@@ -153,7 +162,14 @@ void Run(Plugin& p, asIScriptFunction* fn, const float* dt) {
     }
 }
 
-// Each plugin compiles into its own module, named by its index so API calls can tell which plugin made them.
+// A plugin's files are the ones its manifest lists; #include is not followed.
+int RefuseInclude(const char* include, const char* from, CScriptBuilder*, void*) {
+    hostlog::Write("error", "compiler", std::string(from) + ": #include \"" + include + "\" is not supported; list the file in info.toml");
+    return -1;
+}
+
+// Each plugin compiles into its own module, named by its index so API calls can tell which plugin made them. The
+// script builder keeps each global's metadata, which is where [Setting] tags come from.
 void Start(size_t index) {
     Plugin& p = gPlugins[index];
     if (!p.minHost.empty() && CompareVersions(p.minHost, kHostVersion) > 0) {
@@ -161,7 +177,10 @@ void Start(size_t index) {
         hostlog::Write("error", p.id, p.status + " (this is " + kHostVersion + ")");
         return;
     }
-    asIScriptModule* m = gEngine->GetModule(std::to_string(index).c_str(), asGM_ALWAYS_CREATE);
+    CScriptBuilder builder;
+    builder.SetIncludeCallback(RefuseInclude, nullptr);
+    if (builder.StartNewModule(gEngine, std::to_string(index).c_str()) < 0) return;
+    asIScriptModule* m = builder.GetModule();
     p.module = m;
     for (const auto& file : p.files) {
         std::string code;
@@ -170,16 +189,18 @@ void Start(size_t index) {
             hostlog::Write("error", p.id, p.status);
             return;
         }
-        m->AddScriptSection((p.id + "/" + file).c_str(), code.data(), code.size());
+        builder.AddSectionFromMemory((p.id + "/" + file).c_str(), code.data(), static_cast<unsigned>(code.size()));
     }
-    if (m->Build() < 0) {
+    if (builder.BuildModule() < 0) {
         p.status = "error: does not compile (see log)";
         hostlog::Write("error", p.id, p.status);
         return;
     }
+    settings::Collect(static_cast<int>(index), p.id, m, builder);      // saved values are in place before Main
     p.ctx = gEngine->CreateContext();
     p.ctx->SetLineCallback(asFUNCTION(LineCallback), nullptr, asCALL_CDECL);
     p.update = m->GetFunctionByDecl("void Update(float)");
+    p.onSettingsChanged = m->GetFunctionByDecl("void OnSettingsChanged()");
     p.running = true;
     p.status = "running";
     hostlog::Write("info", p.id, "loaded " + p.name + " " + p.version);
@@ -232,12 +253,37 @@ void LoadAll(const std::wstring& pluginsDir) {
 
 void Frame(float dt) {
     gInFrame = true;
-    for (auto& p : gPlugins)
+    for (size_t i = 0; i < gPlugins.size(); ++i) {
+        Plugin& p = gPlugins[i];
+        if (settings::TakeChanged(static_cast<int>(i)) && p.running) Run(p, p.onSettingsChanged, nullptr);
         if (p.running && p.update) Run(p, p.update, &dt);
+    }
     gInFrame = false;
+    settings::Frame();
 }
 
 std::wstring Dir() { return gDir; }
+
+void OpenFolder() {
+    // Starting Explorer can take longer than a plugin's whole time budget (measured: the plugin manager was stopped
+    // for it), so it is started from a thread of its own and the caller returns at once.
+    if (gDir.empty()) return;
+    std::thread([dir = gDir] {
+        wchar_t windows[MAX_PATH];
+        const UINT n = GetWindowsDirectoryW(windows, MAX_PATH);
+        std::wstring command = L"\"" + std::wstring(windows, n) + L"\\explorer.exe\" \"" + dir + L"\"";
+        STARTUPINFOW si{};
+        si.cb = sizeof si;
+        PROCESS_INFORMATION pi{};
+        if (CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+            hostlog::Info("opened the plugins folder");
+        } else {
+            hostlog::Warn("could not open the plugins folder (" + std::to_string(GetLastError()) + ")");
+        }
+    }).detach();
+}
 
 bool Load(const std::string& id) {
     if (gInFrame || !gEngine || Loaded(id)) return false;
@@ -256,7 +302,8 @@ void Unload(const std::string& id) {
         p.running = false;
         p.removed = true;
         p.status = "removed";
-        p.update = nullptr;
+        p.update = p.onSettingsChanged = nullptr;
+        settings::Forget(static_cast<int>(i));             // before the module (the variables) goes
         if (p.ctx) p.ctx->Release();
         p.ctx = nullptr;
         if (p.module) p.module->Discard();

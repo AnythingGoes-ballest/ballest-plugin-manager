@@ -18,6 +18,7 @@
 #include "race.hpp"
 #include "registry.hpp"
 #include "replay.hpp"
+#include "settings.hpp"
 #include "storage.hpp"
 #include "testchannel.hpp"
 #include "ui.hpp"
@@ -77,6 +78,38 @@ void PluginInstall(const std::string& id) {
 }
 void PluginRemove(const std::string& id) {
     if (MayManage()) registry::Remove(id);
+}
+
+// --- Settings ------------------------------------------------------------------------------------------------------
+settings::Setting SettingAt(unsigned i) {
+    const auto& list = settings::List();
+    return i < list.size() ? list[i] : settings::Setting{};
+}
+unsigned SettingCount() { return static_cast<unsigned>(settings::List().size()); }
+std::string SettingPlugin(unsigned i) { return SettingAt(i).pluginId; }
+std::string SettingName(unsigned i) { return SettingAt(i).name; }
+std::string SettingDescription(unsigned i) { return SettingAt(i).description; }
+bool SettingHidden(unsigned i) { return SettingAt(i).hidden; }
+bool SettingHasRange(unsigned i) { return SettingAt(i).hasRange; }
+double SettingMin(unsigned i) { return SettingAt(i).min; }
+double SettingMax(unsigned i) { return SettingAt(i).max; }
+std::string SettingKind(unsigned i) {
+    switch (SettingAt(i).kind) {
+        case settings::Kind::Bool: return "bool";
+        case settings::Kind::Int: return "int";
+        case settings::Kind::UInt: return "uint";
+        case settings::Kind::Float: return "float";
+        case settings::Kind::Double: return "double";
+        case settings::Kind::String: return "string";
+    }
+    return "";
+}
+std::string SettingGet(unsigned i) { return settings::Get(i); }
+bool SettingIsDefault(unsigned i) { return settings::IsDefault(i); }
+// Changing another plugin's settings is for the plugin manager; a plugin changes its own by assigning the variable.
+bool SettingSet(unsigned i, const std::string& value) { return MayManage() && settings::Set(i, value); }
+void SettingReset(unsigned i) {
+    if (MayManage()) settings::Reset(i);
 }
 
 // --- Registry ------------------------------------------------------------------------------------------------------
@@ -173,6 +206,10 @@ ui::Widget* WinTextArea(ui::Window* w, float width, float height, float size) {
     return area;
 }
 int WinStartView(ui::Window* w) { return ui::StartView(w); }
+void WinBlocksClicks(ui::Window* w, bool block) {
+    w->blocksClicks = block;
+    w->layoutDirty = true;
+}
 void WinShowView(ui::Window* w, int view) { ui::ShowView(w, view); }
 void WinClearView(ui::Window* w, int view) { ui::ClearView(w, view); }
 ui::Widget* WinImage(ui::Window* w, const std::string& path, float width, float height) {
@@ -187,6 +224,16 @@ ui::Widget* WinTextInput(ui::Window* w, float width, const std::string& hint, fl
 }
 
 void SetWidgetText(ui::Widget* w, const std::string& s) { w->text = s; }
+void SetTextSize(ui::Widget* w, float size) {
+    if (size == w->size) return;
+    w->size = size;
+    w->window->layoutDirty = true;          // a font is only set while building (it holds a shared pointer)
+}
+float GetTextSize(ui::Widget* w) { return w->size; }
+void SetWidgetVisible(ui::Widget* w, bool visible) { w->visible = visible; }
+bool GetWidgetVisible(ui::Widget* w) { return w->visible; }
+void WinSetMovable(ui::Window* w, bool movable) { ui::SetMovable(w, movable, plugins::CurrentId()); }
+bool WinGetMovable(ui::Window* w) { return w->movable; }
 std::string GetWidgetText(ui::Widget* w) { return w->text; }
 void TextColor(ui::Widget* w, float r, float g, float b, float a) {
     w->color = {r, g, b, a};
@@ -251,6 +298,22 @@ void RegisterCore() {
     Global("void Remove(const string &in id)", asFUNCTION(PluginRemove));
     Global("string Pending(const string &in id)", asFUNCTION(registry::Pending));
     Global("string DefaultIcon()", asFUNCTION(registry::DefaultIcon));
+    Global("void OpenFolder()", asFUNCTION(plugins::OpenFolder));
+
+    e->SetDefaultNamespace("Settings");
+    Global("uint Count()", asFUNCTION(SettingCount));
+    Global("string Plugin(uint)", asFUNCTION(SettingPlugin));
+    Global("string Name(uint)", asFUNCTION(SettingName));
+    Global("string Description(uint)", asFUNCTION(SettingDescription));
+    Global("string Kind(uint)", asFUNCTION(SettingKind));
+    Global("bool Hidden(uint)", asFUNCTION(SettingHidden));
+    Global("bool HasRange(uint)", asFUNCTION(SettingHasRange));
+    Global("double Min(uint)", asFUNCTION(SettingMin));
+    Global("double Max(uint)", asFUNCTION(SettingMax));
+    Global("string Get(uint)", asFUNCTION(SettingGet));
+    Global("bool IsDefault(uint)", asFUNCTION(SettingIsDefault));
+    Global("bool Set(uint, const string &in)", asFUNCTION(SettingSet));
+    Global("void Reset(uint)", asFUNCTION(SettingReset));
 
     e->SetDefaultNamespace("Registry");
     Global("void Refresh()", asFUNCTION(registry::Refresh));
@@ -278,6 +341,8 @@ void RegisterUi() {
         Check(e->RegisterObjectType(type, 0, asOBJ_REF | asOBJ_NOCOUNT), type);
     Global("void SetCursorVisible(bool)", asFUNCTION(SetCursorVisible));
     Global("bool CursorShown()", asFUNCTION(game::CursorShown));
+    Global("void ResetPositions(const string &in pluginId)", asFUNCTION(ui::ResetPositions));
+    Global("bool HasMovable(const string &in pluginId)", asFUNCTION(ui::HasMovable));
 
     Global("FooterButton@ AddFooterButton(const string &in)", asFUNCTION(AddFooterButton));
     Method("FooterButton", "bool Clicked()", asFUNCTION(FooterClicked));
@@ -310,6 +375,9 @@ void RegisterUi() {
     Method("Window", "void StartMain()", asFUNCTION(WinStartMain));
     Method("Window", "void SetScreenSize(float width, float height)", asFUNCTION(WinScreenSize));
     Method("Window", "int StartView()", asFUNCTION(WinStartView));
+    Method("Window", "void SetBlocksClicks(bool)", asFUNCTION(WinBlocksClicks));
+    Method("Window", "void set_movable(bool) property", asFUNCTION(WinSetMovable));
+    Method("Window", "bool get_movable() property", asFUNCTION(WinGetMovable));
     Method("Window", "void ShowView(int)", asFUNCTION(WinShowView));
     Method("Window", "void ClearView(int)", asFUNCTION(WinClearView));
     Method("Window", "Image@ AddImage(const string &in path, float width, float height)", asFUNCTION(WinImage));
@@ -319,6 +387,12 @@ void RegisterUi() {
     Method("Text", "void set_text(const string &in) property", asFUNCTION(SetWidgetText));
     Method("Text", "string get_text() property", asFUNCTION(GetWidgetText));
     Method("Text", "void SetColor(float, float, float, float)", asFUNCTION(TextColor));
+    for (const char* type : {"Text", "Button", "Slider", "Dropdown", "TextArea", "TextInput", "Image"}) {
+        Method(type, "void set_visible(bool) property", asFUNCTION(SetWidgetVisible));
+        Method(type, "bool get_visible() property", asFUNCTION(GetWidgetVisible));
+    }
+    Method("Text", "void set_size(float) property", asFUNCTION(SetTextSize));
+    Method("Text", "float get_size() property", asFUNCTION(GetTextSize));
     Method("Button", "bool Clicked()", asFUNCTION(Clicked));
     Method("Button", "bool get_hovered() property", asFUNCTION(Hovered));
     Method("Button", "void SetBackground(float, float, float, float)", asFUNCTION(ButtonBackground));

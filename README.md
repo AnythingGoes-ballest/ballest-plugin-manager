@@ -15,7 +15,10 @@ runs as normal.
    `Ballest of Them All\Ballest\Binaries\Win64` (next to `Ballest-Win64-Shipping.exe`).
 2. Start the game. **plugins** appears in the footer of the main menu and the in-race menus.
 3. **plugins** > **open** > **plugins** lists every plugin in the registry: **install**, **update**, **remove**, or
-   **github** to see its source.
+   **github** to see its source. **settings** has each plugin's settings, and **open plugins folder** shows where
+   they are installed.
+4. Plugin windows that can be moved (the Grind Timer, for example) are dragged with the mouse whenever the cursor is
+   on screen; **settings** > **reset position** puts them back.
 
 - Temporarily off: create an empty file `plugins\DISABLED` next to the game exe.
 - Completely off: delete `version.dll`.
@@ -84,12 +87,13 @@ plugin's GitHub repo and lists the SHA-256 of every file the game downloads:
 | `src/host/plugins.*` | Plugin discovery, manifests, compilation, callbacks, time budgets, loading and unloading at runtime |
 | `src/host/registry.*` | registry.json, installs (download, verify, swap in, start) and removals |
 | `src/host/net.*`, `json.*` | HTTPS downloads and SHA-256 with what Windows ships; a small JSON reader |
+| `src/host/settings.*` | `[Setting]` variables: read from the script's metadata, saved, edited, `OnSettingsChanged` |
 | `src/host/storage.*` | Per-plugin saved values |
 | `src/host/api.*` | The script API (all bindings in one file) |
 | `src/host/testchannel.*` | Test and measurement commands, from the console and from the tools below |
 | `src/proxy/` | The `version.dll` export stubs (generated from the system DLL's export table) |
 | `plugins/` | The bundled plugins: Plugin Manager (footer, console, plugin browser) and Hello World (an example) |
-| `third_party/angelscript/` | AngelScript 2.38.0 (zlib license): the engine and the string and array add-ons |
+| `third_party/angelscript/` | AngelScript 2.38.0 (zlib license): the engine and the string, array and script builder add-ons |
 
 ## Build
 
@@ -143,19 +147,45 @@ files = ["main.as"]
 timeout = 50          # ms per callback
 ```
 
-Callbacks: `void Main()` once after loading, `void Update(float dt)` every frame. Scripts can use `string` (with
-`split`/`join`) and `array<T>`.
+Callbacks: `void Main()` once after loading, `void Update(float dt)` every frame, `void OnSettingsChanged()` after the
+player changes a setting. Scripts can use `string` (with `split`/`join`) and `array<T>`. `#include` is not supported:
+list every file in `files`.
+
+### Settings
+
+Settings are declared the way Openplanet declares them: a global variable with a `[Setting]` tag. The plugin manager's
+**settings** view shows them (a slider when `min` and `max` are given, on/off for a bool, a text box otherwise, and
+reset), saves them, and calls `OnSettingsChanged()` after a change.
+
+```angelscript
+[Setting name="Time size" min=16 max=160 description="Height of the time, in pixels"]
+float TimeSize = 56;
+
+[Setting name="Show restarts"]
+bool ShowRestarts = true;
+
+void OnSettingsChanged() { timeText.size = TimeSize; restartText.visible = ShowRestarts; }
+```
+
+Attributes: `name`, `description`, `min` and `max`, `hidden` (saved but not shown). Types: `bool`, `int`, `uint`,
+`float`, `double`, `string`. The starting value is the default; a setting at its default is not saved, so a later
+default reaches everyone who never changed it.
+
+A window that sets `movable = true` (after placing it with `SetOffset`) can be dragged by the player whenever the
+cursor is on screen; its position is saved for the plugin, and **reset position** puts it back where the plugin
+placed it.
 
 | Namespace | API |
 |---|---|
 | `Log` | `Info`, `Warn`, `Error`; `LineCount()`, `Line(i)` (the host log's recent lines, numbered from the start of the session) |
 | `Host` | `Version()`, `Time()` (seconds, real time), `OpenUrl(url)` (a `https://github.com/` page, in the player's browser) |
-| `Plugins` | `Count()`, `Id/Name/Version/Status/Author/Description/Icon/Essential(i)`, `IsInstalled(id)`, `InstalledVersion(id)`, `DefaultIcon()`; plugin manager only: `Install(id)`, `Remove(id)`, `Pending(id)` |
+| `Plugins` | `Count()`, `Id/Name/Version/Status/Author/Description/Icon/Essential(i)`, `IsInstalled(id)`, `InstalledVersion(id)`, `DefaultIcon()`, `OpenFolder()`; plugin manager only: `Install(id)`, `Remove(id)`, `Pending(id)` |
+| `Settings` | Every plugin's `[Setting]` variables: `Count()`, `Plugin/Name/Description/Kind/Hidden/HasRange/Min/Max/Get/IsDefault(i)`; plugin manager only: `Set(i, value)`, `Reset(i)` |
 | `Registry` | `Refresh()`, `State()` ("loading", "ready", "error: ..."), `Count()`, `Id/Name/Description/Author/Version/Page/Icon(i)` |
 | `Console` | `Run(command)`: runs a host command (the list is in `src/host/testchannel.hpp`) on the next frame; output goes to the log |
 | `UI` footer | `AddFooterButton(label)`: `Clicked()`, `hovered`, `label`. `CreatePanel()`: `title`, `visible`, `Clear()`, `AddLine()`, `AddButton(label)` (a FooterButton in the panel) |
-| `UI` windows | `CreateWindow()`: `SetAnchor/SetPivot/SetOffset/SetBackground`, `visible`, `SetScreenSize(w, h)` (fractions of the screen; widths and heights of 0 then fill the space left). Widgets: `AddText(text, size)`, `AddButton(label)`, `AddIconButton("play"/"pause")`, `AddSlider(width)`, `AddDropdown(width)`, `AddSpace(width)`, `AddTextArea(width, height, size)`, `AddTextInput(width, hint, size)`, `AddImage(path, width, height)`. Layout: `NewRow()`, `StartSidebar(width)` / `StartMain()`, `StartView()` (returns its number), `ShowView(n)`, `ClearView(n)` (empties it and adds into it again). `SetCursorVisible(bool)` (per plugin: the cursor shows while any plugin asks), `CursorShown()` |
-| widgets | `Text.text`, `Text.SetColor(r,g,b,a)`; `Button.Clicked()`, `hovered`, `label`, `icon`, `SetBackground(r,g,b,a)`; `Slider.value` (0..1), `dragging`; `Dropdown.AddOption()`, `selected`, `Changed()`; `TextArea.text` (scrolls, follows new text when at the end); `TextInput.Submitted()` (Enter), `text` (the submitted text), `Focus()`, `Submit()`, `focused`; `Image.path` |
+| `UI` windows | `CreateWindow()`: `SetAnchor/SetPivot/SetOffset/SetBackground`, `visible`, `SetScreenSize(w, h)` (fractions of the screen; widths and heights of 0 then fill the space left), `SetBlocksClicks(bool)` (clicks on the window never reach the game underneath), `movable` (see Settings). Widgets: `AddText(text, size)`, `AddButton(label)`, `AddIconButton("play"/"pause")`, `AddSlider(width)`, `AddDropdown(width)`, `AddSpace(width)`, `AddTextArea(width, height, size)`, `AddTextInput(width, hint, size)`, `AddImage(path, width, height)`. Layout: `NewRow()`, `StartSidebar(width)` / `StartMain()`, `StartView()` (returns its number), `ShowView(n)`, `ClearView(n)` (empties it and adds into it again). `SetCursorVisible(bool)` (per plugin: the cursor shows while any plugin asks), `CursorShown()`, `ResetPositions(pluginId)`, `HasMovable(pluginId)` |
+| widgets | every widget: `visible` (hidden widgets take no space); `Text.text`, `Text.SetColor(r,g,b,a)`, `Text.size`; `Button.Clicked()`, `hovered`, `label`, `icon`, `SetBackground(r,g,b,a)`; `Slider.value` (0..1), `dragging`; `Dropdown.AddOption()`, `selected`, `Changed()`; `TextArea.text` (scrolls, follows new text when at the end); `TextInput.Submitted()` (Enter), `text` (the submitted text), `Focus()`, `Submit()`, `focused`; `Image.path` |
 | `Input` | `Pressed(Key)`, `Down(Key)` with `Input::Space`, `Input::W`, `Input::MouseRight`, ... (nothing while a text input has focus) |
 | `Race` | `OnTrack()`, `IsActive()`, `Restarts()` (restarts from the beginning since the game started; checkpoint respawns and falls don't count) |
 | `Storage` | `Get(key, fallback)`, `Set(key, value)`: this plugin's saved values, kept across launches |

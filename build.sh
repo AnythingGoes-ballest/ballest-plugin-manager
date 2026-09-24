@@ -12,7 +12,7 @@ FLAGS="-std=c++20 -O2 -g1 -Wall -Wextra -Wshadow -Wconversion -Wno-sign-conversi
 mkdir -p build/as build/host
 # AngelScript is compiled once; delete build/as to rebuild it.
 if [ ! -f build/as/.done ]; then
-  for f in $AS/source/*.cpp $AS/add_on/scriptstdstring/scriptstdstring.cpp $AS/add_on/scriptstdstring/scriptstdstring_utils.cpp $AS/add_on/scriptarray/scriptarray.cpp; do
+  for f in $AS/source/*.cpp $AS/add_on/scriptstdstring/scriptstdstring.cpp $AS/add_on/scriptstdstring/scriptstdstring_utils.cpp $AS/add_on/scriptarray/scriptarray.cpp $AS/add_on/scriptbuilder/scriptbuilder.cpp; do
     $CXX -std=c++17 -O2 -w -I$AS/include -c "$f" -o build/as/$(basename "$f" .cpp).o
   done
   touch build/as/.done

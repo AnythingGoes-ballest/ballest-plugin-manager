@@ -8,11 +8,12 @@
 
 namespace plugins {
 
-constexpr const char* kHostVersion = "0.3.0";
+constexpr const char* kHostVersion = "0.4.0";
 
 void LoadAll(const std::wstring& pluginsDir);
 void Frame(float dt);
 std::wstring Dir();                         // the plugins folder
+void OpenFolder();                          // shows the plugins folder in File Explorer
 
 // Outside plugin callbacks only (the registry calls these from its own frame step).
 bool Load(const std::string& id);           // a plugin folder that appeared (installed); false if it cannot load

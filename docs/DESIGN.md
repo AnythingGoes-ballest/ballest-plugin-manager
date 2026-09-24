@@ -167,9 +167,23 @@ wants = ["replay.control", "camera.control", "ui.overlay"]
 ## 4. Plugin API
 
 The API as built is documented in README.md ("Writing a plugin") and registered in one place, `src/host/api.cpp`.
-Planned next: game events through a ProcessEvent hook (race start, checkpoints, replay start and end), settings
-declared by plugins and rendered by the Plugin Manager, coroutines in Main, and hot reload. Per-plugin storage is
-built (`Storage`).
+Planned next: game events through a ProcessEvent hook (race start, checkpoints, replay start and end), coroutines in
+Main, and hot reload. Built: per-plugin storage (`Storage`) and Openplanet-style settings (section 3.8).
+
+### 3.8 Settings and movable windows (built 2026-09-23)
+- Plugins are compiled through AngelScript's script builder add-on, which keeps each global's metadata; a global
+  tagged `[Setting ...]` becomes a setting (bool, int, uint, float, double, string; name, description, min/max,
+  hidden). Its value after the module is built is the default; the saved value (Storage "setting.<variable>") is
+  written into the variable before Main. Values at their default are not saved.
+- The plugin manager edits another plugin's variables through `Settings::Set` (essential plugins only), which writes
+  the script global directly between callbacks and runs the owner's `OnSettingsChanged()` before its next Update.
+  Saving is throttled (a dragged slider changes a value every frame). A plugin's settings are forgotten, after
+  saving, before its module is discarded on removal.
+- Movable windows get an invisible button filling the window behind the content (texts and images are made
+  hit-test invisible; measured, UMG's TextBlock and Image default to Visible). While it is pressed the window
+  follows `WidgetLayoutLibrary.GetMousePositionOnViewport` (measured present) through its canvas slot's
+  `SetPosition`; the position is saved per plugin and window on release. A stopped plugin's windows are hidden
+  and its cursor request dropped, so nothing dead is left on screen.
 
 ## 5. First milestone plugins
 
@@ -236,5 +250,6 @@ Gate mechanism: the host intercepts the game's score-submission call and drops i
   restart at the end, follow 3D, free camera. Done; follow 3D confirmed by hand on a real replay, the free
   camera spawns in a real replay but its controls are not yet confirmed.
 - M7: trust tiers and the leaderboard gate. Not started.
-- M8: registry and live install, update and remove from GitHub. Done (tested against a local copy of the registry;
-  the GitHub download path waits for the repos to be public).
+- M8: registry and live install, update and remove from GitHub. Done and verified in game from GitHub.
+- M9: Openplanet-style settings and movable windows. Done (settings, saving, restore and reset tested in game; the
+  drag itself shown working by a real mouse drag).

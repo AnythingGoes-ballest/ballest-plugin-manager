@@ -52,6 +52,7 @@ FooterButton* AddPanelButton(Panel* panel, const std::string& label);
 // Everything a plugin made (footer entries, panels, windows) is taken off screen and forgotten. Only for a plugin
 // whose script is gone (removed), since its handles are freed.
 void RemoveOwner(int owner);
+void HideOwner(int owner);              // a stopped plugin: its windows and panels are hidden, not freed
 
 // --- windows: rows of widgets anywhere on screen, in any map --------------------------------------------------------
 // A window's main area holds one or more views (groups of rows); one view is shown at a time. A plugin can clear a
@@ -67,6 +68,7 @@ struct Widget {
     int row = 0;
     bool inSidebar = false;
     bool retired = false;               // cleared from its view
+    bool visible = true;                // hidden widgets take no space
     std::string text;                   // text, button label, icon name ("play" / "pause"), text input hint, or image file
     float size = 16;                    // text size
     float width = 200;                  // slider, dropdown, space, text area, text input and image width; 0 = fill
@@ -87,6 +89,9 @@ struct Widget {
     bool scrollToEnd = false;                                               // text area
     // live widgets and what they last showed (a text area's main is its ScrollBox, label its TextBlock)
     eng::Weak main, label, iconA, iconB;
+    eng::Weak outer;                    // what sits in the row (a SizeBox around sliders, images, ...)
+    uint8_t normalVisibility = 0;       // the outer widget's visibility when shown
+    bool shownVisible = true;
     std::string shownText;
     float shownValue = -1;
     int shownSelected = -2;
@@ -98,6 +103,15 @@ struct Window {
     float pivotX = 0.5f, pivotY = 1.0f;         // point of the window placed there (0..1)
     float offsetX = 0, offsetY = -40;           // pixels from the anchor
     Color background{0, 0, 0, 0.65f};
+    bool blocksClicks = false;                  // clicks on the window never reach what is underneath it
+    // Movable: while the cursor is on screen the window can be dragged; its position is saved per plugin
+    // (Storage "window.<n>.x/y", n = the plugin's nth window) and restored when it is made movable.
+    bool movable = false;
+    std::string storageOwner;                   // plugin id the position is saved under
+    int ordinal = 0;
+    float defaultOffsetX = 0, defaultOffsetY = 0;
+    bool dragging = false;
+    double dragMouseX = 0, dragMouseY = 0, dragOffsetX = 0, dragOffsetY = 0;
     float screenWidth = 0, screenHeight = 0;    // fraction of the screen covered, centred; 0 = fit the content
     float sidebarWidth = 0;                     // 0 = no sidebar
     bool addingToSidebar = false;
@@ -111,6 +125,7 @@ struct Window {
     std::vector<std::unique_ptr<Widget>> items;
     eng::Weak host, border;
     std::vector<eng::Weak> viewBoxes;
+    eng::Weak slot, dragSurface;                // the border's canvas slot, and the invisible button dragged
     int generation = -1;
     bool shownVisible = false;
     int appliedView = -1;
@@ -123,6 +138,9 @@ void StartMain(Window* w);              // ... and after this go back into the r
 int StartView(Window* w);               // widgets added after this go into a new view; returns its number
 void ShowView(Window* w, int view);
 void ClearView(Window* w, int view);    // retires the view's widgets; widgets added after this go into it
+void SetMovable(Window* w, bool movable, const std::string& pluginId);
+void ResetPositions(const std::string& pluginId);   // movable windows of a plugin back where the plugin put them
+bool HasMovable(const std::string& pluginId);
 Widget* AddWidget(Window* w, Kind kind, const std::string& text, float sizeOrWidth);
 void AddOption(Widget* dropdown, const std::string& option);
 bool Typing();                          // a text input has keyboard focus: keys belong to it, not to plugins
@@ -138,6 +156,7 @@ std::string Status();
 namespace footer {
 void Frame();
 void RemoveOwner(int owner);
+void HideOwner(int owner);
 bool SimulateClick(const std::string& label);
 std::string Status();
 }  // namespace footer
@@ -150,6 +169,7 @@ void SimulateSlider(float value);
 bool SimulateSubmit(const std::string& text);
 bool Typing();
 void RemoveOwner(int owner);
+void HideOwner(int owner);
 std::string Status();
 }  // namespace windows
 

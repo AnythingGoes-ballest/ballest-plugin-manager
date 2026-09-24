@@ -169,6 +169,12 @@ def plugin_browser(mirrored):
         c = Cursor()
         command("click install")
         check("install downloads, verifies and starts it", c.wait(r"registry: installed grind-timer", 20) and c.wait(r"\[grind-timer\] loaded", 5))
+    if (GAME_PLUGINS / "grind-timer").exists():
+        command("click window:settings", 1.0)
+        c = Cursor()
+        command("state", 0.5)
+        state = c.wait(r"test: state", 5) or ""
+        check("settings view lists the Grind Timer's settings", "text[Grind Timer]" in state and "text[Time size" in state)
     c = Cursor()
     command("click close")
     check("menu closes", c.wait(r"\[plugin-manager\] menu closed", 5))

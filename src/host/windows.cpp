@@ -4,11 +4,13 @@
 // after a map change or a layout change. Switching views only changes visibility.
 #include <windows.h>
 
+#include <cstdlib>
 #include <map>
 
 #include "game.hpp"
 #include "input.hpp"
 #include "log.hpp"
+#include "storage.hpp"
 #include "ui.hpp"
 #include "widgets.hpp"
 
@@ -77,6 +79,7 @@ Obj BuildWidget(Obj tree, Widget& item) {
     switch (item.kind) {
         case Kind::Text: {
             Obj text = w::Spawn("TextBlock", tree);
+            w::SetVisibility(text, w::kHitTestInvisible);     // clicks go to what is under it (a drag surface)
             w::SetFontSize(text, item.size);
             w::SetText(text, item.text);
             w::SetTextColor(text, item.color);
@@ -180,6 +183,7 @@ Obj BuildWidget(Obj tree, Widget& item) {
             if (item.width > 0) eng::Call(box, "SetWidthOverride", item.width);
             if (item.height > 0) eng::Call(box, "SetHeightOverride", item.height);
             ShowImage(image, item.text);
+            w::SetVisibility(image, w::kHitTestInvisible);
             w::AddChild(box, image);
             item.main = eng::MakeWeak(image);
             item.shownText = item.text;
@@ -190,12 +194,13 @@ Obj BuildWidget(Obj tree, Widget& item) {
 }
 
 void Forget(Window& win) {
-    win.host = win.border = {};
+    win.host = win.border = win.slot = win.dragSurface = {};
+    win.dragging = false;
     win.viewBoxes.clear();
     win.shownVisible = false;
     win.appliedView = -1;
     for (auto& item : win.items) {
-        item->main = item->label = item->iconA = item->iconB = {};
+        item->main = item->label = item->iconA = item->iconB = item->outer = {};
         item->wasPressed = item->dragging = item->focused = false;
     }
 }
@@ -214,25 +219,40 @@ void Build(Window& win) {
         const double marginX = (1.0 - win.screenWidth) / 2, marginY = (1.0 - win.screenHeight) / 2;
         w::StretchOnCanvas(canvas, border, marginX, marginY, 1.0 - marginX, 1.0 - marginY);
     } else {
-        w::AddToCanvas(canvas, border, win.anchorX, win.anchorY, {win.pivotX, win.pivotY}, {win.offsetX, win.offsetY});
+        win.slot = eng::MakeWeak(w::AddToCanvas(canvas, border, win.anchorX, win.anchorY, {win.pivotX, win.pivotY}, {win.offsetX, win.offsetY}));
     }
     eng::Call(border, "SetBrushColor", win.background);
-    eng::Call(border, "SetPadding", sized ? w::Margin{16, 16, 16, 16} : w::Margin{12, 8, 12, 8});
+    const w::Margin padding = sized ? w::Margin{16, 16, 16, 16} : w::Margin{12, 8, 12, 8};
 
-    // With a sidebar: Border > HorizontalBox > [SizeBox > sidebar VerticalBox, rows VerticalBox (fills)].
-    Obj sidebar = nullptr;
+    // With a sidebar: HorizontalBox > [SizeBox > sidebar VerticalBox, rows VerticalBox (fills)].
+    Obj content = column, sidebar = nullptr;
     if (win.sidebarWidth > 0) {
         Obj body = w::Spawn("HorizontalBox", tree), sideBox = w::Spawn("SizeBox", tree);
         sidebar = w::Spawn("VerticalBox", tree);
         if (!body || !sideBox || !sidebar) return;
         eng::Call(sideBox, "SetWidthOverride", win.sidebarWidth);
         w::AddChild(sideBox, sidebar);
-        w::AddChild(border, body);
         if (Obj slot = eng::Call(body, "AddChildToHorizontalBox", sideBox).ReturnObj())
             eng::Call(slot, "SetPadding", w::Margin{0, 0, 16, 0});
         w::FillSlot(eng::Call(body, "AddChildToHorizontalBox", column).ReturnObj());
+        content = body;
+    }
+    const bool movable = win.movable && !sized;
+    if (win.blocksClicks || movable) {
+        // Border > Overlay > [a button that draws nothing and fills the window, the content]. The button takes
+        // every click that lands on the window between widgets, so nothing underneath (the game's menus, or the
+        // game itself) receives it. The padding goes on the content so the button reaches the window's edges.
+        Obj overlay = w::Spawn("Overlay", tree), blocker = w::Spawn("Button", tree);
+        if (!overlay || !blocker) return;
+        w::Unfocusable(blocker);
+        w::Transparent(blocker);
+        w::AddChild(border, overlay);
+        w::AddToOverlay(overlay, blocker, w::kAlignFill, w::kAlignFill, {0, 0, 0, 0});
+        if (movable) win.dragSurface = eng::MakeWeak(blocker);
+        w::AddToOverlay(overlay, content, w::kAlignFill, w::kAlignFill, padding);
     } else {
-        w::AddChild(border, column);
+        eng::Call(border, "SetPadding", padding);
+        w::AddChild(border, content);
     }
 
     // One VerticalBox per view, each taking all the height; only the shown view is visible.
@@ -264,6 +284,13 @@ void Build(Window& win) {
         Widget& item = *itemPtr;
         if (item.retired) continue;
         Obj widget = BuildWidget(tree, item);
+        item.outer = eng::MakeWeak(widget);
+        item.normalVisibility = widget ? eng::Call(widget, "GetVisibility").ReturnAs<uint8_t>(0) : 0;
+        item.shownVisible = true;
+        if (!item.visible) {
+            w::SetVisibility(widget, w::kCollapsed);
+            item.shownVisible = false;
+        }
         if (item.inSidebar) {
             // One per line, as wide as the sidebar.
             Obj slot = sidebar && widget ? eng::Call(sidebar, "AddChildToVerticalBox", widget).ReturnObj() : nullptr;
@@ -292,9 +319,49 @@ void Build(Window& win) {
     hostlog::Info("window built with " + std::to_string(live) + " widgets");
 }
 
+std::string PositionKey(const Window& win, const char* axis) { return "window." + std::to_string(win.ordinal) + "." + axis; }
+
+// While the drag surface is held (it can only be pressed while the cursor is on screen), the window follows the
+// mouse; the position is saved when it is let go.
+void Drag(Window& win) {
+    Obj surface = eng::Get(win.dragSurface), slot = eng::Get(win.slot);
+    if (!win.movable || !surface || !slot) return;
+    const bool pressed = eng::Call(surface, "IsPressed").ReturnBool();
+    if (!pressed) {
+        if (win.dragging) {
+            win.dragging = false;
+            hostlog::Info("window moved to " + std::to_string(static_cast<int>(win.offsetX)) + ", " + std::to_string(static_cast<int>(win.offsetY)));
+            storage::Set(win.storageOwner, PositionKey(win, "x"), std::to_string(static_cast<int>(win.offsetX)));
+            storage::Set(win.storageOwner, PositionKey(win, "y"), std::to_string(static_cast<int>(win.offsetY)));
+        }
+        return;
+    }
+    struct Vec2d {
+        double x, y;
+    };
+    const Vec2d mouse = eng::Call(eng::FindCdo("WidgetLayoutLibrary"), "GetMousePositionOnViewport", game::PlayerController())
+                            .ReturnAs<Vec2d>(Vec2d{-1, -1});
+    if (mouse.x < 0) return;
+    if (!win.dragging) {
+        win.dragging = true;
+        hostlog::Info("window drag started at mouse " + std::to_string(static_cast<int>(mouse.x)) + ", " + std::to_string(static_cast<int>(mouse.y)));
+        win.dragMouseX = mouse.x;
+        win.dragMouseY = mouse.y;
+        win.dragOffsetX = win.offsetX;
+        win.dragOffsetY = win.offsetY;
+    }
+    win.offsetX = static_cast<float>(win.dragOffsetX + mouse.x - win.dragMouseX);
+    win.offsetY = static_cast<float>(win.dragOffsetY + mouse.y - win.dragMouseY);
+    eng::Call(slot, "SetPosition", w::Vec2{win.offsetX, win.offsetY});
+}
+
 void Sync(Widget& item) {
     Obj main = eng::Get(item.main);
     if (!main) return;
+    if (item.visible != item.shownVisible) {
+        w::SetVisibility(eng::Get(item.outer), item.visible ? item.normalVisibility : w::kCollapsed);
+        item.shownVisible = item.visible;
+    }
     switch (item.kind) {
         case Kind::Text:
             if (item.text != item.shownText) {
@@ -438,6 +505,42 @@ void StartSidebar(Window* win, float width) {
 
 void StartMain(Window* win) { win->addingToSidebar = false; }
 
+void SetMovable(Window* win, bool movable, const std::string& pluginId) {
+    if (movable && !win->movable) {
+        win->storageOwner = pluginId;
+        win->ordinal = 0;
+        for (auto& other : gWindows) {
+            if (other.get() == win) break;
+            if (other->owner == win->owner) ++win->ordinal;
+        }
+        win->defaultOffsetX = win->offsetX;
+        win->defaultOffsetY = win->offsetY;
+        if (storage::Has(pluginId, PositionKey(*win, "x")) && storage::Has(pluginId, PositionKey(*win, "y"))) {
+            win->offsetX = static_cast<float>(std::atof(storage::Get(pluginId, PositionKey(*win, "x"), "0").c_str()));
+            win->offsetY = static_cast<float>(std::atof(storage::Get(pluginId, PositionKey(*win, "y"), "0").c_str()));
+        }
+    }
+    win->movable = movable;
+    win->layoutDirty = true;
+}
+
+void ResetPositions(const std::string& pluginId) {
+    for (auto& win : gWindows) {
+        if (!win->movable || win->storageOwner != pluginId) continue;
+        win->offsetX = win->defaultOffsetX;
+        win->offsetY = win->defaultOffsetY;
+        storage::Erase(pluginId, PositionKey(*win, "x"));
+        storage::Erase(pluginId, PositionKey(*win, "y"));
+        win->layoutDirty = true;
+    }
+}
+
+bool HasMovable(const std::string& pluginId) {
+    for (auto& win : gWindows)
+        if (win->movable && win->storageOwner == pluginId) return true;
+    return false;
+}
+
 Window* MakeWindow(int owner) {
     gWindows.push_back(std::make_unique<Window>());
     gWindows.back()->owner = owner;
@@ -485,6 +588,7 @@ void Frame() {
             w::SetVisibility(border, win.visible ? w::kSelfHitTestInvisible : w::kCollapsed);
             win.shownVisible = win.visible;
         }
+        Drag(win);
         if (win.shownView != win.appliedView) {
             for (size_t v = 0; v < win.viewBoxes.size(); ++v)
                 w::SetVisibility(eng::Get(win.viewBoxes[v]), static_cast<int>(v) == win.shownView ? w::kSelfHitTestInvisible : w::kCollapsed);
@@ -510,6 +614,11 @@ void Frame() {
 }
 
 bool Typing() { return gTyping; }
+
+void HideOwner(int owner) {
+    for (auto& win : gWindows)
+        if (win->owner == owner) win->visible = false;
+}
 
 void RemoveOwner(int owner) {
     for (auto it = gWindows.begin(); it != gWindows.end();) {

@@ -23,6 +23,11 @@ void RemoveOwner(int owner) {
     windows::RemoveOwner(owner);
 }
 
+void HideOwner(int owner) {
+    footer::HideOwner(owner);
+    windows::HideOwner(owner);
+}
+
 std::string Status() {
     const std::string w = windows::Status();
     return footer::Status() + (w.empty() ? "" : " " + w);

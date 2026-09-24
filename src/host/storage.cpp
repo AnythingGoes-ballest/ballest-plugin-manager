@@ -25,6 +25,13 @@ std::string OneLine(std::string s) {
     return s;
 }
 
+std::string Key(const std::string& key) {
+    std::string k = OneLine(key);
+    for (char& c : k)
+        if (c == '=') c = '_';
+    return k;
+}
+
 Values& Load(const std::string& plugin) {
     auto it = gPlugins.find(plugin);
     if (it != gPlugins.end()) return it->second;
@@ -37,26 +44,34 @@ Values& Load(const std::string& plugin) {
     return values;
 }
 
-}  // namespace
-
-std::string Get(const std::string& plugin, const std::string& key, const std::string& fallback) {
-    const Values& values = Load(plugin);
-    const auto it = values.find(key);
-    return it == values.end() ? fallback : it->second;
-}
-
-void Set(const std::string& plugin, const std::string& key, const std::string& value) {
-    Values& values = Load(plugin);
-    std::string k = OneLine(key);
-    for (char& c : k)
-        if (c == '=') c = '_';
-    const std::string v = OneLine(value);
-    if (values.count(k) && values[k] == v) return;
-    values[k] = v;
+void Save(const std::string& plugin, const Values& values) {
     CreateDirectoryW(Dir().c_str(), nullptr);       // fails harmlessly when it exists
     std::ofstream out(FileOf(plugin).c_str(), std::ios::trunc);
     for (const auto& [name, saved] : values) out << name << '=' << saved << '\n';
     if (!out) hostlog::Warn("could not save storage for " + plugin);
 }
+
+}  // namespace
+
+std::string Get(const std::string& plugin, const std::string& key, const std::string& fallback) {
+    const Values& values = Load(plugin);
+    const auto it = values.find(Key(key));
+    return it == values.end() ? fallback : it->second;
+}
+
+void Set(const std::string& plugin, const std::string& key, const std::string& value) {
+    Values& values = Load(plugin);
+    const std::string k = Key(key), v = OneLine(value);
+    if (values.count(k) && values[k] == v) return;
+    values[k] = v;
+    Save(plugin, values);
+}
+
+void Erase(const std::string& plugin, const std::string& key) {
+    Values& values = Load(plugin);
+    if (values.erase(Key(key))) Save(plugin, values);
+}
+
+bool Has(const std::string& plugin, const std::string& key) { return Load(plugin).count(Key(key)) > 0; }
 
 }  // namespace storage

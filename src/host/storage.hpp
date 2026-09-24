@@ -7,5 +7,7 @@ namespace storage {
 
 std::string Get(const std::string& plugin, const std::string& key, const std::string& fallback);
 void Set(const std::string& plugin, const std::string& key, const std::string& value);
+void Erase(const std::string& plugin, const std::string& key);
+bool Has(const std::string& plugin, const std::string& key);
 
 }  // namespace storage
