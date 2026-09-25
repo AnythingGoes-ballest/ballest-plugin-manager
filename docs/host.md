@@ -75,7 +75,7 @@ plugin's GitHub repo and lists the SHA-256 of every file the game downloads:
 | `src/host/game.*` | World context, player controller, map changes, time, cursor, typing input mode, opening maps |
 | `src/host/input.*` | Keyboard and mouse, only while the game window has focus |
 | `src/host/race.*` | Whether a race is running, and restarts from the beginning (the ball's own counter) |
-| `src/host/editor.*` | The track editor: pieces, selection, placements, duplicate, rotate about a point, Tab between transform boxes |
+| `src/host/editor.*` | The track editor: pieces, selection, placements (from the handler's SpawnActor), clicks (from the pawn's click events), rotate modes (centre, mirrored), duplicate, Tab between transform boxes, the toolbar dropdowns and key list rows plugins add |
 | `src/host/replay.*` | Replay detection, playback clock, seeking, true length, camera modes (default, follow 3D, free) |
 | `src/host/ui.hpp` | The retained UI model plugins describe (footer buttons, panels, windows of views, rows and widgets) |
 | `src/host/widgets.*` | Building and styling the game's own UMG widgets |
@@ -121,12 +121,25 @@ Real replays cannot be started by script, so camera modes on a real replay are c
 
 - Log: `%LOCALAPPDATA%\Ballest\Saved\PluginManager\host.log` (host and plugins; screenshots from the suite land here too)
 - `python tools/symbolize.py` names the host's frames in the newest crash report
-- `python tools/dev_session.py commands.txt [--map Map_Track13]` runs test-channel commands against a fresh game
+- `python tools/dev_session.py commands.txt [--map Map_Track13] [--attach]` runs test-channel commands against a fresh
+  game, or with `--attach` against the one a previous `--keep` run left open
 - `python tools/memread.py` (as a library) reads a running game's memory, read-only, to measure layouts
 - `python tools/measure_follow.py` samples the replay camera in default and follow 3D modes during a real replay
 
 Test channel commands (one line written to `test_command.txt` next to the log) are listed in
 `src/host/testchannel.hpp`. The same commands can be typed in game: footer **plugins** > **console**.
+
+### Reading the game's own types and blueprints
+
+Rather than probing the game to find out how something works, read it. The console command `dumptypes` writes, next
+to the log in `types\`:
+
+- `types.txt`: every class, struct and enum in memory, with each property's offset, size and exact type (including
+  what an array holds) and every function's parameters;
+- `Ballest.usmap`: the type mappings tools like FModel and CUE4Parse need to read the game's cooked assets. With it,
+  blueprints can be dumped (their Kismet bytecode), which is how the editor's click, save and palette logic behind
+  the Editor API was read. Dump it again after a game update: the game moved from Unreal 5.3 to 5.8 in
+  September 2026, and a mapping file from another build misreads assets.
 
 ## The docs site
 

@@ -333,6 +333,15 @@ void Run(const std::string& cmd) {
          }},
         {"editor", [](const Args& a, const std::string&) {
              if (Arg(a, 1) == "rotatecontext") editor::ForceRotateContext(Arg(a, 2) == "on");
+             if (Arg(a, 1) == "pieces") return Report(editor::PiecesStatus());
+             if (Arg(a, 1) == "call") Report(Arg(a, 2) + (editor::CallHandler(Arg(a, 2)) ? " -> ok" : " -> failed"));
+             if (Arg(a, 1) == "select") {                   // editor select <id>,<id>,...
+                 std::vector<int> ids;
+                 const std::string list = Arg(a, 2);
+                 for (size_t i = 0; i < list.size(); i = list.find(',', i) == std::string::npos ? list.size() : list.find(',', i) + 1)
+                     ids.push_back(std::atoi(list.c_str() + i));
+                 editor::Select(ids);
+             }
              Report(editor::Status());
          }},
         {"open", [](const Args& a, const std::string& c) { Report(c + (game::OpenLevel(Arg(a, 1)) ? " -> ok" : " -> failed")); }},
@@ -444,6 +453,81 @@ void Run(const std::string& cmd) {
              p.Set("bAutoActivate", uint8_t{1});
              eng::Invoke(lib, p);
              Report(c + (p.ReturnObj() ? " -> spawned" : " -> failed"));
+         }},
+        {"openmap", [](const Args& a, const std::string& c) {     // openmap <file name fragment>: Create page entry -> editor
+             for (eng::Obj o : Instances("WBP_TrackLibraryEntry_C", "Transient")) {
+                 const eng::Prop p = eng::FindProp(eng::ClassOf(o), "AssociatedPath");
+                 if (!p || eng::ReadFString(o + p.offset).find(Arg(a, 1)) == std::string::npos) continue;
+                 return Report(c + (eng::Call(o, "LoadMapForEdit").Invoked() ? " -> ok" : " -> failed"));
+             }
+             Report(c + " -> no such map on the Create page");
+         }},
+        {"strprop", [](const Args& a, const std::string&) {       // strprop <Class> <filter> <property>: an FString of each
+             for (eng::Obj o : Instances(Arg(a, 1), Arg(a, 2))) {
+                 const eng::Prop p = eng::FindProp(eng::ClassOf(o), Arg(a, 3));
+                 Report(eng::PathOf(o) + " " + Arg(a, 3) + " = " + (p ? eng::ReadFString(o + p.offset) : std::string("(no property)")));
+             }
+         }},
+        {"objprop", [](const Args& a, const std::string&) {       // objprop <Class> <filter> <property>: an object of each
+             for (eng::Obj o : Instances(Arg(a, 1), Arg(a, 2))) {
+                 eng::Obj v = eng::ReadObj(o, Arg(a, 3));
+                 Report(eng::ObjName(o) + " " + Arg(a, 3) + " = " + (v ? eng::ObjName(eng::ClassOf(v)) + " " + eng::PathOf(v) : std::string("null")));
+             }
+         }},
+        {"listprop", [](const Args& a, const std::string&) {      // listprop <Class> <filter> <property>: strings or floats
+             for (eng::Obj o : Instances(Arg(a, 1), Arg(a, 2))) {
+                 struct { uint8_t* data; int32_t num, max; } arr{};
+                 if (!eng::ReadBytes(o, Arg(a, 3), &arr, sizeof arr) || !arr.data || arr.num <= 0 || arr.num > 64) {
+                     Report(eng::ObjName(o) + " " + Arg(a, 3) + ": empty");
+                     continue;
+                 }
+                 // An FString array starts with a character pointer (8-aligned, not tiny); anything else is read as floats,
+                 // which never reads past the elements (4 bytes each at least).
+                 uint64_t first = 0;
+                 std::memcpy(&first, arr.data, 4);
+                 std::string line = eng::ObjName(o) + " " + Arg(a, 3) + " (" + std::to_string(arr.num) + "):";
+                 float f[64];
+                 std::memcpy(f, arr.data, static_cast<size_t>(arr.num) * 4);
+                 for (int i = 0; i < arr.num; ++i) line += " " + std::to_string(f[i]);
+                 Report(line + " (as floats)");
+                 if (arr.max >= arr.num && (reinterpret_cast<uintptr_t>(arr.data) % 8) == 0) {
+                     uint64_t p0 = 0;
+                     std::memcpy(&p0, arr.data, 8);
+                     if (p0 > 0x100000 && p0 % 2 == 0 && p0 < 0x7fffffffffffull) {
+                         std::string strings;
+                         for (int i = 0; i < arr.num; ++i) strings += " [" + eng::ReadFString(arr.data + i * 16) + "]";
+                         Report(eng::ObjName(o) + " as strings:" + strings);
+                     }
+                 }
+             }
+         }},
+        {"dumptypes", [](const Args&, const std::string&) {      // every type: types\\Ballest.usmap + types.txt
+             Report(eng::DumpTypes(hostlog::DataDir() + L"\\types"));
+         }},
+        {"objbytes", [](const Args& a, const std::string&) {       // objbytes <object name> <bytes>: raw memory, 8 per group
+             eng::Obj o = eng::FindObjectByName(Arg(a, 1));
+             if (!o) return Report("objbytes: none named " + Arg(a, 1));
+             const int bytes = std::min(std::max(std::atoi(Arg(a, 2).c_str()), 8), 0x100);
+             std::string line = eng::ObjName(eng::ClassOf(o)) + " " + eng::PathOf(o) + ":";
+             for (int off = 0; off < bytes; off += 8) {
+                 uint64_t v = 0;
+                 std::memcpy(&v, o + off, 8);
+                 line += " +" + hostlog::Hex(off) + "=" + hostlog::Hex(v);
+             }
+             Report(line);
+         }},
+        {"membytes", [](const Args& a, const std::string&) {       // membytes <hex address> <bytes>: raw memory if readable
+             const uintptr_t address = std::strtoull(Arg(a, 1).c_str(), nullptr, 16);
+             const int bytes = std::min(std::max(std::atoi(Arg(a, 2).c_str()), 8), 0x200);
+             uint8_t buf[0x200];
+             if (!eng::ReadMemory(address, buf, static_cast<size_t>(bytes))) return Report("membytes: not readable");
+             std::string line = "membytes " + Arg(a, 1) + ":";
+             for (int off = 0; off < bytes; off += 8) {
+                 uint64_t v = 0;
+                 std::memcpy(&v, buf + off, 8);
+                 line += " +" + hostlog::Hex(off) + "=" + hostlog::Hex(v);
+             }
+             Report(line);
          }},
         {"objarray", [](const Args& a, const std::string&) {     // objarray <Class> <filter> <property>: a TArray<UObject*>
              const auto list = Instances(Arg(a, 1), Arg(a, 2));

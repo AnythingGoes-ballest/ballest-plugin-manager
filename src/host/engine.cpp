@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <map>
 #include <set>
 #include <vector>
@@ -593,6 +594,239 @@ void ReleaseText(const uint8_t* ftext) {
     const long references = *count;
     if (InImage(At<void*>(data, 0)) && references >= 2 && references < 1000000) InterlockedDecrement(count);
     else ReportOnce("text reference layout (count " + std::to_string(references) + "): keeping the reference");
+}
+
+// --- type dump -------------------------------------------------------------------------------------------------------
+// Every class, struct and enum in memory, written as a .usmap (the type mappings tools like FModel and CUE4Parse need
+// to read the game's cooked assets) and as a readable listing with offsets and function signatures. Container fields
+// are read at the offsets in layout.hpp; every pointer followed is checked readable first and must lead to a field
+// whose type name ends in "Property", and the count of any that do not is reported, so a wrong offset shows up as
+// failures rather than a fault.
+namespace {
+
+struct TypeDump {
+    std::vector<std::string> names;
+    std::map<std::string, uint32_t> nameIndex;
+    std::string listing;
+    int badFields = 0;
+
+    uint32_t NameIdx(const std::string& s) {
+        auto it = nameIndex.find(s);
+        if (it != nameIndex.end()) return it->second;
+        names.push_back(s);
+        return nameIndex[s] = static_cast<uint32_t>(names.size() - 1);
+    }
+    template <class T>
+    void Put(std::string& out, T v) { out.append(reinterpret_cast<const char*>(&v), sizeof v); }
+};
+
+std::string FieldKind(const uint8_t* field) {
+    const uint8_t* fieldClass = At<uint8_t*>(field, layout::kFFieldTypeOffset);
+    return fieldClass ? Name(At<uint32_t>(fieldClass, layout::kFFieldTypeNameOffset), At<int32_t>(fieldClass, layout::kFFieldTypeNameOffset + 4)) : "";
+}
+
+// A field pointer stored at `offset` inside `field`, or null if it is not a readable FProperty.
+const uint8_t* SubField(const uint8_t* field, int offset, TypeDump& d) {
+    const uintptr_t p = At<uintptr_t>(field, offset);
+    if (!Readable(p, 0x48) || !Readable(ReadPointer(p + layout::kFFieldTypeOffset), 0x10)) {
+        ++d.badFields;
+        return nullptr;
+    }
+    const std::string kind = FieldKind(reinterpret_cast<const uint8_t*>(p));
+    if (kind.size() < 8 || kind.compare(kind.size() - 8, 8, "Property") != 0) {
+        ++d.badFields;
+        return nullptr;
+    }
+    return reinterpret_cast<const uint8_t*>(p);
+}
+
+Obj SubObject(const uint8_t* field, int offset) {
+    const uintptr_t p = At<uintptr_t>(field, offset);
+    return Readable(p, 0x30) ? reinterpret_cast<Obj>(p) : nullptr;
+}
+
+// Appends the usmap type of a property (EPropertyType codes, the order usmap readers use) and returns it as text.
+std::string WriteType(const uint8_t* field, TypeDump& d, std::string& out) {
+    enum : uint8_t { Byte, Bool, Int, Float, Object, NameT, Delegate, Double, Array, Struct, Str, Text, Interface, Multicast,
+                     WeakObject, LazyObject, AssetObject, SoftObject, UInt64, UInt32, UInt16, Int64, Int16, Int8, Map, Set,
+                     Enum, FieldPath, Optional, Utf8Str, AnsiStr, Unknown = 0xFF };
+    if (!field) {
+        d.Put(out, uint8_t{Unknown});
+        return "?";
+    }
+    const std::string kind = FieldKind(field);
+    static const std::map<std::string, uint8_t> simple = {
+        {"BoolProperty", Bool}, {"IntProperty", Int}, {"FloatProperty", Float}, {"ObjectProperty", Object},
+        {"ClassProperty", Object}, {"ObjectPtrProperty", Object}, {"ClassPtrProperty", Object}, {"NameProperty", NameT},
+        {"DelegateProperty", Delegate}, {"DoubleProperty", Double}, {"StrProperty", Str}, {"TextProperty", Text},
+        {"InterfaceProperty", Interface}, {"MulticastDelegateProperty", Multicast}, {"MulticastInlineDelegateProperty", Multicast},
+        {"MulticastSparseDelegateProperty", Multicast}, {"WeakObjectProperty", WeakObject}, {"LazyObjectProperty", LazyObject},
+        {"SoftObjectProperty", SoftObject}, {"SoftClassProperty", SoftObject}, {"UInt64Property", UInt64},
+        {"UInt32Property", UInt32}, {"UInt16Property", UInt16}, {"Int64Property", Int64}, {"Int16Property", Int16},
+        {"Int8Property", Int8}, {"FieldPathProperty", FieldPath}, {"Utf8StrProperty", Utf8Str}, {"AnsiStrProperty", AnsiStr}};
+    if (auto it = simple.find(kind); it != simple.end()) {
+        d.Put(out, it->second);
+        const std::string shortKind = kind.substr(0, kind.size() - 8);
+        if (kind == "ObjectProperty" || kind == "ClassProperty" || kind == "WeakObjectProperty" || kind == "SoftObjectProperty")
+            if (Obj cls = SubObject(field, layout::kFObjectPropertyClassOffset)) return shortKind + "<" + ObjName(cls) + ">";
+        return shortKind;
+    }
+    if (kind == "ByteProperty") {
+        Obj e = SubObject(field, layout::kFBytePropertyEnumOffset);
+        if (!e) {
+            d.Put(out, uint8_t{Byte});
+            return "Byte";
+        }
+        d.Put(out, uint8_t{Enum});
+        d.Put(out, uint8_t{Byte});
+        d.Put(out, d.NameIdx(ObjName(e)));
+        return "Byte<" + ObjName(e) + ">";
+    }
+    if (kind == "EnumProperty") {
+        d.Put(out, uint8_t{Enum});
+        const std::string under = WriteType(SubField(field, layout::kFEnumPropertyUnderlyingOffset, d), d, out);
+        Obj e = SubObject(field, layout::kFEnumPropertyEnumOffset);
+        d.Put(out, d.NameIdx(e ? ObjName(e) : "None"));
+        return "Enum<" + (e ? ObjName(e) : std::string("?")) + ":" + under + ">";
+    }
+    if (kind == "StructProperty") {
+        Obj s = SubObject(field, layout::kFStructPropertyStructTypeOffset);
+        d.Put(out, uint8_t{Struct});
+        d.Put(out, d.NameIdx(s ? ObjName(s) : "None"));
+        return "Struct<" + (s ? ObjName(s) : std::string("?")) + ">";
+    }
+    if (kind == "ArrayProperty" || kind == "SetProperty" || kind == "OptionalProperty") {
+        const uint8_t code = kind == "ArrayProperty" ? Array : kind == "SetProperty" ? Set : Optional;
+        const int offset = kind == "ArrayProperty" ? layout::kFArrayPropertyInnerOffset
+                           : kind == "SetProperty" ? layout::kFSetPropertyElementOffset : layout::kFOptionalPropertyValueOffset;
+        d.Put(out, code);
+        return kind.substr(0, kind.size() - 8) + "<" + WriteType(SubField(field, offset, d), d, out) + ">";
+    }
+    if (kind == "MapProperty") {
+        d.Put(out, uint8_t{Map});
+        const std::string key = WriteType(SubField(field, layout::kFMapPropertyKeyOffset, d), d, out);
+        return "Map<" + key + ", " + WriteType(SubField(field, layout::kFMapPropertyValueOffset, d), d, out) + ">";
+    }
+    d.Put(out, uint8_t{Unknown});
+    return kind + "(unmapped)";
+}
+
+}  // namespace
+
+std::string DumpTypes(const std::wstring& directory) {
+    ListReadableMemory();
+    TypeDump d;
+    Obj structClass = FindClass("Struct"), functionClass = FindClass("Function"), enumClass = FindClass("Enum");
+    if (!structClass || !functionClass || !enumClass) return "dump: core classes not found";
+    std::vector<Obj> structs, enums;
+    ForEachObject([&](Obj o) {
+        if (IsDefaultObject(o)) return true;
+        if (IsA(o, enumClass)) enums.push_back(o);
+        else if (IsA(o, structClass) && !IsA(o, functionClass)) structs.push_back(o);
+        return true;
+    });
+    std::string enumBlock, structBlock;
+    d.Put(enumBlock, static_cast<uint32_t>(enums.size()));
+    for (Obj e : enums) {
+        const uintptr_t namesAt = At<uintptr_t>(e, layout::kUEnumEntryNamesOffset) & ~uintptr_t{1};
+        const uintptr_t valuesAt = At<uintptr_t>(e, layout::kUEnumEntryValuesOffset) & ~uintptr_t{1};
+        int32_t count = At<int32_t>(e, layout::kUEnumEntryCountOffset);
+        if (count < 0 || count > 0xFFFF || (count && (!Readable(namesAt, count * 8ull) || !Readable(valuesAt, count * 8ull)))) {
+            ++d.badFields;
+            count = 0;
+        }
+        const auto* entryNames = reinterpret_cast<const uint8_t*>(namesAt);
+        const auto* entryValues = reinterpret_cast<const uint8_t*>(valuesAt);
+        d.Put(enumBlock, d.NameIdx(ObjName(e)));
+        d.Put(enumBlock, static_cast<uint16_t>(count));
+        d.listing += "enum " + ObjName(e) + "  // " + PathOf(e) + "\n";
+        for (int i = 0; i < count; ++i) {
+            std::string entry = Name(At<uint32_t>(entryNames, i * 8), At<int32_t>(entryNames, i * 8 + 4));
+            if (size_t colons = entry.rfind("::"); colons != std::string::npos) entry = entry.substr(colons + 2);
+            const int64_t value = At<int64_t>(entryValues, i * 8);
+            d.Put(enumBlock, static_cast<uint64_t>(value));
+            d.Put(enumBlock, d.NameIdx(entry));
+            d.listing += "  " + entry + " = " + std::to_string(value) + "\n";
+        }
+    }
+    d.Put(structBlock, static_cast<uint32_t>(structs.size()));
+    for (Obj s : structs) {
+        Obj super = SuperOf(s);
+        std::vector<const uint8_t*> fields;
+        int schema = 0;
+        for (uint8_t* f = At<uint8_t*>(s, layout::kUStructFirstPropertyOffset); f; f = At<uint8_t*>(f, layout::kFFieldNextFieldOffset)) {
+            fields.push_back(f);
+            schema += std::max(1, At<int32_t>(f, layout::kFPropertyArrayDimOffset));
+        }
+        d.Put(structBlock, d.NameIdx(ObjName(s)));
+        d.Put(structBlock, super ? d.NameIdx(ObjName(super)) : 0xFFFFFFFFu);
+        d.Put(structBlock, static_cast<uint16_t>(schema));
+        d.Put(structBlock, static_cast<uint16_t>(fields.size()));
+        d.listing += "\n" + ObjName(ClassOf(s)) + " " + ObjName(s) + (super ? " : " + ObjName(super) : "") + "  // " + PathOf(s) + "\n";
+        int index = 0;
+        for (const uint8_t* f : fields) {
+            const int dim = std::max(1, At<int32_t>(f, layout::kFPropertyArrayDimOffset));
+            d.Put(structBlock, static_cast<uint16_t>(index));
+            d.Put(structBlock, static_cast<uint8_t>(dim));
+            d.Put(structBlock, d.NameIdx(FieldName(f)));
+            const std::string type = WriteType(f, d, structBlock);
+            char line[64];
+            std::snprintf(line, sizeof line, "  +0x%04x %5d  ", At<int32_t>(f, layout::kFPropertyValueLocationOffset),
+                          At<int32_t>(f, layout::kFPropertyValueSizeOffset) * dim);
+            d.listing += line + type + " " + FieldName(f) + (dim > 1 ? "[" + std::to_string(dim) + "]" : "") + "\n";
+            index += dim;
+        }
+        // Functions: not part of a usmap, listed for reading.
+        for (Obj fn = At<Obj>(s, layout::kUStructFirstFunctionOffset); fn; fn = At<Obj>(fn, layout::kUFieldNextFieldOffset)) {
+            if (!IsA(fn, functionClass)) continue;
+            std::string args, ret;
+            for (uint8_t* f = At<uint8_t*>(fn, layout::kUStructFirstPropertyOffset); f; f = At<uint8_t*>(f, layout::kFFieldNextFieldOffset)) {
+                const uint64_t flags = At<uint64_t>(f, layout::kFPropertyFlagsOffset);
+                if (!(flags & layout::kPropertyFlagIsParameter)) continue;
+                std::string scratch;
+                const std::string type = WriteType(f, d, scratch);
+                if (flags & layout::kPropertyFlagIsReturnValue) ret = " -> " + type;
+                else args += (args.empty() ? "" : ", ") + type + ((flags & layout::kPropertyFlagIsOutParameter) ? "& " : " ") + FieldName(f);
+            }
+            d.listing += "  fn " + ObjName(fn) + "(" + args + ")" + ret + "\n";
+        }
+    }
+    // The name table, then enums and structs, uncompressed; version 4 (explicit enum values), no package versioning.
+    std::string nameBlock;
+    d.Put(nameBlock, static_cast<uint32_t>(d.names.size()));
+    for (const auto& n : d.names) {
+        d.Put(nameBlock, static_cast<uint16_t>(n.size()));
+        nameBlock += n;
+    }
+    const std::string body = nameBlock + enumBlock + structBlock;
+    std::string file;
+    d.Put(file, uint16_t{0x30C4});
+    d.Put(file, uint8_t{4});
+    d.Put(file, int32_t{0});
+    d.Put(file, uint8_t{0});
+    d.Put(file, static_cast<uint32_t>(body.size()));
+    d.Put(file, static_cast<uint32_t>(body.size()));
+    file += body;
+    CreateDirectoryW(directory.c_str(), nullptr);
+    auto write = [](const std::wstring& path, const std::string& data) {
+        HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) return false;
+        DWORD written = 0;
+        const bool ok = WriteFile(h, data.data(), static_cast<DWORD>(data.size()), &written, nullptr) && written == data.size();
+        CloseHandle(h);
+        return ok;
+    };
+    const bool ok = write(directory + L"\\Ballest.usmap", file) && write(directory + L"\\types.txt", d.listing);
+    return std::string(ok ? "dump written: " : "dump: could not write files; ") + std::to_string(structs.size()) +
+           " structs/classes, " + std::to_string(enums.size()) + " enums, " + std::to_string(d.names.size()) + " names; " +
+           std::to_string(d.badFields) + " container fields unreadable";
+}
+
+bool ReadMemory(uintptr_t address, void* out, size_t bytes) {
+    ListReadableMemory();
+    if (!Readable(address, bytes)) return false;
+    std::memcpy(out, reinterpret_cast<const void*>(address), bytes);
+    return true;
 }
 
 }  // namespace eng

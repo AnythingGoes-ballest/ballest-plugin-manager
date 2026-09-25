@@ -95,7 +95,7 @@ change.
 ## The game build
 
 The host is measured on one game build. On a newer build it still tries to run: it looks up the few engine tables it
-needs in the new exe (logged as "game build ... is not the one the host was measured on"), and everything else is
+needs in the new exe (logged as "this game build was not measured ... finding the engine's tables again"), and everything else is
 found by name as usual. Parts of the game a plugin relies on may have changed, so after a game update some things can
 stop working until a plugin manager made for the new build is released.
 

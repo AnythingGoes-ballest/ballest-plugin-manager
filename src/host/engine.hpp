@@ -155,4 +155,10 @@ std::string ReadFString(const uint8_t* fstring);
 Params MakeText(const std::string& s);
 void ReleaseText(const uint8_t* ftext);
 
+// Every class, struct and enum in memory, written to `directory` as Ballest.usmap (type mappings for reading the
+// game's cooked assets with FModel / CUE4Parse) and types.txt (readable: offsets, types, function signatures).
+std::string DumpTypes(const std::wstring& directory);
+
+bool ReadMemory(uintptr_t address, void* out, size_t bytes);   // false if any of it is not readable (slow: test use)
+
 }  // namespace eng

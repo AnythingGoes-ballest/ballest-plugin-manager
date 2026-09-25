@@ -354,6 +354,33 @@ void EditorRotatePieces(const CScriptArray* ids, double cx, double cy, double cz
     plugins::GameWork work;
     editor::RotatePieces(IdVector(ids), {cx, cy, cz}, dx, dy, dz);
 }
+bool EditorNextClick(int& piece, int& modifiers, bool& wasSelected) {
+    editor::Click c;
+    const bool got = editor::NextClick(&c);
+    piece = c.piece, modifiers = c.modifiers, wasSelected = c.wasSelected;
+    return got;
+}
+CScriptArray* EditorPieces() { return IdArray(editor::Pieces()); }
+bool EditorTyping() {
+    plugins::GameWork work;
+    return ui::Typing() || editor::Typing();
+}
+std::wstring PluginFile(const std::string& path, bool* ok);
+// A game texture ("/Game/...") as it is, or a PNG inside the plugins folder; "" if it is neither.
+std::string IconPath(const std::string& icon) {
+    if (icon.rfind("/Game/", 0) == 0) return icon;
+    bool ok = false;
+    const std::wstring file = PluginFile(icon, &ok);
+    return ok ? eng::Narrow(file.c_str(), static_cast<int>(file.size())) : "";
+}
+int EditorAddToolbarChoice(const std::string& icon, const CScriptArray* options, int selected) {
+    std::vector<std::string> list;
+    for (asUINT i = 0; options && i < options->GetSize(); ++i) list.push_back(*static_cast<const std::string*>(options->At(i)));
+    return list.empty() ? -1 : editor::AddToolbarChoice(plugins::Current(), IconPath(icon), list, selected);
+}
+void EditorAddHotkey(const std::string& icon, const std::string& label, const std::string& second) {
+    editor::AddHotkey(plugins::Current(), IconPath(icon), label, second.empty() ? "" : IconPath(second));
+}
 
 // --- Input, Replay -------------------------------------------------------------------------------------------------
 // While a text input has keyboard focus the keys are being typed there, so plugins see none of them, except Escape,
@@ -573,6 +600,26 @@ void RegisterEditor() {
     Global("void RotatePieces(const array<int>@, double, double, double, double, double, double)", asFUNCTION(EditorRotatePieces));
     Global("void SetTabCycling(bool)", asFUNCTION(editor::SetTabCycling));
     Global("void SetRotateAroundCenter(bool)", asFUNCTION(editor::SetRotateAroundCenter));
+    Check(e->RegisterEnum("RotateMode"), "Editor::RotateMode");
+    Check(e->RegisterEnumValue("RotateMode", "RotateDefault", editor::kRotateDefault), "RotateDefault");
+    Check(e->RegisterEnumValue("RotateMode", "RotateAroundCenter", editor::kRotateAroundCenter), "RotateAroundCenter");
+    Check(e->RegisterEnumValue("RotateMode", "RotateMirrored", editor::kRotateMirrored), "RotateMirrored");
+    Global("void SetRotateMode(RotateMode)", asFUNCTION(editor::SetRotateMode));
+    Global("RotateMode GetRotateMode()", asFUNCTION(editor::RotateMode));
+    Check(e->RegisterEnum("ClickFlag"), "Editor::ClickFlag");
+    Check(e->RegisterEnumValue("ClickFlag", "ClickShift", editor::kClickShift), "ClickShift");
+    Check(e->RegisterEnumValue("ClickFlag", "ClickCtrl", editor::kClickCtrl), "ClickCtrl");
+    Check(e->RegisterEnumValue("ClickFlag", "ClickAlt", editor::kClickAlt), "ClickAlt");
+    Check(e->RegisterEnumValue("ClickFlag", "ClickOnGizmo", editor::kClickOnGizmo), "ClickOnGizmo");
+    Global("bool NextClick(int &out, int &out, bool &out)", asFUNCTION(EditorNextClick));
+    Global("array<int>@ Pieces()", asFUNCTION(EditorPieces));
+    Global("string PieceClass(int)", asFUNCTION(editor::PieceClass));
+    Global("string MapName()", asFUNCTION(editor::MapName));
+    Global("bool Typing()", asFUNCTION(EditorTyping));
+    Global("int AddToolbarChoice(const string &in, const array<string>@, int = 0)", asFUNCTION(EditorAddToolbarChoice));
+    Global("int ToolbarChoice(int)", asFUNCTION(editor::ToolbarChoiceSelected));
+    Global("void SetToolbarChoice(int, int)", asFUNCTION(editor::SetToolbarChoiceSelected));
+    Global("void AddHotkey(const string &in, const string &in, const string &in = \"\")", asFUNCTION(EditorAddHotkey));
 }
 
 // --- Cosmetics -----------------------------------------------------------------------------------------------------

@@ -139,8 +139,16 @@ linear `0.05` shows as roughly `0.25`. To match a colour picked on screen (0 to 
 
 ## Text boxes and typing
 
-While the player types in a text box, the keys go to the box. The game doesn't get them, and `Input::Pressed`
-reports nothing. So a hotkey in your plugin never fires by accident while someone types.
+While the player types in one of your text boxes, the keys go to the box. The game doesn't get them, and
+`Input::Pressed` reports nothing. So a hotkey in your plugin never fires by accident while someone types.
+
+The game's own text boxes (the map name in the track editor, the transform boxes, a search box) are different: check
+`Editor::Typing()` before acting on a key there.
+
+```cpp
+if (Input::Pressed(Input::G) && !Editor::Typing())
+    GroupSelection();
+```
 
 ## A section in the track editor
 
@@ -153,6 +161,33 @@ section.DockInEditorDetails();
 section.SetBackground(0, 0, 0, 0);          // blend in with the panel
 section.AddText("my tools", 18);
 ```
+
+## The track editor's toolbar and key list
+
+Two parts of the editor's own UI take plugin additions, drawn in the game's style:
+
+- **A toolbar button with a dropdown**, after the world/local toggle (the globe), like the snapping buttons:
+  `Editor::AddToolbarChoice(icon, options, selected)`. Read the choice with `Editor::ToolbarChoice(id)`.
+- **A row in the key list** (the panel the info button opens): `Editor::AddHotkey(icon, label)`, or with a second image
+  for "modifier + key". The list keeps its size and scrolls when rows are added. Handling the key is up to you.
+
+Icons are game textures (`/Game/...`, for example `/Game/Art/UI/Textures/KeyboardMouse/keyboard_alt.keyboard_alt`)
+or PNGs in your plugin's folder. Both go away when your plugin stops.
+
+```cpp
+int rotateChoice = Editor::AddToolbarChoice("/Game/Art/UI/Textures/Editor/t_rotateIcon.t_rotateIcon",
+                                            {"default", "center", "mirrored"}, 0);
+Editor::AddHotkey(Plugins::Folder() + "keyboard_g.png", "group");
+
+void Update(float dt)
+{
+    int chosen = Editor::ToolbarChoice(rotateChoice);
+    ...
+}
+```
+
+Clicks on track pieces come from `Editor::NextClick`: the piece clicked, the modifier keys and whether it was already
+selected, after the game has handled the click.
 
 See [Create Extensions](https://github.com/AnythingGoes-ballest/ballest-create-extensions) for a full example.
 

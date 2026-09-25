@@ -1105,7 +1105,7 @@ Editor::SetTabCycling(Editor::IsOpen());
 
 == Editor::SetRotateAroundCenter
 While on, rotating two or more pieces turns them about the centre of the selection instead of the last selected
-piece.
+piece. The same as `SetRotateMode(Editor::RotateAroundCenter)` (on) or `SetRotateMode(Editor::RotateDefault)` (off).
 --
 [Setting name="Rotate multiple pieces around their centre"]
 bool RotateAroundCenter = false;
@@ -1114,6 +1114,93 @@ void OnSettingsChanged()
 {
     Editor::SetRotateAroundCenter(RotateAroundCenter);
 }
+
+== Editor::SetRotateMode
+How rotating two or more pieces works: `Editor::RotateDefault` (the editor's own: about the last selected piece),
+`Editor::RotateAroundCenter` (about the centre of the selection) or `Editor::RotateMirrored` (each piece turns in
+place, and the pieces on the two sides of the selection's centre turn opposite ways, as mirror images; the side of
+the last selected piece turns the way you drag).
+--
+Editor::SetRotateMode(Editor::RotateMirrored);
+
+== Editor::GetRotateMode
+The rotate mode in use (`SetRotateMode`).
+--
+if (Editor::GetRotateMode() == Editor::RotateMirrored)
+    Log::Info("mirrored");
+
+== Editor::NextClick
+The next click on the world (not on the editor's panels) since the last call, oldest first, as the editor handled it:
+the piece clicked (-1 for none; found by the editor's own pick), the keys held (`Editor::ClickShift`, `ClickCtrl`, `ClickAlt`, and
+`ClickOnGizmo` when the click was on the move/rotate/scale gizmo) and whether that piece was selected before the
+click. The game's own clicks: a plain click selects just that piece; Shift and Ctrl add it; neither removes.
+Returns false when there are none left.
+--
+// Shift/Ctrl on a selected piece takes it out of the selection
+int piece, keys;
+bool wasSelected;
+while (Editor::NextClick(piece, keys, wasSelected))
+{
+    if (piece < 0 || (keys & Editor::ClickOnGizmo) != 0)
+        continue;
+    if ((keys & (Editor::ClickShift | Editor::ClickCtrl)) != 0 && wasSelected)
+    {
+        array<int>@ selection = Editor::Selection();
+        selection.removeAt(selection.find(piece));
+        Editor::Select(selection);
+    }
+}
+
+== Editor::Pieces
+Every piece of the open map.
+--
+Log::Info(Editor::Pieces().length() + " pieces");
+
+== Editor::PieceClass
+What kind of piece it is (its class name, e.g. `BP_Ramp_Curve1_C`), or "" if it no longer exists. With the
+position, enough to find a piece again when the map is opened later (ids only last while it is open).
+--
+string kind = Editor::PieceClass(id);
+
+== Editor::MapName
+The name of the map open in the editor, as its header shows it; "" for a new map before it is saved.
+--
+string key = "groups:" + Editor::MapName();
+
+== Editor::Typing
+Whether a text box has the keyboard (the map name, a transform box, a search box, or a plugin's text input): keys
+pressed now are being typed, so hotkeys should leave them alone.
+--
+if (Input::Pressed(Input::G) && !Editor::Typing())
+    GroupSelection();
+
+== Editor::AddToolbarChoice
+Adds a button to the editor's toolbar, after the world/local toggle (the globe), in the toolbar's own style: an icon
+and a dropdown of `options`, starting at `selected`. The icon is a game texture ("/Game/...") or a PNG in your
+plugin's folder. Returns its number for `ToolbarChoice`. The button is removed when the plugin stops.
+--
+int rotateChoice = Editor::AddToolbarChoice("/Game/Art/UI/Textures/Editor/t_rotateIcon.t_rotateIcon",
+                                            {"default", "center", "mirrored"}, 0);
+
+== Editor::ToolbarChoice
+The option a toolbar button shows now (its index), or -1 if there is no such button.
+--
+int chosen = Editor::ToolbarChoice(rotateChoice);
+
+== Editor::SetToolbarChoice
+Shows another option on a toolbar button.
+--
+Editor::SetToolbarChoice(rotateChoice, 0);
+
+== Editor::AddHotkey
+Adds a row to the editor's key list (the panel the info button shows), after the game's single-key rows: a key image
+(a game texture "/Game/..." or a PNG in your plugin's folder) and what the key does. Handling the key is up to the
+plugin. Removed when the plugin stops. With a third argument, a second image, the row reads "first + second" (a
+modifier and a key or mouse button).
+--
+Editor::AddHotkey(Plugins::Folder() + "keyboard_g.png", "group");
+Editor::AddHotkey("/Game/Art/UI/Textures/KeyboardMouse/keyboard_alt.keyboard_alt", "select one piece",
+                  "/Game/Art/UI/Textures/KeyboardMouse/mouse_left.mouse_left");
 
 @@ Replay
 The replay being watched: a ghost's run, with the camera following it. Times are in seconds.

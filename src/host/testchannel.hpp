@@ -9,7 +9,9 @@
 //   install <id> | remove <id>             through the registry, as the plugin browser's buttons do
 //   enable <id> 0|1                        turn a plugin off or on, as its card's button does
 //   editor [rotatecontext on|off]         the track editor's selection with each piece's transform
+//   editor pieces | editor select <id>,<id> | editor call <handler function>
 //   setting <plugin id> <variable> <value> change a plugin's [Setting] as the settings view does
+//   openmap <file name fragment>          on the Create page: open that saved map in the editor
 //   open <map>                             load a map directly (skips the menu's level setup)
 //   functions <Class> | instances <Class> [fragment+fragment] | props <Class> [filter] | find <name fragment>
 //   struct <Class> <Function> | call <Class> <Function> [filter] | viewtarget | pov <leaderboard entry filter>
@@ -18,8 +20,11 @@
 //   cosmetics | cosmetictile <n>         the custom cosmetics and the Customize page's custom section; press a tile
 //   cosmodel ball|hat <id> <model file> [ball image]   a custom cosmetic with a model (models.hpp)
 //   loadasset <path> | matparams <material path or name> | spawnfx <niagara path> <height> [scale]
-//   children <owner class> <panel property> | objarray <class> <filter> <property> | fnbytes <class> <function> | gc
+//   children <owner class> <panel property> | objarray <class> <filter> <property> | strprop | objprop | listprop <class> <filter> <property>
+//   fnbytes <class> <function> | gc
 //   ballstate | skinmats | slomo <x>      racing balls (skin actor, sphere, material, speed); every ball skin's material
+//   objbytes <object name> <bytes> | membytes <hex address> <bytes>   raw memory (layout measurements)
+//   dumptypes                             every class/struct/enum: types\Ballest.usmap (for FModel), types.txt
 //   crash [plugin id]                     test the fault guard: fault in host code now, or in that plugin's next call
 //   callx <Class> <Function> [filter] | i:5 | f:1.5 | d:1.5 | u8:3 | b:1 | s:str | t:text | n:name | o:Class,filter | v:x,y,z
 #pragma once

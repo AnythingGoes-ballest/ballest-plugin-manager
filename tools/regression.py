@@ -116,7 +116,7 @@ def screenshot(name):
 
 def startup(c):
     print("startup")
-    check("host starts and accepts the build", c.wait(r"game build: PE timestamp 1949201014", 90))
+    check("host starts and reads the game build", c.wait(r"game build: PE timestamp \d+", 90))  # any build: the game updates often
     check("per-frame hook installed", c.wait(r"per-frame hook installed", 120))
     check("plugin manager loaded", c.wait(r"\[plugin-manager\] loaded Plugin Manager", 60))
     check("hello world logs through the API", c.wait(r"\[hello-world\] hello from a plugin", 10))

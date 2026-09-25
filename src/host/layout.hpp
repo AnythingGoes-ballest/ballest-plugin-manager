@@ -74,6 +74,23 @@ constexpr int kFPropertyValueLocationOffset = 0x44;          // Offset_Internal:
 constexpr int kFStructPropertyStructTypeOffset = 0x70;       // FStructProperty::Struct: the UScriptStruct it holds
 constexpr int kFBoolPropertyByteIndexOffset = 0x71;          // FBoolProperty::ByteOffset: which byte holds the bit
 constexpr int kFBoolPropertyBitMaskOffset = 0x73;            // FBoolProperty::FieldMask: which bit of that byte
+constexpr int kFPropertyArrayDimOffset = 0x30;               // ArrayDim: element count of a fixed array (1 otherwise)
+// Fields of container properties, after FProperty's own 0x70 bytes. Checked by the type dump (eng::DumpTypes): every
+// pointer read must lead to a property, and the dump matched the pre-update .usmap for types the update left alone.
+constexpr int kFObjectPropertyClassOffset = 0x70;            // FObjectPropertyBase::PropertyClass
+constexpr int kFBytePropertyEnumOffset = 0x70;               // FByteProperty::Enum (null for a plain byte)
+constexpr int kFEnumPropertyUnderlyingOffset = 0x70;         // FEnumProperty::UnderlyingProp
+constexpr int kFEnumPropertyEnumOffset = 0x78;               // FEnumProperty::Enum
+constexpr int kFArrayPropertyInnerOffset = 0x78;             // FArrayProperty::Inner (after ArrayFlags)
+constexpr int kFSetPropertyElementOffset = 0x70;             // FSetProperty::ElementProp
+constexpr int kFMapPropertyKeyOffset = 0x70;                 // FMapProperty::KeyProp
+constexpr int kFMapPropertyValueOffset = 0x78;               // FMapProperty::ValueProp
+constexpr int kFOptionalPropertyValueOffset = 0x70;          // FOptionalProperty::ValueProperty
+// UEnum on this engine (5.8, measured on ECollisionChannel, EMovementMode and two game enums): the entry names and
+// values are two arrays, each behind a pointer whose lowest bit is set (masked off before use), with one count.
+constexpr int kUEnumEntryNamesOffset = 0x40;                 // FName[count] (8 bytes each)
+constexpr int kUEnumEntryValuesOffset = 0x48;                // int64[count]
+constexpr int kUEnumEntryCountOffset = 0x50;                 // int32
 
 // --- Property flag bits (EPropertyFlags) -------------------------------------------------------------------------
 constexpr uint64_t kPropertyFlagIsParameter = 0x80;          // CPF_Parm

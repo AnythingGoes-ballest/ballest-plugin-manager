@@ -72,7 +72,9 @@ The console's text box runs the host's own commands, the same list as `Console::
 |---|---|
 | `state` | Your windows' state: which are shown, and their texts. |
 | `viewtarget` | The camera the game is looking through. |
-| `editor` | The track editor's selected pieces, with positions and rotations. |
+| `editor` | The track editor's selected pieces, with positions and rotations, and the gizmo's position. |
+| `editor pieces` | Every piece of the map, with its position and what it's attached to. |
+| `openmap <name>` | On the Create page: opens the saved map whose file name contains the text. |
 | `find <text>` | Game objects and functions whose names contain the text. |
 
 The full list is in [`src/host/testchannel.hpp`](https://github.com/AnythingGoes-ballest/ballest-plugin-manager/blob/main/src/host/testchannel.hpp).
