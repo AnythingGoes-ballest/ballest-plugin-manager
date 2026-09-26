@@ -8,7 +8,7 @@
 
 namespace plugins {
 
-constexpr const char* kHostVersion = "0.10.0";
+constexpr const char* kHostVersion = "0.11.0";
 
 void LoadAll(const std::wstring& pluginsDir);
 void Frame(float dt);
@@ -38,6 +38,8 @@ int Current();                              // index of the plugin whose code is
 bool RecoverFromFault(const std::string& where);
 void CrashNext(const std::string& id);      // test hook: that plugin's next callback faults inside host code
 std::string CurrentId();
+std::string IdAt(int index);                // the plugin at an index (Current()'s kind), or ""
+std::string NameAt(int index);
 std::wstring CurrentDir();                  // the running plugin's folder, or "" outside plugin code
 
 // Wraps game work a plugin asked the host for (pasting and selecting track pieces: measured at about 4.5 ms and 3 ms a

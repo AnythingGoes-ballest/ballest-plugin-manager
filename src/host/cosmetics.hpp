@@ -28,6 +28,7 @@ enum class Kind { Ball = 0, Hat = 1, Bfx = 2 };     // the Customize page's tab 
 // Each returns false (and logs why) if the cosmetic could not be made. An id already added (the plugin was reloaded)
 // is kept as it is and true is returned. One asked for
 // before the game is ready (no player yet) is made as soon as it is, and true is returned.
+// `image` "" makes a clear ball (the game's snow globe glass), for a ball whose look is its model inside.
 // `model`: text in the format of models.hpp, "" for none. On a ball it is built around the ball (its centre, radius 50);
 // on a hat it is built on the hat slot (the top of the ball), and the hat's mesh may then be "".
 bool AddBall(const std::string& id, const std::string& name, const std::wstring& image, const std::wstring& preview,
@@ -50,5 +51,7 @@ bool ClickTile(int index);      // test: presses a custom tile of the section on
 // Engine helpers the cosmetics need, usable elsewhere.
 eng::Obj LoadAsset(const std::wstring& path);      // an asset by object path, loaded if it is not in memory
 void KeepAlive(eng::Obj o);                        // never garbage collected (referenced by the game instance)
+// Scales a dynamic copy of the snow globe glass's rim and highlight strengths (1 = the game's own).
+void ScaleGlass(eng::Obj material, float rim, float highlight);
 
 }  // namespace cosmetics

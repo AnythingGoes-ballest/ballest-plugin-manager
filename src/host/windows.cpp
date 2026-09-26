@@ -12,6 +12,7 @@
 #include "game.hpp"
 #include "input.hpp"
 #include "log.hpp"
+#include "plugins.hpp"
 #include "storage.hpp"
 #include "ui.hpp"
 #include "widgets.hpp"
@@ -97,10 +98,16 @@ Obj BuildWidget(Obj tree, Widget& item) {
             w::SetFontSize(text, item.size);
             w::SetText(text, item.text);
             w::SetTextColor(text, item.color);
+            if (item.justify) eng::Call(text, "SetJustification", item.justify);
             item.main = eng::MakeWeak(text);
             item.shownText = item.text;
             item.colorDirty = false;
-            return text;
+            if (item.textWidth <= 0) return text;
+            Obj box = w::Spawn("SizeBox", tree);                // a column: the same width whatever the text
+            if (!box) return text;
+            eng::Call(box, "SetWidthOverride", item.textWidth);
+            w::AddChild(box, text);
+            return box;
         }
         case Kind::Button: {
             Obj button = w::Spawn("Button", tree), text = w::Spawn("TextBlock", tree);
@@ -227,6 +234,7 @@ Obj BuildWidget(Obj tree, Widget& item) {
 
 void Forget(Window& win) {
     win.host = win.border = win.slot = win.dragSurface = {};
+    win.hudApplied = false;
     win.dragging = false;
     win.viewBoxes.clear();
     win.shownVisible = false;
@@ -430,7 +438,25 @@ void Drag(Window& win) {
     }
     win.offsetX = static_cast<float>(win.dragOffsetX + mouse.x - win.dragMouseX);
     win.offsetY = static_cast<float>(win.dragOffsetY + mouse.y - win.dragMouseY);
-    eng::Call(slot, "SetPosition", w::Vec2{win.offsetX, win.offsetY});
+    eng::Call(slot, "SetPosition", w::Vec2{win.offsetX + win.hudX, win.offsetY + win.hudY});
+}
+
+// A HUD layout's offset, size and opacity, applied when they change or the window was rebuilt.
+void ApplyHud(Window& win) {
+    Obj slot = eng::Get(win.slot), border = eng::Get(win.border);
+    if (!slot || !border) return;
+    if (win.hudApplied && win.hudX == win.shownHudX && win.hudY == win.shownHudY && win.hudScale == win.shownHudScale &&
+        win.hudOpacity == win.shownHudOpacity)
+        return;
+    if (!win.hudApplied && win.hudX == 0 && win.hudY == 0 && win.hudScale == 1 && win.hudOpacity == 1) return;
+    eng::Call(slot, "SetPosition", w::Vec2{win.offsetX + win.hudX, win.offsetY + win.hudY});
+    eng::Call(border, "SetRenderScale", w::Vec2{win.hudScale, win.hudScale});
+    eng::Call(border, "SetRenderOpacity", win.hudOpacity);
+    win.shownHudX = win.hudX;
+    win.shownHudY = win.hudY;
+    win.shownHudScale = win.hudScale;
+    win.shownHudOpacity = win.hudOpacity;
+    win.hudApplied = true;
 }
 
 void Sync(Widget& item) {
@@ -681,6 +707,17 @@ bool HasMovable(const std::string& pluginId) {
     return false;
 }
 
+std::vector<HudWindow> HudWindows() {
+    std::vector<HudWindow> out;
+    std::map<int, int> counts;
+    for (auto& win : gWindows) {
+        const int n = counts[win->owner]++;
+        if (win->dock != Dock::Screen || !win->visible || !eng::Get(win->border)) continue;
+        out.push_back({"Window/" + plugins::IdAt(win->owner) + "/" + std::to_string(n), plugins::NameAt(win->owner), win.get()});
+    }
+    return out;
+}
+
 Window* MakeWindow(int owner) {
     gWindows.push_back(std::make_unique<Window>());
     gWindows.back()->owner = owner;
@@ -734,6 +771,7 @@ void Frame() {
             win.shownVisible = win.visible;
         }
         Drag(win);
+        ApplyHud(win);
         if (win.shownView != win.appliedView) {
             for (size_t v = 0; v < win.viewBoxes.size(); ++v)
                 w::SetVisibility(eng::Get(win.viewBoxes[v]), static_cast<int>(v) == win.shownView ? w::kSelfHitTestInvisible : w::kCollapsed);

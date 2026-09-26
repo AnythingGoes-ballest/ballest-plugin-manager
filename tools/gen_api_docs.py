@@ -22,7 +22,7 @@ STRING = r'"((?:[^"\\]|\\.)*)"'
 PAGES = [
     ("log", "Log"), ("host", "Host"), ("plugins", "Plugins"), ("settings", "Settings"), ("registry", "Registry"),
     ("console", "Console"), ("storage", "Storage"), ("ui", "UI"), ("input", "Input"), ("race", "Race"),
-    ("editor", "Editor"), ("replay", "Replay"), ("cosmetics", "Cosmetics"),
+    ("editor", "Editor"), ("hud", "Hud"), ("replay", "Replay"), ("cosmetics", "Cosmetics"),
     ("leaderboard", "Leaderboard"),
 ]
 

@@ -790,6 +790,20 @@ Whether the widget is shown. A hidden widget takes no space, so the rest of its 
 pauseButton.visible = UI::CursorShown();
 resetButton.visible = UI::CursorShown();
 
+== UI::Text.SetWidth
+Gives the text a fixed width, so texts in rows underneath one another line up as columns. 0 goes back to the text's
+own width.
+--
+UI::Text@ label = window.AddText("Retries", 12);
+label.SetWidth(110);
+
+== UI::Text.SetAlign
+Where the text sits in its width (`SetWidth`): 0 left, 1 centre, 2 right.
+--
+UI::Text@ value = window.AddText("0", 12);
+value.SetWidth(70);
+value.SetAlign(2);          // numbers line up on the right
+
 == UI::Text.size
 The font height in pixels.
 --
@@ -958,9 +972,14 @@ yBox.SetColor(0.1349f, 0.3959f, 0, 1);
 zBox.SetColor(0.0251f, 0.207f, 0.85f, 1);
 
 @@ Input
-The keyboard and mouse, read only while the game window has focus. While the player is typing in a plugin's text
-box, every key reads as up except `Input::Escape`, so Escape can still close a menu. Keys are `Input::Key` values: named keys (below), `Input::A` to `Input::Z`, and
-`Input::N0` to `Input::N9` for the number row.
+The keyboard, mouse and controller, read only while the game window has focus. While the player is typing in a
+plugin's text box, every key reads as up except `Input::Escape`, so Escape can still close a menu (for the game's own
+text boxes, check `Editor::Typing()`). Keys are `Input::Key` values: named keys such as `Input::F5`, `Input::PageUp`,
+`Input::Backspace`, `Input::MouseBack`, `Input::A` to `Input::Z`, `Input::N0` to `Input::N9` for the number row,
+`Input::Numpad0` to `Input::Numpad9`, and controller buttons: `Input::PadA`, `PadB`, `PadX`, `PadY`, `PadLB`, `PadRB`,
+`PadLT`, `PadRT`, `PadL3`, `PadR3`, `PadView`, `PadMenu`, the D-pad (`PadUp`, `PadDown`, `PadLeft`, `PadRight`) and
+the left stick pushed a direction (`PadStickUp`, ...). Controllers are read with XInput (Xbox pads, and most others
+through Steam Input). The Down arrow is `Input::Key::Down`, since `Input::Down` is also the function below.
 
 == Input::Pressed
 True in the frame the key goes down.
@@ -975,6 +994,18 @@ True for as long as the key is held.
 // Only snap once the drag has finished
 if (!Input::Down(Input::MouseLeft))
     SnapSelection();
+
+== Input::AnyPressed
+A key that went down this frame, or `Input::None`: for letting the player choose a key.
+--
+Input::Key k = Input::AnyPressed();
+if (k != Input::None)
+    Log::Info("pressed " + Input::Name(k));
+
+== Input::Name
+A key's name, as its `Input::Key` value is written without `Input::` ("F5", "PageUp", "PadA").
+--
+hint.text = "save: " + Input::Name(saveKey);
 
 @@ Race
 The race the player is in.
@@ -1000,6 +1031,170 @@ int now = Race::Restarts();
 if (now > seenRestarts)
     restarts += now - seenRestarts;
 seenRestarts = now;
+
+== Race::RunId
+The run the player is on: a new number for every new run (a restart), the same through checkpoint respawns; -1 off a
+track. The ball also gets a new one when a race starts after the pre-race screen, so count while `IsActive()`.
+--
+int run = Race::RunId();
+if (Race::IsActive() && run != lastRun && lastRun >= 0)
+    retries++;
+lastRun = run;
+
+== Race::IsComplete
+Whether the run has been finished.
+--
+if (Race::IsComplete() && !wasComplete)
+    completions++;
+wasComplete = Race::IsComplete();
+
+== Race::TrackKey
+The track, as a key to keep records by: `map:<map>` for the game's own tracks, `custom:<Workshop id or local>:<file>`
+for custom ones. "" until the race UI has loaded.
+--
+string key = Race::TrackKey();
+if (key != "")
+    Storage::Set("best:" + key, "" + best);
+
+== Race::TrackName
+The track's name as its header shows it (the game's own tracks show their number, "01").
+--
+nameText.text = Race::TrackName();
+
+== Race::TrackAuthor
+Who made the track, as the header shows it; "" on the game's own tracks.
+--
+authorText.text = Race::TrackAuthor() == "" ? "" : "by " + Race::TrackAuthor();
+
+== Race::AuthorTime
+The track's author time in seconds, from the medal row; 0 until the race has started.
+--
+double t = Race::AuthorTime();
+
+== Race::IsCustomTrack
+Whether the track is a custom one (Workshop or local).
+--
+if (Race::IsCustomTrack())
+    Log::Info("a custom track");
+
+== Race::GetInput
+What the player is steering with right now, however they control the ball: `x` right, `y` forward (-1 to 1), and
+whether jump is held. False off a track.
+--
+double x, y;
+bool jump;
+if (Race::GetInput(x, y, jump) && jump)
+    jumpLight.visible = true;
+
+== Race::SetPaused
+Pauses or unpauses the game, as its own pause does (plugins keep running). Returns false if it couldn't.
+--
+bool pausedByUs = !Race::IsPaused() && Race::SetPaused(true);
+// ... later
+if (pausedByUs)
+    Race::SetPaused(false);
+
+== Race::IsPaused
+Whether the game is paused.
+--
+if (!Race::IsPaused())
+    Race::SetPaused(true);
+
+== Race::SaveBall
+The ball's state as text: where it is, how it's turned, how fast it's going and spinning, and the camera. "" when
+there's no ball. Keep it as long as you like; give it to `LoadBall`.
+--
+string saved = Race::SaveBall();
+
+== Race::LoadBall
+Puts the ball back in a saved state, with its speed (`momentum`) or standing still. It always makes the run a practice
+run first (`StartPractice`), so a run with a restored position can never finish. False without a ball.
+--
+if (!Race::LoadBall(saved, true))
+    Log::Warn("no ball");
+
+== Race::StartPractice
+Makes this run a practice run: the timer stops and shows 999:999.999, checkpoints and the finish stop responding, and
+the leaderboard, personal standing and ghosts are hidden. It can't be turned off: it ends by itself when the player
+restarts, gets a new ball or leaves the map.
+--
+Race::StartPractice();
+
+== Race::IsPractice
+Whether this run is a practice run.
+--
+banner.visible = Race::IsPractice();
+
+@@ Hud
+The race HUD, as parts a plugin can move, resize, turn off or keep shown. A part is known by a key such as
+`PlayerUI/TimeGroup` (the timer and splits), `PlayerUI/WBP_InputVisualizer`, `RaceUI/WBP_Leaderboard_0`, or
+`Window/<plugin>/<n>` for plugins' windows on screen. The host keeps a layout in place while the game rebuilds and
+animates its HUD, until the plugin clears it.
+
+== Hud::Elements
+The parts of the HUD on screen now; empty off a track. `Name`, `Label`, `Shown` and `ParentShown` answer about the
+parts of the last call.
+--
+array<string>@ parts = Hud::Elements();
+for (uint i = 0; i < parts.length(); i++)
+    Log::Info(parts[i] + " is " + Hud::Name(parts[i]));
+
+== Hud::Name
+The part's widget name in the game ("TimeGroup", "WBP_Split").
+--
+string name = Hud::Name(key);
+
+== Hud::Label
+A plugin window's plugin name; "" for the game's own parts.
+--
+string label = Hud::Label(key) != "" ? Hud::Label(key) : Hud::Name(key);
+
+== Hud::Shown
+Whether the part is on screen (it and everything it sits in are visible).
+--
+if (!Hud::Shown(key))
+    label += " (hidden by the game)";
+
+== Hud::ParentShown
+Whether what the part sits in is on screen: a part the game hides for now (a split before the first checkpoint) is
+not shown, but its parent is.
+--
+bool canEdit = Hud::Shown(key) || Hud::ParentShown(key);
+
+== Hud::SetLayout
+Moves a part by x, y pixels from where the game puts it, sizes it (1 = its own size) and sets its mode:
+`Hud::Normal`, `Hud::Off` (invisible, though the game still shows and hides it) or `Hud::On` (shown even when the game
+hides it). Kept until `ClearLayout`.
+--
+Hud::SetLayout("PlayerUI/TimeGroup", 300, 50, 1.4);
+Hud::SetLayout("RaceUI/WBP_Leaderboard_0", 0, 0, 1, Hud::Off);
+
+== Hud::ClearLayout
+Gives the part back to the game.
+--
+Hud::ClearLayout("PlayerUI/TimeGroup");
+
+== Hud::SetEditing
+While on, parts laid out as `Off` show faintly instead of not at all, so they can be found and turned back on.
+--
+Hud::SetEditing(true);
+
+== Hud::SetBlink
+Makes one part blink, shown even if the game hides it; "" for none.
+--
+Hud::SetBlink(chosenKey);
+
+== Hud::SetPartColor
+Tints a named part of a HUD part: a variable of its widget blueprint, such as the input display's `Key_Up`,
+`Key_Down`, `Key_Left`, `Key_Right`, `Key_Jump` (boxes) or `Up`, `Down`, `Left`, `Right` (arrows). False if there is no
+such part.
+--
+Hud::SetPartColor("PlayerUI/WBP_InputVisualizer", "Key_Jump", 1.0f, 0.1f, 0.1f, 0.85f);
+
+== Hud::ResetPartColor
+Gives the part back its own colour.
+--
+Hud::ResetPartColor("PlayerUI/WBP_InputVisualizer", "Key_Jump");
 
 @@ Editor
 The track editor. Pieces are identified by `int` ids. An id stops working once its piece is deleted: the functions
@@ -1292,7 +1487,7 @@ Adds a ball. `AddBall(id, name, image, preview, model)`:
 |---|---|
 | `id` | A unique key for this ball, never shown to players. What the player wears is remembered by it, so keep it the same across versions. Start it with your plugin's id and a dot so no two plugins pick the same one: `"my-balls.planet"`. |
 | `name` | The ball's name, shown in the game: `"planet"`. |
-| `image` | The ball's texture: the full path of a PNG in your plugin's folder, twice as wide as it is tall (1024x512). Left to right goes once around the ball, top to bottom from pole to pole. |
+| `image` | The ball's texture: the full path of a PNG in your plugin's folder, twice as wide as it is tall (1024x512). Left to right goes once around the ball, top to bottom from pole to pole. Or `""` for a clear ball (the game's snow globe glass), to show a `model` inside it. |
 | `preview` | The picture on its tile on the Customize page (a PNG in your folder), or `""` to show the texture. |
 | `model` | Optional: a [model file](../../guides/cosmetics.md#models) of 3D parts built around the ball and rolling with it (raised details, lights, a spinning blade), or `""` for none. |
 

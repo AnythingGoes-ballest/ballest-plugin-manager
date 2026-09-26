@@ -24,6 +24,8 @@ const wchar_t* kWhite = L"/Engine/EngineResources/WhiteSquareTexture.WhiteSquare
 const wchar_t* kFlatNormal = L"/Engine/EngineMaterials/BaseFlattenNormalMap.BaseFlattenNormalMap";
 const wchar_t* kGhostHatSource = L"/Game/Art/DataAssets/Accessories/PartyHat/DA_Accessory_PartyHat.DA_Accessory_PartyHat";
 const wchar_t* kSphereMesh = L"/Engine/BasicShapes/Sphere.Sphere";
+// The snow globe skin's glass (BP_SnowGlobeSkin's Sphere; translucent, read from the package), for clear balls.
+const wchar_t* kGlassMaterial = L"/Game/Art/Materials/Masters/M_SnowGlobeTop.M_SnowGlobeTop";
 
 const char* const kAssetClass[3] = {"PDA_BallSkin_C", "PDA_Accessory_C", "PDA_GoalExplo_C"};
 const char* const kToSave[3] = {"SkinToSave", "AccessoryToSave", "GoalExploToSave"};    // the page's pending choice
@@ -769,6 +771,26 @@ bool AddBall(const std::string& id, const std::string& name, const std::wstring&
     c.id = id;
     c.scale = 1;
     if (!ParseModel(&c, model)) return false;
+    if (image.empty()) {                            // a clear ball
+        Obj glass = LoadAsset(kGlassMaterial);
+        Obj material = glass ? eng::Call(Library("KismetMaterialLibrary"), "CreateDynamicMaterialInstance", game::PlayerController(),
+                                         glass, MakeName("CustomBall_" + id), uint8_t{0})
+                                   .ReturnObj()
+                             : nullptr;
+        if (!material) {
+            hostlog::Warn("cosmetics: ball " + id + ": the glass material did not load");
+            return false;
+        }
+        KeepAlive(material);
+        Obj asset = Create(Kind::Ball, id, name, Texture(preview));
+        if (!asset) return false;
+        SetObject(asset, "SkinMaterial", material);
+        SetObject(asset, "SkinGhostVariant", material);
+        c.asset = eng::MakeWeak(asset);
+        c.material = eng::MakeWeak(material);
+        Added(std::move(c));
+        return true;
+    }
     Obj texture = Texture(image);
     Obj parent = LoadAsset(kImageBallMaterial);
     if (!texture || !parent) {
@@ -945,6 +967,17 @@ std::string Status() {
            std::to_string(Count(Kind::Bfx)) + " bfx; worn: ball '" + gEquipped[0] + "', hat '" + gEquipped[1] + "', bfx '" +
            gEquipped[2] + "'; section on tab " + std::to_string(gSectionTab) + "; " + std::to_string(gReplaced.size()) +
            " part(s) replaced";
+}
+
+void ScaleGlass(Obj material, float rim, float highlight) {
+    for (const auto& [parameter, factor] : {std::pair<const char*, float>{"RimStrength", rim}, {"HighlightStrength", highlight}}) {
+        if (factor == 1) continue;
+        Params get(eng::FunctionOn(material, "K2_GetScalarParameterValue"));
+        const Name name = MakeName(parameter);
+        get.Set("ParameterName", name);
+        eng::Invoke(material, get);
+        SetScalar(material, parameter, get.ReturnAs<float>() * factor);
+    }
 }
 
 }  // namespace cosmetics

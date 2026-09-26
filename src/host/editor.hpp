@@ -44,6 +44,7 @@ std::vector<int> DuplicateSelection();
 void RotatePieces(const std::vector<int>& ids, const Vec3& center, double degreesX, double degreesY, double degreesZ);
 
 // Behaviour the host runs while a plugin has it switched on.
+void SetWatchingClicks(bool on);   // test: off leaves every click on the world entirely to the game (no Click records)
 void SetTabCycling(bool on);            // Tab / Shift+Tab move between the nine transform boxes
 void SetRotateAroundCenter(bool on);    // rotating two or more pieces turns them about their centre
 // How rotating two or more pieces works: as the editor does (about the last selected piece), about the selection's

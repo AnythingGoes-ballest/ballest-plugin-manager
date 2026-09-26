@@ -502,6 +502,7 @@ constexpr int kClickEventCount = static_cast<int>(sizeof kClickEvents / sizeof k
 Obj gClickFunctions[kClickEventCount] = {};
 NativeFunction gClickOriginal = nullptr;
 bool gClickHookFailed = false;
+bool gWatchingClicks = true;            // off (test switch): every click is left entirely to the game
 std::deque<Click> gClicks;
 constexpr size_t kMaxClicks = 16;
 constexpr int kControlKey = 0x11, kAltKey = 0x12;
@@ -562,20 +563,26 @@ void ClickHooked(Obj context, uint8_t* frame, void* result) {
     int event = -1;
     for (int i = 0; i < kClickEventCount; ++i)
         if (node && node == gClickFunctions[i]) event = i;
-    if (event < 0 || !Handler()) return gClickOriginal(context, frame, result);
+    if (event < 0 || !Handler() || !gWatchingClicks) return gClickOriginal(context, frame, result);
     Click c;
     c.modifiers = kClickEvents[event].modifiers | (input::Down(kShiftKey) ? kClickShift : 0) |
                   (input::Down(kControlKey) ? kClickCtrl : 0) | (input::Down(kAltKey) ? kClickAlt : 0);
-    if (eng::Call(Handler(), "IsHoveringGizmo").ReturnBool()) c.modifiers |= kClickOnGizmo;
+    const bool gizmoBefore = eng::Call(Handler(), "IsHoveringGizmo").ReturnBool();
     const auto before = Selection();
     gClickOriginal(context, frame, result);
     const auto after = Selection();
-    // The piece clicked: the one the game's handling added to the selection; if it added none (Alt, or a piece that
-    // was selected already), the game's own pick (FindAndGrab, which traces under the cursor) is asked for it, and the
-    // selection the game left is put back.
+    const bool gizmoAfter = eng::Call(Handler(), "IsHoveringGizmo").ReturnBool();
+    if (gizmoBefore || gizmoAfter) c.modifiers |= kClickOnGizmo;
+    // The piece clicked: the one the game's handling added to the selection. A plain click leaves the clicked piece as
+    // the whole selection. Otherwise (Alt, or Shift/Ctrl on a piece that was selected already) the game's own pick
+    // (FindAndGrab, which traces under the cursor) is asked for it and the selection the game left is put back. That
+    // is only done off the gizmo: any change of selection while the button is down re-binds the gizmo and ends the
+    // drag the press began (reported after the 2026-09-25 update: pieces could not be moved).
     for (int id : after)
         if (std::find(before.begin(), before.end(), id) == before.end()) c.piece = id;
-    if (c.piece < 0 && !(c.modifiers & kClickOnGizmo)) {
+    const bool plain = !(c.modifiers & (kClickShift | kClickCtrl | kClickAlt));
+    if (c.piece < 0 && plain && after.size() == 1) c.piece = after[0];
+    else if (c.piece < 0 && !plain && !(c.modifiers & kClickOnGizmo)) {
         eng::Call(Handler(), "FindAndGrab", uint8_t{0});
         const auto picked = Selection();
         if (picked.size() == 1) c.piece = picked[0];
@@ -584,7 +591,8 @@ void ClickHooked(Obj context, uint8_t* frame, void* result) {
     c.wasSelected = c.piece >= 0 && std::find(before.begin(), before.end(), c.piece) != before.end();
     hostlog::Info(std::string("editor: ") + ClickName(c.modifiers) + " click on " + (c.piece >= 0 ? eng::ObjName(Resolve(c.piece)) : std::string("nothing")) +
                   (c.wasSelected ? " (selected)" : "") + ((c.modifiers & kClickOnGizmo) ? " on the gizmo" : "") + "; the game left " +
-                  std::to_string(after.size()) + " selected");
+                  std::to_string(after.size()) + " selected (gizmo hovered before " + (gizmoBefore ? "yes" : "no") + ", after " +
+                  (gizmoAfter ? "yes" : "no") + ")");
     if (gClicks.size() >= kMaxClicks) gClicks.pop_front();
     gClicks.push_back(c);
 }
@@ -1095,5 +1103,7 @@ std::string Status() {
     }
     return s;
 }
+
+void SetWatchingClicks(bool on) { gWatchingClicks = on; }
 
 }  // namespace editor

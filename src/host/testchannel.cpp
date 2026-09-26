@@ -13,6 +13,8 @@
 #include "cosmetics.hpp"
 #include "engine.hpp"
 #include "game.hpp"
+#include "hud.hpp"
+#include "race.hpp"
 #include "input.hpp"
 #include "log.hpp"
 #include "editor.hpp"
@@ -292,6 +294,8 @@ void ViewTarget() {
     Report("controller " + eng::PathOf(controller) + " view target " + eng::PathOf(eng::Call(controller, "GetViewTarget").ReturnObj()));
 }
 
+std::string gSavedBall;                 // ballsave / ballload
+
 using Args = std::vector<std::string>;
 
 std::string Arg(const Args& a, size_t i) { return i < a.size() ? a[i] : std::string(); }
@@ -335,6 +339,10 @@ void Run(const std::string& cmd) {
              if (Arg(a, 1) == "rotatecontext") editor::ForceRotateContext(Arg(a, 2) == "on");
              if (Arg(a, 1) == "pieces") return Report(editor::PiecesStatus());
              if (Arg(a, 1) == "call") Report(Arg(a, 2) + (editor::CallHandler(Arg(a, 2)) ? " -> ok" : " -> failed"));
+             if (Arg(a, 1) == "clicks") {
+                 editor::SetWatchingClicks(Arg(a, 2) != "off");
+                 Report(std::string("editor clicks ") + (Arg(a, 2) != "off" ? "watched" : "left to the game"));
+             }
              if (Arg(a, 1) == "select") {                   // editor select <id>,<id>,...
                  std::vector<int> ids;
                  const std::string list = Arg(a, 2);
@@ -461,6 +469,61 @@ void Run(const std::string& cmd) {
                  return Report(c + (eng::Call(o, "LoadMapForEdit").Invoked() ? " -> ok" : " -> failed"));
              }
              Report(c + " -> no such map on the Create page");
+         }},
+        {"race", [](const Args&, const std::string&) {             // the race: run, track, practice, input
+             const auto& t = race::CurrentTrack();
+             double x = 0, y = 0;
+             bool jump = false;
+             race::Input(&x, &y, &jump);
+             char buf[512];
+             std::snprintf(buf, sizeof buf, "race: on track %d active %d complete %d run %d restarts %d practice %d paused %d | key %s | name %s | author %s | author time %.3f custom %d | input %.2f,%.2f jump %d",
+                           race::OnTrack(), race::Active(), race::Complete(), race::RunId(), race::Restarts(), race::Practice(), race::Paused(),
+                           t.key.c_str(), t.name.c_str(), t.author.c_str(), t.authorTime, t.custom, x, y, jump);
+             Report(buf);
+         }},
+        {"ballsave", [](const Args&, const std::string&) {
+             gSavedBall = race::SaveBall();
+             std::string flat = gSavedBall;
+             for (char& c : flat)
+                 if (c == '\n') c = '|';
+             Report("ballsave: " + flat);
+         }},
+        {"ballload", [](const Args& a, const std::string& c) { Report(c + (race::LoadBall(gSavedBall, Arg(a, 1) != "0") ? " -> ok" : " -> failed")); }},
+        {"practice", [](const Args&, const std::string&) { race::StartPractice(); Report(std::string("practice ") + (race::Practice() ? "on" : "off")); }},
+        {"pause", [](const Args& a, const std::string& c) { Report(c + (race::SetPaused(Arg(a, 1) == "1") ? " -> ok" : " -> failed")); }},
+        {"hud", [](const Args&, const std::string&) {              // the HUD's elements
+             for (const auto& el : hud::Elements())
+                 Report("hud: " + el.key + " (" + el.className + ")" + (el.shown ? " shown" : el.parentShown ? " hidden for now" : " hidden") +
+                        (el.label.empty() ? "" : " \"" + el.label + "\""));
+         }},
+        {"widgetpath", [](const Args& a, const std::string&) {    // widgetpath <Class> <filter>: each instance's parents up its tree
+             for (eng::Obj o : Instances(Arg(a, 1), Arg(a, 2))) {
+                 std::string line = eng::ObjName(o);
+                 eng::Obj x = o;
+                 for (int i = 0; i < 30 && x; ++i) {
+                     eng::Obj parent = eng::Call(x, "GetParent").ReturnObj();
+                     if (!parent) {
+                         parent = eng::OuterOf(eng::OuterOf(x));
+                         line += " <tree of> ";
+                     } else {
+                         line += " < ";
+                     }
+                     x = parent;
+                     if (x) line += eng::ObjName(x) + "(" + eng::ObjName(eng::ClassOf(x)) + ")";
+                     if (x && !eng::FindFunction(eng::ClassOf(x), "GetParent")) break;
+                 }
+                 Report("widgetpath " + line);
+             }
+         }},
+        {"hudset", [](const Args& a, const std::string& c) {       // hudset <key> <x> <y> <scale> <mode 0/1/2> | hudset <key> clear
+             if (Arg(a, 2) == "clear") hud::ClearLayout(Arg(a, 1));
+             else hud::SetLayout(Arg(a, 1), std::atof(Arg(a, 2).c_str()), std::atof(Arg(a, 3).c_str()), std::atof(Arg(a, 4).c_str()), std::atoi(Arg(a, 5).c_str()));
+             Report(c + " -> ok");
+         }},
+        {"hudtint", [](const Args& a, const std::string& c) {      // hudtint <key> <part> <r> <g> <b> <a> | hudtint <key> <part> reset
+             if (Arg(a, 3) == "reset") { hud::ResetPartColor(Arg(a, 1), Arg(a, 2)); return Report(c + " -> reset"); }
+             Report(c + (hud::SetPartColor(Arg(a, 1), Arg(a, 2), static_cast<float>(std::atof(Arg(a, 3).c_str())), static_cast<float>(std::atof(Arg(a, 4).c_str())),
+                                           static_cast<float>(std::atof(Arg(a, 5).c_str())), static_cast<float>(std::atof(Arg(a, 6).c_str()))) ? " -> ok" : " -> no such part"));
          }},
         {"strprop", [](const Args& a, const std::string&) {       // strprop <Class> <filter> <property>: an FString of each
              for (eng::Obj o : Instances(Arg(a, 1), Arg(a, 2))) {

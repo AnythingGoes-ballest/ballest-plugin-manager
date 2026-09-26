@@ -78,6 +78,8 @@ struct Widget {
     float size = 16;                    // text size
     float width = 200;                  // slider, dropdown, space, text area, text input and image width; 0 = fill
     float height = 0;                   // text area and image height; 0 = fill
+    float textWidth = 0;                // text: a fixed width (0 = as wide as the text)
+    uint8_t justify = 0;                // text: 0 left, 1 centre, 2 right (ETextJustify)
     Color background{0.15f, 0.15f, 0.15f, 1};                               // buttons
     bool backgroundDirty = false;
     Color color{1, 1, 1, 1};
@@ -147,6 +149,10 @@ struct Window {
     int generation = -1;
     bool shownVisible = false;
     int appliedView = -1;
+    // Placed by a HUD layout (hud.hpp): added to the window's own position, a size and an opacity.
+    float hudX = 0, hudY = 0, hudScale = 1, hudOpacity = 1;
+    float shownHudX = 0, shownHudY = 0, shownHudScale = 1, shownHudOpacity = 1;
+    bool hudApplied = false;
 };
 
 Window* MakeWindow(int owner);
@@ -167,6 +173,14 @@ bool HasMovable(const std::string& pluginId);
 Widget* AddWidget(Window* w, Kind kind, const std::string& text, float sizeOrWidth);
 void AddOption(Widget* dropdown, const std::string& option);
 bool Typing();                          // a text input has keyboard focus: keys belong to it, not to plugins
+
+// Plugin windows on screen, as elements of the HUD a layout can move ("Window/<plugin id>/<n>", n counting that
+// plugin's windows from 0), labelled with the plugin's name.
+struct HudWindow {
+    std::string key, label;
+    Window* window;
+};
+std::vector<HudWindow> HudWindows();
 
 // --- frame and test hooks ------------------------------------------------------------------------------------------
 void Frame();                                   // game thread, every frame

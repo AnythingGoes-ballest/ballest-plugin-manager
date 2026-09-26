@@ -14,6 +14,7 @@
 
 #include "cosmetics.hpp"
 #include "game.hpp"
+#include "hud.hpp"
 #include "input.hpp"
 #include "leaderboard.hpp"
 #include "log.hpp"
@@ -252,6 +253,14 @@ void SetTextSize(ui::Widget* w, float size) {
     w->window->layoutDirty = true;          // a font is only set while building (it holds a shared pointer)
 }
 float GetTextSize(ui::Widget* w) { return w->size; }
+void SetTextWidth(ui::Widget* w, float width) {
+    w->textWidth = width;
+    w->window->layoutDirty = true;
+}
+void SetTextAlign(ui::Widget* w, int align) {
+    w->justify = static_cast<uint8_t>(align < 0 ? 0 : align > 2 ? 2 : align);
+    w->window->layoutDirty = true;
+}
 void SetWidgetVisible(ui::Widget* w, bool visible) { w->visible = visible; }
 bool GetWidgetVisible(ui::Widget* w) { return w->visible; }
 void WinSetMovable(ui::Window* w, bool movable) { ui::SetMovable(w, movable, plugins::CurrentId()); }
@@ -531,6 +540,8 @@ void RegisterUi() {
     }
     Method("Text", "void set_size(float) property", asFUNCTION(SetTextSize));
     Method("Text", "float get_size() property", asFUNCTION(GetTextSize));
+    Method("Text", "void SetWidth(float)", asFUNCTION(SetTextWidth));
+    Method("Text", "void SetAlign(int)", asFUNCTION(SetTextAlign));
     Method("Button", "bool Clicked()", asFUNCTION(Clicked));
     Method("Button", "bool get_hovered() property", asFUNCTION(Hovered));
     Method("Button", "void SetBackground(float, float, float, float)", asFUNCTION(ButtonBackground));
@@ -562,27 +573,138 @@ void RegisterUi() {
     Method("CheckBox", "bool get_visible() property", asFUNCTION(GetWidgetVisible));
 }
 
-// Keys are Windows virtual-key codes; the common ones are named, plus A-Z and N0-N9.
+// Keys are Windows virtual-key codes, and controller buttons after them (input.hpp); the common ones are named,
+// plus A-Z and N0-N9.
+const std::vector<std::pair<std::string, int>>& KeyNames() {
+    static std::vector<std::pair<std::string, int>> names;
+    if (!names.empty()) return names;
+    names = {{"Space", 0x20}, {"Enter", 0x0D}, {"Escape", 0x1B}, {"Tab", 0x09}, {"Shift", 0x10}, {"Ctrl", 0x11}, {"Alt", 0x12},
+             {"Left", 0x25}, {"Up", 0x26}, {"Right", 0x27}, {"Down", 0x28}, {"MouseLeft", 0x01}, {"MouseRight", 0x02},
+             {"MouseMiddle", 0x04}, {"MouseBack", 0x05}, {"MouseForward", 0x06}, {"Backspace", 0x08}, {"PageUp", 0x21},
+             {"PageDown", 0x22}, {"End", 0x23}, {"Home", 0x24}, {"Insert", 0x2D}, {"Delete", 0x2E}, {"Minus", 0xBD},
+             {"Equals", 0xBB}, {"LeftBracket", 0xDB}, {"RightBracket", 0xDD}, {"Semicolon", 0xBA}, {"Quote", 0xDE},
+             {"Comma", 0xBC}, {"Period", 0xBE}, {"Slash", 0xBF}, {"Backslash", 0xDC}, {"Tilde", 0xC0},
+             {"NumpadPlus", 0x6B}, {"NumpadMinus", 0x6D}, {"NumpadMultiply", 0x6A}, {"NumpadDivide", 0x6F},
+             {"F1", 0x70}, {"F2", 0x71}, {"F3", 0x72}, {"F4", 0x73}, {"F5", 0x74}, {"F6", 0x75},
+             {"F7", 0x76}, {"F8", 0x77}, {"F9", 0x78}, {"F10", 0x79}, {"F11", 0x7A}, {"F12", 0x7B},
+             {"PadA", input::kPadA}, {"PadB", input::kPadB}, {"PadX", input::kPadX}, {"PadY", input::kPadY},
+             {"PadLB", input::kPadLB}, {"PadRB", input::kPadRB}, {"PadLT", input::kPadLT}, {"PadRT", input::kPadRT},
+             {"PadL3", input::kPadL3}, {"PadR3", input::kPadR3}, {"PadView", input::kPadView}, {"PadMenu", input::kPadMenu},
+             {"PadUp", input::kPadUp}, {"PadDown", input::kPadDown}, {"PadLeft", input::kPadLeft}, {"PadRight", input::kPadRight},
+             {"PadStickUp", input::kPadStickUp}, {"PadStickDown", input::kPadStickDown}, {"PadStickLeft", input::kPadStickLeft},
+             {"PadStickRight", input::kPadStickRight}};
+    for (char c = 'A'; c <= 'Z'; ++c) names.push_back({std::string(1, c), c});
+    for (char c = '0'; c <= '9'; ++c) names.push_back({std::string("N") + c, c});
+    for (int i = 0; i < 10; ++i) names.push_back({"Numpad" + std::to_string(i), 0x60 + i});
+    return names;
+}
+std::string KeyName(int key) {
+    for (const auto& [name, code] : KeyNames())
+        if (code == key) return name;
+    return key ? "Key" + std::to_string(key) : "";
+}
+int AnyKeyPressed() { return ui::Typing() ? 0 : input::AnyPressed(); }
+
 void RegisterInput() {
     e->SetDefaultNamespace("Input");
     Check(e->RegisterEnum("Key"), "Input::Key");
-    const std::pair<const char*, int> keys[] = {
-        {"Space", 0x20}, {"Enter", 0x0D}, {"Escape", 0x1B}, {"Tab", 0x09}, {"Shift", 0x10}, {"Ctrl", 0x11}, {"Alt", 0x12},
-        {"Left", 0x25}, {"Up", 0x26}, {"Right", 0x27}, {"Down", 0x28}, {"MouseLeft", 0x01}, {"MouseRight", 0x02},
-        {"MouseMiddle", 0x04}, {"F1", 0x70}, {"F2", 0x71}, {"F3", 0x72}, {"F4", 0x73}, {"F5", 0x74}, {"F6", 0x75},
-        {"F7", 0x76}, {"F8", 0x77}, {"F9", 0x78}, {"F10", 0x79}, {"F11", 0x7A}, {"F12", 0x7B}};
-    for (const auto& [name, vk] : keys) Check(e->RegisterEnumValue("Key", name, vk), name);
-    for (char c = 'A'; c <= 'Z'; ++c) Check(e->RegisterEnumValue("Key", std::string(1, c).c_str(), c), "letter");
-    for (char c = '0'; c <= '9'; ++c) Check(e->RegisterEnumValue("Key", (std::string("N") + c).c_str(), c), "digit");
+    Check(e->RegisterEnumValue("Key", "None", 0), "None");
+    for (const auto& [name, code] : KeyNames()) Check(e->RegisterEnumValue("Key", name.c_str(), code), name.c_str());
     Global("bool Pressed(Key)", asFUNCTION(KeyPressed));
     Global("bool Down(Key)", asFUNCTION(KeyDown));
+    Global("Key AnyPressed()", asFUNCTION(AnyKeyPressed));
+    Global("string Name(Key)", asFUNCTION(KeyName));
 }
+
+std::string RaceTrackKey() { return race::CurrentTrack().key; }
+std::string RaceTrackName() { return race::CurrentTrack().name; }
+std::string RaceTrackAuthor() { return race::CurrentTrack().author; }
+double RaceAuthorTime() { return race::CurrentTrack().authorTime; }
+bool RaceCustomTrack() { return race::CurrentTrack().custom; }
+bool RaceInput(double& x, double& y, bool& jump) { return race::Input(&x, &y, &jump); }
+bool RaceSetPaused(bool paused) {
+    plugins::GameWork work;
+    return race::SetPaused(paused);
+}
+bool RacePaused() { return race::Paused(); }
+std::string RaceSaveBall() {
+    plugins::GameWork work;
+    return race::SaveBall();
+}
+bool RaceLoadBall(const std::string& state, bool momentum) {
+    plugins::GameWork work;
+    return race::LoadBall(state, momentum);
+}
+void RaceStartPractice() {
+    plugins::GameWork work;
+    race::StartPractice();
+}
+
+// Hud: Elements() takes a snapshot the other getters answer from, so a plugin walking the list sees one HUD.
+std::vector<hud::Element> gHudSnapshot;
+const hud::Element* HudFind(const std::string& key) {
+    for (const auto& el : gHudSnapshot)
+        if (el.key == key) return &el;
+    return nullptr;
+}
+CScriptArray* HudElements() {
+    plugins::GameWork work;
+    gHudSnapshot = hud::Elements();
+    CScriptArray* array = CScriptArray::Create(e->GetTypeInfoByDecl("array<string>"), static_cast<asUINT>(gHudSnapshot.size()));
+    for (size_t i = 0; i < gHudSnapshot.size(); ++i) *static_cast<std::string*>(array->At(static_cast<asUINT>(i))) = gHudSnapshot[i].key;
+    return array;
+}
+std::string HudName(const std::string& key) { const auto* el = HudFind(key); return el ? el->name : ""; }
+std::string HudLabel(const std::string& key) { const auto* el = HudFind(key); return el ? el->label : ""; }
+bool HudShown(const std::string& key) { const auto* el = HudFind(key); return el && el->shown; }
+bool HudParentShown(const std::string& key) { const auto* el = HudFind(key); return el && el->parentShown; }
+void HudSetLayout(const std::string& key, double x, double y, double scale, int mode) { hud::SetLayout(key, x, y, scale, mode); }
+void HudClearLayout(const std::string& key) { hud::ClearLayout(key); }
+void HudSetEditing(bool on) { hud::SetEditing(on); }
+void HudSetBlink(const std::string& key) { hud::SetBlink(key); }
+bool HudSetPartColor(const std::string& key, const std::string& part, float r, float g, float b, float a) {
+    return hud::SetPartColor(key, part, r, g, b, a);
+}
+void HudResetPartColor(const std::string& key, const std::string& part) { hud::ResetPartColor(key, part); }
 
 void RegisterRace() {
     e->SetDefaultNamespace("Race");
     Global("bool OnTrack()", asFUNCTION(race::OnTrack));
     Global("bool IsActive()", asFUNCTION(race::Active));
     Global("int Restarts()", asFUNCTION(race::Restarts));
+    Global("int RunId()", asFUNCTION(race::RunId));
+    Global("bool IsComplete()", asFUNCTION(race::Complete));
+    Global("string TrackKey()", asFUNCTION(RaceTrackKey));
+    Global("string TrackName()", asFUNCTION(RaceTrackName));
+    Global("string TrackAuthor()", asFUNCTION(RaceTrackAuthor));
+    Global("double AuthorTime()", asFUNCTION(RaceAuthorTime));
+    Global("bool IsCustomTrack()", asFUNCTION(RaceCustomTrack));
+    Global("bool GetInput(double &out, double &out, bool &out)", asFUNCTION(RaceInput));
+    Global("bool SetPaused(bool)", asFUNCTION(RaceSetPaused));
+    Global("bool IsPaused()", asFUNCTION(RacePaused));
+    Global("string SaveBall()", asFUNCTION(RaceSaveBall));
+    Global("bool LoadBall(const string &in, bool momentum = true)", asFUNCTION(RaceLoadBall));
+    Global("void StartPractice()", asFUNCTION(RaceStartPractice));
+    Global("bool IsPractice()", asFUNCTION(race::Practice));
+}
+
+void RegisterHud() {
+    e->SetDefaultNamespace("Hud");
+    Check(e->RegisterEnum("Mode"), "Hud::Mode");
+    Check(e->RegisterEnumValue("Mode", "Normal", hud::kNormal), "Normal");
+    Check(e->RegisterEnumValue("Mode", "Off", hud::kOff), "Off");
+    Check(e->RegisterEnumValue("Mode", "On", hud::kOn), "On");
+    Global("array<string>@ Elements()", asFUNCTION(HudElements));
+    Global("string Name(const string &in)", asFUNCTION(HudName));
+    Global("string Label(const string &in)", asFUNCTION(HudLabel));
+    Global("bool Shown(const string &in)", asFUNCTION(HudShown));
+    Global("bool ParentShown(const string &in)", asFUNCTION(HudParentShown));
+    Global("void SetLayout(const string &in, double, double, double, Mode = Normal)", asFUNCTION(HudSetLayout));
+    Global("void ClearLayout(const string &in)", asFUNCTION(HudClearLayout));
+    Global("void SetEditing(bool)", asFUNCTION(HudSetEditing));
+    Global("void SetBlink(const string &in)", asFUNCTION(HudSetBlink));
+    Global("bool SetPartColor(const string &in, const string &in, float, float, float, float)", asFUNCTION(HudSetPartColor));
+    Global("void ResetPartColor(const string &in, const string &in)", asFUNCTION(HudResetPartColor));
 }
 
 void RegisterEditor() {
@@ -659,7 +781,7 @@ bool CosmeticsAddBall(const std::string& id, const std::string& name, const std:
     bool imageOk = false, previewOk = false;
     std::string text;
     const std::wstring file = PluginFile(image, &imageOk), picture = PluginFile(preview, &previewOk);
-    return !image.empty() && imageOk && previewOk && ModelText(model, &text) && cosmetics::AddBall(id, name, file, picture, text);
+    return imageOk && previewOk && ModelText(model, &text) && cosmetics::AddBall(id, name, file, picture, text);   // image "": clear
 }
 bool CosmeticsAddHat(const std::string& id, const std::string& name, const std::string& mesh, double scale,
                      const std::string& preview, const std::string& model) {
@@ -732,6 +854,7 @@ void Register(asIScriptEngine* engine) {
     RegisterUi();
     RegisterInput();
     RegisterRace();
+    RegisterHud();
     RegisterEditor();
     RegisterReplay();
     RegisterCosmetics();

@@ -518,6 +518,14 @@ std::string CurrentId() {
     return i >= 0 && i < static_cast<int>(gPlugins.size()) ? gPlugins[static_cast<size_t>(i)].id : "?";
 }
 
+std::string IdAt(int index) {
+    return index >= 0 && index < static_cast<int>(gPlugins.size()) ? gPlugins[static_cast<size_t>(index)].id : "";
+}
+
+std::string NameAt(int index) {
+    return index >= 0 && index < static_cast<int>(gPlugins.size()) ? gPlugins[static_cast<size_t>(index)].name : "";
+}
+
 std::wstring CurrentDir() {
     const int i = Current();
     return i >= 0 && i < static_cast<int>(gPlugins.size()) ? gPlugins[static_cast<size_t>(i)].dir : std::wstring();

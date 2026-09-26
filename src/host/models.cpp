@@ -1,5 +1,6 @@
 #include "models.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cmath>
@@ -22,6 +23,9 @@ constexpr double kPi = 3.14159265358979323846;
 // its emissive light (Light_Color, Light_Emissive_Intensity).
 const wchar_t* kColourMaterial = L"/Game/Art/Materials/Instances/Ball/MI_BallRed.MI_BallRed";
 const wchar_t* kGlowMaterial = L"/Game/Art/Materials/Environment/Materials/Instances/MI_Env_Emissive_Yellow.MI_Env_Emissive_Yellow";
+// The snow globe skin's glass (BP_SnowGlobeSkin's Sphere wears it; read from the package: translucent, with scalar
+// parameters RimStrength, RimExp, HighlightStrength, HighlightExp, GhostOpacity and Vel).
+const wchar_t* kGlassMaterial = L"/Game/Art/Materials/Masters/M_SnowGlobeTop.M_SnowGlobeTop";
 
 struct Vec3 {
     double x, y, z;
@@ -96,12 +100,21 @@ bool Parse(const std::string& text, Model* model, std::string* error) {
             return value(key, &v) ? std::atof(v.c_str()) : fallback;
         };
         if (w[0] == "material") {
-            if (w.size() < 4 || w[3].size() != 7 || w[3][0] != '#') return fail("material <name> plastic|metal|glow #rrggbb");
+            if (w.size() >= 3 && w[2] == "glass") {
+                Material m;
+                m.name = w[1];
+                m.finish = Finish::Glass;
+                m.rim = static_cast<float>(num("rim", 1));
+                m.highlight = static_cast<float>(num("highlight", 1));
+                model->materials.push_back(m);
+                continue;
+            }
+            if (w.size() < 4 || w[3].size() != 7 || w[3][0] != '#') return fail("material <name> plastic|metal|glow #rrggbb, or material <name> glass");
             Material m;
             m.name = w[1];
             if (w[2] == "metal") m.finish = Finish::Metal;
             else if (w[2] == "glow") m.finish = Finish::Glow;
-            else if (w[2] != "plastic") return fail("finish must be plastic, metal or glow");
+            else if (w[2] != "plastic") return fail("finish must be plastic, metal, glow or glass");
             const long rgb = std::strtol(w[3].c_str() + 1, nullptr, 16);
             m.r = Linear((rgb >> 16) & 255);
             m.g = Linear((rgb >> 8) & 255);
@@ -111,15 +124,42 @@ bool Parse(const std::string& text, Model* model, std::string* error) {
             model->materials.push_back(m);
             continue;
         }
+        if (w[0] == "tempo") {
+            Tempo& t = model->tempo;
+            t.rate = num("rate", 1);
+            t.run = num("run", 0);
+            t.max = num("max", 1e9);
+            t.calm = num("calm", 1);
+            t.full = num("full", 1);
+            if (t.rate < 0 || t.run < 0 || t.max <= 0 || t.calm < 0 || t.calm > 1 || t.full <= 0)
+                return fail("tempo: rate and run from 0, max and full above 0, calm from 0 to 1");
+            continue;
+        }
         if (w[0] == "group") {
             if (w.size() < 2) return fail("group <name>");
             Group g;
             g.name = w[1];
-            std::string axis;
-            if (value("spin", &axis)) g.spinAxis = axis == "x" ? 0 : axis == "y" ? 1 : axis == "z" ? 2 : -1;
+            auto axisOf = [](const std::string& a) { return a == "x" ? 0 : a == "y" ? 1 : a == "z" ? 2 : -1; };
+            std::string v;
+            if (value("spin", &v)) g.spinAxis = axisOf(v);
             g.speed = num("speed", 0);
             for (const auto& word : w) g.travel |= word == "travel";
             if (model->groups.size() == 1 && model->groups[0].parts.empty()) model->groups.clear();
+            if (value("on", &v)) {
+                for (size_t i = 0; i < model->groups.size(); ++i)
+                    if (model->groups[i].name == v) g.parent = static_cast<int>(i);
+                if (g.parent < 0) return fail("on=" + v + ": no group of that name before this one");
+                if (g.travel) return fail("travel is for groups on the ball; one on another group turns with it");
+            }
+            if (value("pivot", &v) && !Numbers(v, g.pivot, 3)) return fail("pivot=x,y,z");
+            if (value("swing", &v)) {
+                g.swingAxis = axisOf(v);
+                if (g.swingAxis < 0) return fail("swing=x|y|z");
+                g.swingAngle = num("angle", 0);
+            }
+            g.bob = num("bob", 0);
+            g.phase = num("phase", 0);
+            if (g.travel && g.Moves()) return fail("a travel group can't pivot, swing or bob: put those on a group on it");
             model->groups.push_back(g);
             continue;
         }
@@ -326,12 +366,17 @@ bool Append(Obj mesh, const Part& part) {
 }
 
 Obj MakeMaterial(const Material& m, Obj worldContext) {
-    Obj parent = cosmetics::LoadAsset(m.finish == Finish::Glow ? kGlowMaterial : kColourMaterial);
+    const wchar_t* path = m.finish == Finish::Glow ? kGlowMaterial : m.finish == Finish::Glass ? kGlassMaterial : kColourMaterial;
+    Obj parent = cosmetics::LoadAsset(path);
     if (!parent) return nullptr;
     const Params made = eng::Call(Lib("KismetMaterialLibrary"), "CreateDynamicMaterialInstance", worldContext, parent,
                                   std::array<uint8_t, 8>{}, uint8_t{0});
     Obj mid = made.ReturnObj();
     if (!mid) return nullptr;
+    if (m.finish == Finish::Glass) {
+        cosmetics::ScaleGlass(mid, m.rim, m.highlight);
+        return mid;
+    }
     auto vector = [&](const char* name, float r, float g, float b) {
         Params p(eng::FunctionOn(mid, "SetVectorParameterValue"));
         const std::wstring wide = eng::Widen(name);
@@ -410,33 +455,103 @@ Built Build(const Model& model, Obj parent) {
             Destroy(built);
             return built;
         }
-        for (const auto& part : group.parts) Append(mesh, part);
+        for (Part part : group.parts) {                               // built about the group's pivot
+            for (int k = 0; k < 3; ++k) part.at[k] -= group.pivot[k];
+            Append(mesh, part);
+        }
         for (size_t i = 0; i < materials.size(); ++i)
             if (materials[i]) eng::Call(component, "SetMaterial", static_cast<int32_t>(i), materials[i]);
         eng::Call(component, "SetCollisionEnabled", uint8_t{0});     // never touches the ball's physics
         const uint8_t snap = 2;                                       // EAttachmentRule::SnapToTarget
-        eng::Call(actor, "K2_AttachToComponent", parent, std::array<uint8_t, 8>{}, snap, snap, snap, uint8_t{0});
+        Obj on = parent;                                              // the ball, or the group it is built on
+        if (group.parent >= 0) {
+            Obj holder = eng::Get(built.actors[static_cast<size_t>(group.parent)]);
+            on = holder ? eng::ReadObj(holder, "DynamicMeshComponent") : nullptr;
+        }
+        if (on) eng::Call(actor, "K2_AttachToComponent", on, std::array<uint8_t, 8>{}, snap, snap, snap, uint8_t{0});
         if (group.travel) eng::Call(component, "SetAbsolute", uint8_t{0}, uint8_t{1}, uint8_t{0});
         built.actors.push_back(eng::MakeWeak(actor));
     }
     return built;
 }
 
+namespace {
+double Wrap(double degrees) { return std::remainder(degrees, 360.0); }
+
+// The yaw of the camera the player sees through.
+bool CameraYaw(double* yaw) {
+    Obj controller = game::PlayerController();
+    Obj manager = controller ? eng::ReadObj(controller, "PlayerCameraManager") : nullptr;
+    if (!manager) return false;
+    *yaw = eng::Call(manager, "GetCameraRotation").ReturnAs<Rot>().yaw;
+    return true;
+}
+}  // namespace
+
 void Animate(const Model& model, Built& built, Obj ballActor, double seconds) {
+    const double dt = built.last < 0 ? 0 : std::clamp(seconds - built.last, 0.0, 0.1);
+    built.last = seconds;
+    double speed = 0;                                   // cm/s
     if (ballActor) {
         const Vec3 v = eng::Call(ballActor, "GetVelocity").ReturnAs<Vec3>();
-        if (v.x * v.x + v.y * v.y > 50.0 * 50.0) built.travelYaw = std::atan2(v.y, v.x) * 180 / kPi;
+        speed = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+        // A group that travels faces where the ball is going. Before the ball has gone anywhere it faces the way the
+        // camera looks (a racing ball waiting at the start), or looks at the camera (the Customize page's ball,
+        // which never travels); turns are eased so a wobble in the ball's path doesn't shake it.
+        const bool menu = eng::ClassOf(ballActor) == eng::FindClass("BP_MenuBall_C");
+        double target = built.travelYaw, camera = 0;
+        bool known = false;
+        if (v.x * v.x + v.y * v.y > 50.0 * 50.0) {
+            target = std::atan2(v.y, v.x) * 180 / kPi;
+            known = true;
+        } else if ((menu || !built.facing) && CameraYaw(&camera)) {
+            target = menu ? camera + 180 : camera;
+            known = true;
+        }
+        if (known && !built.facing) built.travelYaw = target;
+        else if (known) built.travelYaw += Wrap(target - built.travelYaw) * std::min(1.0, dt * 8);
+        built.facing |= known;
     }
+    // The tempo: swings a second from the ball's speed, and how far limbs swing (calm at rest, full when fast).
+    const Tempo& t = model.tempo;
+    built.pace += (speed / 100 - built.pace) * std::min(1.0, dt * 6);
+    built.beat += dt * std::min(t.max, t.rate + t.run * built.pace);
+    const double reach = t.calm + (1 - t.calm) * std::min(1.0, built.pace / t.full);
+    const double turn = 2 * kPi * built.beat;
     for (size_t i = 0; i < model.groups.size() && i < built.actors.size(); ++i) {
         const Group& g = model.groups[i];
-        if (g.spinAxis < 0 && !g.travel) continue;
+        const bool moves = g.Moves();
+        if (g.spinAxis < 0 && !g.travel && !moves) continue;
         Obj actor = eng::Get(built.actors[i]);
         Obj component = actor ? eng::ReadObj(actor, "DynamicMeshComponent") : nullptr;
         if (!component) continue;
-        const double angle = g.spinAxis >= 0 ? std::fmod(seconds * g.speed, 360.0) : 0;
-        Rot r{g.spinAxis == 1 ? angle : 0, g.spinAxis == 2 ? angle : 0, g.spinAxis == 0 ? angle : 0};
-        Params p(eng::FunctionOn(component, g.travel ? "K2_SetWorldRotation" : "K2_SetRelativeRotation"));
-        if (g.travel) r.yaw += built.travelYaw;
+        double angles[3] = {0, 0, 0};                   // about x (roll), y (pitch), z (yaw)
+        if (g.spinAxis >= 0) angles[g.spinAxis] += std::fmod(seconds * g.speed, 360.0);
+        const double phase = g.phase * kPi / 180;
+        if (g.swingAxis >= 0) angles[g.swingAxis] += g.swingAngle * reach * std::sin(turn + phase);
+        Rot r{angles[1], angles[2], angles[0]};
+        if (g.travel) {
+            r.yaw += built.travelYaw;
+            Params p(eng::FunctionOn(component, "K2_SetWorldRotation"));
+            p.Set("NewRotation", r);
+            p.Set("bTeleport", uint8_t{1});
+            eng::Invoke(component, p);
+            continue;
+        }
+        if (!moves) {
+            Params p(eng::FunctionOn(component, "K2_SetRelativeRotation"));
+            p.Set("NewRotation", r);
+            p.Set("bTeleport", uint8_t{1});
+            eng::Invoke(component, p);
+            continue;
+        }
+        // Where the pivot sits on what the group is built on (that group's pivot, or the ball's centre), lifted by
+        // the bob.
+        const double* base = g.parent >= 0 ? model.groups[static_cast<size_t>(g.parent)].pivot : nullptr;
+        Vec3 at{g.pivot[0] - (base ? base[0] : 0), g.pivot[1] - (base ? base[1] : 0), g.pivot[2] - (base ? base[2] : 0)};
+        at.z += g.bob * reach * (0.5 - 0.5 * std::cos(2 * turn + phase));
+        Params p(eng::FunctionOn(component, "K2_SetRelativeLocationAndRotation"));
+        p.Set("NewLocation", at);
         p.Set("NewRotation", r);
         p.Set("bTeleport", uint8_t{1});
         eng::Invoke(component, p);

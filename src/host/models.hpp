@@ -5,9 +5,15 @@
 // The text, one statement a line ("#" at the start of a line, or "# ", starts a comment; lengths in cm, the ball's
 // radius is 50; angles in degrees):
 //   material <name> plastic|metal|glow #rrggbb [rough=0.5] [bright=5]
-//   group <name> [spin=x|y|z] [speed=<degrees a second>] [travel]
+//   material <name> glass [rim=1] [highlight=1]    (the game's snow globe glass: see-through)
+//   group <name> [spin=x|y|z] [speed=<degrees a second>] [travel] [on=<group>] [pivot=x,y,z]
+//         [swing=x|y|z angle=<degrees> [phase=<degrees>]] [bob=<cm> [phase=<degrees>]]
 //       parts after it belong to it; "travel" keeps the group upright and turned to where the ball is going instead
-//       of rolling with the ball
+//       of rolling with the ball; "on" builds it on an earlier group, moving with it (a limb on a body); "pivot" is
+//       the point it turns about (a shoulder); "swing" rocks it to and fro about an axis through the pivot, and "bob"
+//       lifts it and lets it down twice a swing (a step), both keeping time with the model's tempo
+//   tempo [rate=<swings a second at rest>] [run=<more a second per m/s of the ball>] [max=<swings a second>]
+//         [calm=<share of the swing at rest>] [full=<m/s at which swings are full>]
 //   <shape> <material> <size...> [at=x,y,z] [rot=pitch,yaw,roll] [scale=x,y,z]
 //     sphere r=               box size=x,y,z            cylinder r= h=        cone r= top= h=
 //     capsule r= len=         disc r= [hole=]           ring r= thick= [degrees=360]
@@ -22,12 +28,13 @@
 
 namespace models {
 
-enum class Finish { Plastic, Metal, Glow };
+enum class Finish { Plastic, Metal, Glow, Glass };
 struct Material {
     std::string name;
     Finish finish = Finish::Plastic;
     float r = 1, g = 1, b = 1;          // linear
     float rough = 0.5f, bright = 5;
+    float rim = 1, highlight = 1;       // glass
 };
 
 enum class Shape { Sphere, Box, Cylinder, Cone, Capsule, Disc, Ring, Saw, Cup };
@@ -44,12 +51,22 @@ struct Group {
     int spinAxis = -1;                  // 0 x, 1 y, 2 z, or -1
     double speed = 0;
     bool travel = false;
+    int parent = -1;                    // "on": the group it is built on, or -1 for the ball
+    double pivot[3] = {0, 0, 0};
+    int swingAxis = -1;                 // 0 x, 1 y, 2 z, or -1
+    double swingAngle = 0, phase = 0, bob = 0;
+    bool Moves() const { return parent >= 0 || swingAxis >= 0 || bob != 0 || pivot[0] != 0 || pivot[1] != 0 || pivot[2] != 0; }
     std::vector<Part> parts;
+};
+
+struct Tempo {
+    double rate = 1, run = 0, max = 1e9, calm = 1, full = 1;
 };
 
 struct Model {
     std::vector<Material> materials;
     std::vector<Group> groups;
+    Tempo tempo;
 };
 
 // False with the line and reason in `error` if the text is not a model.
@@ -60,6 +77,8 @@ struct Built {
     std::vector<eng::Weak> actors;      // by group
     eng::Weak parent;
     double travelYaw = 90;             // until the ball moves: side-on to the Customize camera (measured)
+    bool facing = false;                // travelYaw has been set from the camera or the ball's travel
+    double last = -1, beat = 0, pace = 0;   // the tempo's clock: last time, swings so far, smoothed ball speed
     bool Alive() const;
 };
 Built Build(const Model& model, eng::Obj parent);

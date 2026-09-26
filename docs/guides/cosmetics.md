@@ -38,6 +38,8 @@ A ball's texture wraps around the ball: left to right goes once around, top to b
 twice as wide as it is tall (1024x512). Something drawn flat is stretched near the poles, so draw it the way it should
 look on the ball: Example Cosmetics' `make_images.py` projects its smiley and samples its textures on the sphere.
 
+With no image (`""`) the ball is clear, made of the game's snow globe glass, so a model can sit inside it.
+
 ## Models
 
 A model is a text file of simple shapes, built into 3D meshes when the ball appears. On a ball it's centred on the
@@ -46,7 +48,10 @@ line, or `# `, starts a comment. Lengths are in cm and the ball's radius is 50. 
 
 ```
 material <name> plastic|metal|glow #rrggbb [rough=0.5] [bright=5]
-group <name> [spin=x|y|z] [speed=<degrees a second>] [travel]
+material <name> glass [rim=1] [highlight=1]
+tempo [rate=1] [run=0] [max=] [calm=1] [full=1]
+group <name> [spin=x|y|z] [speed=<degrees a second>] [travel] [on=<group>] [pivot=x,y,z]
+      [swing=x|y|z angle=<degrees>] [bob=<cm>] [phase=<degrees>]
 <shape> <material> <sizes> [at=x,y,z] [rot=pitch,yaw,roll] [scale=x,y,z]
 ```
 
@@ -63,9 +68,37 @@ group <name> [spin=x|y|z] [speed=<degrees a second>] [travel]
 | `cup` | `r=` `top=` `h=` `wall=` | standing: a bowl open at the top |
 
 - **Materials** come first. `plastic` and `metal` are solid colours (`rough` from 0, shiny, to 1, matte); `glow`
-  lights up (`bright`).
+  lights up (`bright`); `glass` is the game's see-through snow globe glass, with its rim and highlight made stronger
+  or weaker (`rim`, `highlight`: 1 is the game's own).
 - **Groups** collect the parts after them. `spin` turns the group about an axis; `travel` keeps it level and turned
-  the way the ball is going instead of rolling with the ball (a blade that stays upright, for example).
+  the way the ball is going instead of rolling with the ball (a blade that stays upright, for example). Before the
+  ball has moved, a travelling group faces away from the camera, and on the Customize page it faces the camera.
+- **Moving parts**, such as a character's arms and legs:
+    - `on=<group>` builds a group on an earlier group, so it moves with it (a leg on a body).
+    - `pivot` is the point it turns about (a hip), in the same coordinates as everything else.
+    - `swing` rocks it to and fro about an axis through the pivot, `angle` degrees each way.
+    - `bob` lifts it by that many cm and lets it down, twice a swing (once a step).
+    - `phase` puts a group's swing and bob later in the cycle (180: opposite, like the other leg).
+  A travelling group can't swing or bob itself: make an empty travelling group and build the moving ones on it.
+- **Tempo** sets the pace of every swing and bob:
+    - `rate`: swings a second when the ball is still.
+    - `run`: more swings a second for every m/s of the ball's speed, up to `max`.
+    - `calm`: how much of the swing is left when the ball is still (0 to 1); swings grow to their full size at
+      `full` m/s.
+
+```
+# a character running upright inside the ball
+material fur plastic #8a5226
+tempo rate=0.6 run=0.25 max=5 calm=0.3 full=10
+group monkey travel
+group body on=monkey bob=2.5
+sphere fur r=12 at=0,0,-14
+sphere fur r=19 at=0,0,10
+group legL on=body pivot=0,-5.5,-22 swing=y angle=45
+capsule fur r=4 len=4 at=0,-5.5,-22 rot=180,0,0
+group legR on=body pivot=0,5.5,-22 swing=y angle=45 phase=180
+capsule fur r=4 len=4 at=0,5.5,-22 rot=180,0,0
+```
 
 ```
 # a spinning ring of lights around the ball

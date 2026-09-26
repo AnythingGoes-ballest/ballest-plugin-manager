@@ -11,6 +11,7 @@
 #include "editor.hpp"
 #include "engine.hpp"
 #include "game.hpp"
+#include "hud.hpp"
 #include "input.hpp"
 #include "leaderboard.hpp"
 #include "layout.hpp"
@@ -94,6 +95,7 @@ void HostFrame(float dt) {
     game::Frame();
     editor::Frame();
     race::Frame();
+    hud::Frame();
     replay::Frame(dt);
     cosmetics::Frame();
     leaderboard::Frame();
