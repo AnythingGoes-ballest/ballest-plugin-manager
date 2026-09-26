@@ -1330,6 +1330,9 @@ the piece clicked (-1 for none; found by the editor's own pick), the keys held (
 `ClickOnGizmo` when the click was on the move/rotate/scale gizmo) and whether that piece was selected before the
 click. The game's own clicks: a plain click selects just that piece; Shift and Ctrl add it; neither removes.
 Returns false when there are none left.
+
+A click usually arrives while the mouse button is still down, and a press may be the start of a drag. Changing the
+selection then (`Editor::Select`) ends that drag, so only select when the selection really has to change.
 --
 // Shift/Ctrl on a selected piece takes it out of the selection
 int piece, keys;
