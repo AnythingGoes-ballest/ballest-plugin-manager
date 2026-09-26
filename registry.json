@@ -23,14 +23,14 @@
       "description": "Track editor extras: groups (G / U), rotate modes in the toolbar (center, mirrored), Shift/Ctrl+click to deselect, whole-unit placement, placement distance, rotated copies, Tab between transform boxes.",
       "author": "AnythingGoes",
       "repo": "AnythingGoes-ballest/ballest-create-extensions",
-      "version": "0.3.0",
-      "commit": "2135fa7a106a2eb0d92102d8aa71a8da66721091",
-      "min_host": "0.10.0",
+      "version": "0.3.1",
+      "commit": "e8cc087664c88eb18dc108cef3f43036ec4fc1d3",
+      "min_host": "0.11.0",
       "icon": "icon.png",
       "dependencies": [],
       "files": {
-        "info.toml": "7283015af56e6ada62728c1ac1012c5b6fa32d47782a29535eb2c6304531d781",
-        "main.as": "6b1c1a54b7b439c110960c53239a33059c67e25990d9062a779c356a10bd0ba4",
+        "info.toml": "0eb13c735e0bcc5c0052f979a1a81dc59d81fe9bd92cc18e9a8e9cfa6d9c4484",
+        "main.as": "d571992747ad7d21b9da4e8cf12b6480dbeeeb8dfd154bc2fd63ad8c3676e12c",
         "keyboard_g.png": "beaedfc27e44bc1748d8e8d76b7b9f2e6444a323b7a1860a7ae6e727dbe995d0",
         "keyboard_u.png": "a9c0359e7d3764483af43e68584262ed432912e163404bdd3fff78c73b8b380d",
         "icon.png": "673495590b04fbc8b8a75af30e0eed74dc9b34ef11584f3e66fea362e53b74fe"
@@ -120,11 +120,11 @@
     }
   ],
   "host": {
-    "version": "0.10.0",
+    "version": "0.11.0",
     "repo": "AnythingGoes-ballest/ballest-plugin-manager",
-    "commit": "f43fd1975b480b85dfdb626e6ba18a3d0615bfc2",
-    "dll": "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/download/v0.10.0/version.dll",
-    "dll_sha256": "2a3f0f854e61abb678999db053d43e34a092c0bb9d6d2727ff49452b930781a5",
+    "commit": "aeeacc3d6c2bf5501e712886bbc74bace289e41e",
+    "dll": "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/download/v0.11.0/version.dll",
+    "dll_sha256": "63fcfb789998ea0d180741b20440812abfc54bbe5d0b42a92d0814cb5ee759c5",
     "files": {
       "plugins/hello-world/info.toml": "5300e78277bc1e92d4d1626ce17ed15e938f37e692b2271b58c3c9c30b79be40",
       "plugins/hello-world/main.as": "24f510821cb3ea7825bfef6363d92e12fd493b9977038beb9e6c297a692fb23b",
