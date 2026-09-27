@@ -171,8 +171,8 @@ double gLagRestoreAt = 0;
 // --- practice ------------------------------------------------------------------------------------------------------------
 struct Hidden {
     eng::Weak object;
-    int kind;                       // 0 widget (visibility byte), 1 actor (hidden in game), 2 actor collision
-    uint8_t visibility;
+    int kind;                       // 0 widget (visibility byte), 1 actor (hidden in game), 2 trigger (collision off)
+    uint8_t saved;                  // what it was: the widget's visibility, or the trigger's ECollisionEnabled
 };
 bool gPractice = false;
 int gPracticeRun = -1, gPracticeGeneration = -1;
@@ -218,17 +218,20 @@ void ApplyPractice() {
         if (ftext && size == 16) eng::WriteBytes(controller, "RaceTimeText", ftext, size);   // its one reference moves in
     }
     // Checkpoints and the finish (both BP_Checkpoint_C), the leaderboard, personal standing and ghosts.
-    Obj checkpoint = eng::FindClass("BP_Checkpoint_C"), actorClass = eng::FindClass("Actor"), widgetClass = eng::FindClass("Widget");
+    // A checkpoint's triggers are its query-only components (GoalHitbox1 and 2, with the begin-overlap handler; its
+    // sprites are too, with none): only they lose their collision. The goal ring (Main, query and physics) stays solid.
+    Obj checkpoint = eng::FindClass("BP_Checkpoint_C"), primitiveClass = eng::FindClass("PrimitiveComponent");
+    Obj actorClass = eng::FindClass("Actor"), widgetClass = eng::FindClass("Widget");
     std::vector<Obj> hideClasses;
     for (const char* name : {"WBP_Leaderboard_C", "WBP_PersonalStanding_C", "BallestGhostRenderHost", "BallestGhostLabelCanvas"})
         if (Obj c = eng::FindClass(name)) hideClasses.push_back(c);
+    constexpr uint8_t kNoCollision = 0, kQueryOnly = 1;
     eng::ForEachObject([&](Obj o) {
-        Obj cls = eng::ClassOf(o);
         if (eng::IsDefaultObject(o)) return true;
-        if (checkpoint && cls == checkpoint) {
-            if (!AlreadyHidden(o, 2) && eng::Call(o, "GetActorEnableCollision").ReturnBool()) {
-                eng::Call(o, "SetActorEnableCollision", uint8_t{0});
-                gHidden.push_back({eng::MakeWeak(o), 2, 0});
+        if (checkpoint && primitiveClass && eng::IsA(o, primitiveClass) && eng::ClassOf(eng::OuterOf(o)) == checkpoint) {
+            if (!AlreadyHidden(o, 2) && eng::Call(o, "GetCollisionEnabled").ReturnAs<uint8_t>(kNoCollision) == kQueryOnly) {
+                eng::Call(o, "SetCollisionEnabled", kNoCollision);
+                gHidden.push_back({eng::MakeWeak(o), 2, kQueryOnly});
             }
             return true;
         }
@@ -258,9 +261,9 @@ void ReleasePractice(const std::string& why) {
     for (const auto& h : gHidden) {
         Obj o = eng::Get(h.object);
         if (!o) continue;
-        if (h.kind == 0) w::SetVisibility(o, h.visibility);
+        if (h.kind == 0) w::SetVisibility(o, h.saved);
         else if (h.kind == 1) eng::Call(o, "SetActorHiddenInGame", uint8_t{0});
-        else eng::Call(o, "SetActorEnableCollision", uint8_t{1});
+        else eng::Call(o, "SetCollisionEnabled", h.saved);
     }
     gHidden.clear();
     gPractice = false;
