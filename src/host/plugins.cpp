@@ -40,6 +40,7 @@ struct Plugin {
     asIScriptContext* ctx = nullptr;
     asIScriptFunction* update = nullptr;
     asIScriptFunction* onSettingsChanged = nullptr;
+    asIScriptFunction* onDisabled = nullptr;
 };
 
 asIScriptEngine* gEngine = nullptr;
@@ -263,6 +264,7 @@ void Start(size_t index) {
     p.ctx->SetLineCallback(asFUNCTION(LineCallback), nullptr, asCALL_CDECL);
     p.update = m->GetFunctionByDecl("void Update(float)");
     p.onSettingsChanged = m->GetFunctionByDecl("void OnSettingsChanged()");
+    p.onDisabled = m->GetFunctionByDecl("void OnDisabled()");
     p.running = true;
     p.status = "running";
     hostlog::Write("info", p.id, "loaded " + p.name + " " + p.version);
@@ -387,11 +389,19 @@ std::vector<std::string> Dependents(const std::string& id) {
 
 namespace {
 
-// Frees a plugin's script, and with it its settings, UI and cursor request.
+// Frees a plugin's script, and with it its settings, UI and cursor request. A running plugin (turned off, removed, or
+// losing a dependency) is told first, through OnDisabled, so it can undo what the host can't: the changes it made to
+// the game itself. One that was stopped (an error, its budget) isn't: its script never runs again.
 void Release(size_t i) {
     Plugin& p = gPlugins[i];
+    if (p.running && p.onDisabled) {
+        const bool wasInFrame = gInFrame;
+        gInFrame = true;                // plugin code: turning plugins on or off from it waits, as from Update
+        Run(p, p.onDisabled, nullptr);
+        gInFrame = wasInFrame;
+    }
     p.running = false;
-    p.update = p.onSettingsChanged = nullptr;
+    p.update = p.onSettingsChanged = p.onDisabled = nullptr;
     settings::Forget(static_cast<int>(i));             // before the module (the variables) goes
     if (p.ctx) p.ctx->Release();
     p.ctx = nullptr;

@@ -20,6 +20,7 @@ The host calls these functions in your script if they exist. All of them are opt
 | `void Main()` | Once, after the plugin is loaded. Build your UI and load saved data here. |
 | `void Update(float dt)` | Every frame. `dt` is the length of the last frame in seconds. |
 | `void OnSettingsChanged()` | After the player changes one of your [settings](guides/settings.md), before your next `Update`. |
+| `void OnDisabled()` | Once, just before the plugin is turned off, removed, or stopped because a plugin it depends on went. Undo your changes to the game here. |
 
 Everything happens on the game's own thread, between frames. While your callback runs, the game waits for it. That's
 why the time budget below exists.

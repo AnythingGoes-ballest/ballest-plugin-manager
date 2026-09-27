@@ -69,6 +69,31 @@ in the setting variables.
     }
     ```
 
+### OnDisabled
+
+```cpp
+void OnDisabled()
+```
+
+Runs once, just before the plugin's script is freed: when the player turns it off in the plugin manager, when it's
+removed, or when a plugin it depends on is turned off or removed. Requires host 0.12.0.
+
+The host already takes away your windows, panels, footer buttons, cursor request, leaderboard notes and editor
+additions. Use `OnDisabled` for what it can't know about: changes you made to the game itself, such as HUD layouts,
+a cosmetic you equipped, or objects you changed through the console. This is your script's last call, so nothing you
+leave for a later `Update` will happen. `Console::Run` commands still run, because the host runs them itself.
+
+It isn't called when the plugin is stopped by an error or by going over its time budget, or when the game closes.
+
+??? example "Example"
+    ```cpp
+    void OnDisabled()
+    {
+        // Give the game its own timer back
+        Hud::ClearLayout("PlayerUI/TimeGroup");
+    }
+    ```
+
 ## Script language basics
 
 Plugins are [AngelScript](https://www.angelcode.com/angelscript/sdk/docs/manual/doc_script.html). Besides the
