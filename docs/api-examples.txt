@@ -941,6 +941,14 @@ angleInput.value = "180";
 // A number box that keeps showing its value
 angleInput.clearOnSubmit = false;
 
+== UI::TextInput.readOnly
+**Write only.** Whether the player can change the text (the default) or only select and copy it. Requires host
+0.12.0.
+--
+// A code the player copies with ctrl+a, ctrl+c but can't edit
+codeBox.readOnly = true;
+codeBox.value = code;
+
 @@ UI::Image
 A picture in a window (from `Window.AddImage`).
 

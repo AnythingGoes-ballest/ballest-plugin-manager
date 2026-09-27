@@ -94,6 +94,7 @@ struct Widget {
     bool checked = false, shownChecked = false;                             // check box (text is its label)
     std::string submitted;                                                  // text input: the last submitted text
     bool clearOnSubmit = true;                                              // text input: empty the box after Enter
+    bool readOnly = false, readOnlyPending = false;                         // text input: selectable, not editable
     std::string pendingValue;                                               // text input: text for the box
     bool valuePending = false;
     bool submitPending = false, submitRequested = false, focusRequested = false, focused = false;

@@ -296,6 +296,10 @@ void InputSetValue(ui::Widget* w, const std::string& s) {
     w->valuePending = true;
 }
 void InputClearOnSubmit(ui::Widget* w, bool on) { w->clearOnSubmit = on; }
+void InputReadOnly(ui::Widget* w, bool on) {
+    w->readOnly = on;
+    w->readOnlyPending = true;
+}
 bool CheckGet(ui::Widget* w) { return w->checked; }
 void CheckSet(ui::Widget* w, bool on) { w->checked = on; }
 bool CheckChanged(ui::Widget* w) { return TakeFlag(w, &ui::Widget::changedPending); }
@@ -565,6 +569,7 @@ void RegisterUi() {
     Method("TextInput", "void Submit()", asFUNCTION(InputSubmit));
     Method("TextInput", "void set_value(const string &in) property", asFUNCTION(InputSetValue));
     Method("TextInput", "void set_clearOnSubmit(bool) property", asFUNCTION(InputClearOnSubmit));
+    Method("TextInput", "void set_readOnly(bool) property", asFUNCTION(InputReadOnly));
     Method("CheckBox", "bool get_checked() property", asFUNCTION(CheckGet));
     Method("CheckBox", "void set_checked(bool) property", asFUNCTION(CheckSet));
     Method("CheckBox", "bool Changed()", asFUNCTION(CheckChanged));

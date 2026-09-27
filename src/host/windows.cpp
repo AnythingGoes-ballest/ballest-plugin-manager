@@ -187,6 +187,8 @@ Obj BuildWidget(Obj tree, Widget& item) {
             if (!box || !input) return nullptr;
             if (item.width > 0) eng::Call(box, "SetWidthOverride", item.width);
             eng::WriteBool(input, "ClearKeyboardFocusOnCommit", false);    // keep typing after Enter
+            eng::WriteBool(input, "IsReadOnly", item.readOnly);             // still selectable and copyable
+            item.readOnlyPending = false;
             // Left alone the typed text is light grey on a light box. Styles are read when the Slate widget is
             // built, so they are set before it is on screen.
             for (const char* member : {"ForegroundColor", "FocusedForegroundColor"}) w::WriteSlateColor(input, {"WidgetStyle", member}, kWhite);
@@ -567,6 +569,10 @@ void Sync(Widget& item) {
             if (item.valuePending) {
                 w::SetText(main, item.pendingValue);
                 item.valuePending = false;
+            }
+            if (item.readOnlyPending) {
+                eng::Call(main, "SetIsReadOnly", static_cast<uint8_t>(item.readOnly));
+                item.readOnlyPending = false;
             }
             item.focused = eng::Call(main, "HasKeyboardFocus").ReturnBool();
             // Focus can only be taken once the box is on screen, so it is asked for until it sticks.
