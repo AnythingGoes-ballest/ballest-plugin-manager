@@ -450,6 +450,7 @@ struct Replaced {
     eng::Weak skinActor;                            // a skin drawn by its own actor, hidden while ours is worn
     bool sphereHiddenInGame = false, sphereInvisible = false;  // how the game had hidden the sphere for that actor
     double scale[3] = {1, 1, 1};                    // hats: the slot's own scale
+    eng::Weak worn{};                               // hats: the mesh the host put on the slot (none for a model-only hat)
 };
 std::vector<Replaced> gReplaced;
 std::vector<eng::Weak> gBalls, gExplosions;
@@ -481,12 +482,6 @@ void Forget(Replaced* r) { gReplaced.erase(gReplaced.begin() + (r - gReplaced.da
 bool IsCustomMaterial(Obj material) {
     for (const auto& c : gCustoms)
         if (material && eng::Get(c.material) == material) return true;
-    return false;
-}
-
-bool IsCustomMesh(Obj mesh) {
-    for (const auto& c : gCustoms)
-        if (mesh && eng::Get(c.mesh) == mesh) return true;
     return false;
 }
 
@@ -585,16 +580,19 @@ void WearHat(Obj ball, Obj slot, const Custom* hat) {
         Obj wanted = eng::Get(hat->mesh);           // none for a hat that is a model only
         Vector scale{{1, 1, 1}};
         eng::ReadBytes(slot, "RelativeScale3D", scale.v, sizeof scale.v);
+        // Without a record the slot shows the game's own hat (a record only goes once that is back), even when a
+        // custom hat uses the same mesh: a hat built on the player's own (reported: taking it off left no hat).
         if (!r) {
-            gReplaced.push_back({eng::MakeWeak(slot), eng::MakeWeak(IsCustomMesh(mesh) ? nullptr : mesh), {}, {}, false, false,
-                                 {scale.v[0], scale.v[1], scale.v[2]}});
+            gReplaced.push_back({eng::MakeWeak(slot), eng::MakeWeak(mesh), {}, {}, false, false, {scale.v[0], scale.v[1], scale.v[2]}});
+            r = &gReplaced.back();
         }
         if (mesh != wanted) eng::Call(slot, "SetStaticMesh", wanted);
+        r->worn = eng::MakeWeak(wanted);
         if (scale.v[0] != hat->scale) eng::Call(slot, "SetRelativeScale3D", Vector{{hat->scale, hat->scale, hat->scale}});
         if (hat->hasModel) WearModel(slot, hat, ball);
         else RemoveModel(slot);
     } else if (r) {
-        if (!mesh || IsCustomMesh(mesh))                // otherwise the game has put its own on since
+        if (mesh == eng::Get(r->worn))                  // otherwise the game has put its own on since
             eng::Call(slot, "SetStaticMesh", eng::Get(r->mesh));
         // The slot's size goes back whatever mesh is on it now: the host changed it, and a custom hat's size left on it
         // made every hat after it bigger (reported).
