@@ -679,7 +679,7 @@ void RegisterUi()
         UI::SetCursorVisible(false);
         return PASS;
     });
-    Add("ui", "UI window with every widget", "UI::CreateWindow,Window.SetAnchor,Window.SetPivot,Window.SetOffset,Window.SetBackground,Window.SetCornerRadius,Window.visible,Window.AddText,Window.AddButton,Window.AddIconButton,Window.AddSlider,Window.AddDropdown,Window.AddSpace,Window.NewRow,Window.AddCheckBox,Window.AddImage,Window.AddTextArea,Window.AddTextInput,Window.AddTextAt,Window.AddRect,Window.zOrder,Window.SetBlocksClicks,Dropdown.AddOption", function() {
+    Add("ui", "UI window with every widget", "UI::CreateWindow,Window.SetAnchor,Window.SetPivot,Window.SetOffset,Window.SetBackground,Window.SetCornerRadius,Window.visible,Window.AddText,Window.AddWrappedText,Window.AddButton,Window.AddIconButton,Window.AddSlider,Window.AddDropdown,Window.AddSpace,Window.NewRow,Window.AddCheckBox,Window.AddImage,Window.AddTextArea,Window.AddTextInput,Window.AddTextAt,Window.AddRect,Window.zOrder,Window.SetBlocksClicks,Dropdown.AddOption", function() {
         if (step == 0)
         {
             @win = UI::CreateWindow();
@@ -691,6 +691,7 @@ void RegisterUi()
             win.zOrder = 150;
             win.SetBlocksClicks(true);
             @uText = win.AddText("api text one", 18);
+            win.AddWrappedText(180, "api wrapped text that is deliberately long enough to wrap", 14);
             win.AddSpace(10);
             @uButton = win.AddButton("api button");
             @uIcon = win.AddIconButton("play");
@@ -725,6 +726,7 @@ void RegisterUi()
             return WAIT;
         array<string> c = {Is(line.findFirst("window=shown") >= 0, "UI::CreateWindow/Window.visible: the window is not shown"),
                            Is(line.findFirst("text[api text one]") >= 0, "Window.AddText: its text is not on screen"),
+                           Is(line.findFirst("text[api wrapped text") >= 0, "Window.AddWrappedText: its text is not on screen"),
                            Is(line.findFirst("text[api placed]") >= 0, "Window.AddTextAt: the placed text is not on screen"),
                            Is(win.visible && win.zOrder == 150, "Window.zOrder/Window.visible read back wrong")};
         return All(c);
@@ -2098,6 +2100,28 @@ void RegisterEditor()
         array<string> c = {Is(Editor::IsOpen(), "Editor::IsOpen false"), Is(pieces.length() > 0, "Editor::Pieces empty"), Is(Editor::PieceClass(piece).findFirst("_C") > 0, "Editor::PieceClass '" + Editor::PieceClass(piece) + "'"),
                            Is(Editor::MapName() != "", "Editor::MapName empty for a saved map"), Is(!Editor::IsTesting(), "Editor::IsTesting true while editing"),
                            Is(!Editor::Typing(), "Editor::Typing true with no text box focused"), Is(Editor::Placed().length() == 0, "Editor::Placed not empty with nothing placed")};
+        return All(c);
+    });
+    Add("editor", "Editor asset operations reject missing assets", "Editor::SpawnMesh,Editor::SpawnAsset,Editor::SetMesh,Editor::SetMaterial,Editor::DescribeMesh,Editor::DescribeAsset,Editor::RepairMeshes", function() {
+        string action = Editor::SpawnAsset("");
+        array<string> c = {Is(Editor::SpawnMesh("") < 0, "Editor::SpawnMesh accepted an empty path"),
+                           Is(action != "", "Editor::SpawnAsset returned no status for an empty path"),
+                           Is(!Editor::SetMesh(piece, ""), "Editor::SetMesh accepted an empty path"),
+                           Is(!Editor::SetMaterial(piece, ""), "Editor::SetMaterial accepted an empty path"),
+                           Is(Editor::DescribeMesh("") == "", "Editor::DescribeMesh resolved an empty path"),
+                           Is(Editor::DescribeAsset("") == "", "Editor::DescribeAsset resolved an empty path"),
+                           Is(Editor::RepairMeshes() >= 0, "Editor::RepairMeshes returned a negative count")};
+        return All(c);
+    });
+    Add("editor", "Editor reflected properties", "Editor::InspectProperties,Editor::InspectPropertiesPage,Editor::InspectPropertyChildren,Editor::PropertyObjectName,Editor::SetProperty,Editor::SetEditedProperty", function() {
+        string all = Editor::InspectProperties(piece);
+        string page = Editor::InspectPropertiesPage(piece, "", 0, 4);
+        array<string> c = {Is(all != "", "Editor::InspectProperties returned no fields"),
+                           Is(page != "", "Editor::InspectPropertiesPage returned no fields"),
+                           Is(Editor::InspectPropertyChildren(piece, "Actor.__ApiTestsMissing", 4) == "", "Editor::InspectPropertyChildren returned fields for a missing path"),
+                           Is(Editor::PropertyObjectName(piece) != "", "Editor::PropertyObjectName returned an empty name"),
+                           Is(!Editor::SetProperty(piece, "Actor.__ApiTestsMissing", "1"), "Editor::SetProperty accepted a missing path"),
+                           Is(!Editor::SetEditedProperty(piece, "Actor.__ApiTestsMissing", "1"), "Editor::SetEditedProperty accepted a missing path")};
         return All(c);
     });
     Add("editor", "Editor move and turn a piece", "Editor::GetLocation,Editor::SetLocation,Editor::GetRotation,Editor::SetRotation", function() {
