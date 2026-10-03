@@ -328,16 +328,16 @@
       "description": "Real glass balls, clear or in 10 colours: see-through, bending the track behind them, with live reflections of the track around you.",
       "author": "AnythingGoes",
       "repo": "AnythingGoes-ballest/ballest-glass-balls",
-      "version": "0.1.0",
-      "commit": "a61d868f715025cd3ca97caf875320c92cc72090",
+      "version": "0.1.1",
+      "commit": "19c7a9c899558927c3db250fb0fe4d1b8efe686f",
       "min_host": "0.23.2",
       "icon": "icon.png",
       "dependencies": [
         "cosmetic-kit"
       ],
       "files": {
-        "info.toml": "4fc516e1a583fac4f4c83470c7da8c6e05356a2d670f59af6a00129910f169d9",
-        "main.as": "457c1ca906aad85395c7d3cdb6a1f6cd775e7e533fe4178d412f44ebc3dd1459",
+        "info.toml": "5412cbe1e159c0052a97060b8e837f8312a572f98a5c453a0e56499ded374a64",
+        "main.as": "fd59c08add9c9139ca63fef990e62e32c7b99b6c8578bc911859b78c8baa42d6",
         "preview.png": "3150a698cf32502f179f3fc447aeb2de727f458215a5fa60297a9ca6551aa53c",
         "previews/blue.png": "c6b8a9ca87c5c570da7da5c74f8536a8109277e863a80ac700e02bc2195b6a94",
         "previews/cyan.png": "ba5590c1793c525c440536c7c461f4c812b6d7c4c88f52dab48c389303062013",
@@ -360,7 +360,7 @@
         "models/glass_red.txt": "bc59b978757f26ad91b85a5ca121384f1f20162cab4d517e574b0a669f55554e",
         "models/glass_smoke.txt": "2f084e9f56cd0318219ffd0472e17ae3c8778def18fff4187d10f4f3abdf673a",
         "models/glass_yellow.txt": "434ee3cff08fa708cd07d9bb1878de7e91f2e9cf5b51237ec9d8968b7af79077",
-        "models/glass_sphere.glb": "f2d9aaa291e68f8260e52cc8957376eebf05bc4f4be5317661817e563b07276a",
+        "models/glass_sphere.glb": "ef231cb5035a9d191a3bd275987b0e33b800af79906dceb8e8977e576fa5ee48",
         "icon.png": "c7659b6837e8bdd7397effd70ec3b64d93f4a5b1e5d475264e85ffea01857460"
       }
     },
@@ -636,11 +636,11 @@
     }
   ],
   "host": {
-    "version": "0.23.2",
+    "version": "0.23.3",
     "repo": "AnythingGoes-ballest/ballest-plugin-manager",
-    "commit": "6c5efcb7510d8a75d225733217298685edf3741d",
-    "dll": "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/download/v0.23.2/version.dll",
-    "dll_sha256": "55e798b1075ba2523f71a34ab51894bf160ad8619c6f031f5a3d2300336bc9d6",
+    "commit": "c8ad09d5d83b171227ea30cc20a7fe9026ebc306",
+    "dll": "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/download/v0.23.3/version.dll",
+    "dll_sha256": "a3085b20dc0bbd90f5815c468667945fe76e3e33a1b497d8237342763ecbbec5",
     "files": {
       "plugins/hello-world/info.toml": "5300e78277bc1e92d4d1626ce17ed15e938f37e692b2271b58c3c9c30b79be40",
       "plugins/hello-world/main.as": "24f510821cb3ea7825bfef6363d92e12fd493b9977038beb9e6c297a692fb23b",
