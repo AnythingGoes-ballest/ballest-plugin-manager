@@ -20,6 +20,11 @@ struct Value {
             if (k == key) return &v;
         return nullptr;
     }
+    Value* Get(const std::string& key) {
+        for (auto& [k, v] : members)
+            if (k == key) return &v;
+        return nullptr;
+    }
     std::string Str(const std::string& key, const std::string& fallback = "") const {
         const Value* v = Get(key);
         return v && v->type == String ? v->string : fallback;
@@ -28,5 +33,6 @@ struct Value {
 
 // False with `error` set if the text is not valid JSON.
 bool Parse(const std::string& text, Value& out, std::string& error);
+std::string Stringify(const Value& value, bool pretty = true);
 
 }  // namespace json

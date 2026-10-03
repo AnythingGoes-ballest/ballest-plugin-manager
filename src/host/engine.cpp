@@ -308,6 +308,15 @@ Obj FindObjectByName(const std::string& name) {
     return found;
 }
 
+Obj FindObjectByPath(const std::string& path) {
+    Obj found = nullptr;
+    ForEachObject([&](Obj o) {
+        if (PathOf(o) == path) found = o;
+        return found == nullptr;
+    });
+    return found;
+}
+
 Obj FindCdo(const std::string& className) {
     if (auto it = gCdos.find(className); it != gCdos.end())
         if (Obj cdo = Get(it->second)) return cdo;
@@ -341,9 +350,38 @@ std::string KindOf(const Prop& p) {
                : "";
 }
 
+uint64_t FlagsOf(const Prop& p) {
+    return p ? At<uint64_t>(p.field, layout::kFPropertyFlagsOffset) : 0;
+}
+
 // Only a StructProperty has a struct pointer at this offset; for any other kind those bytes are something else.
 Obj StructOf(const Prop& p) {
     return KindOf(p) == "StructProperty" ? At<Obj>(p.field, layout::kFStructPropertyStructTypeOffset) : nullptr;
+}
+
+Obj ObjectClassOf(const Prop& p) {
+    const std::string kind = KindOf(p);
+    return kind == "ObjectProperty" || kind == "ClassProperty"
+               ? At<Obj>(p.field, layout::kFObjectPropertyClassOffset)
+               : nullptr;
+}
+
+Obj ClassMetaOf(const Prop& p) {
+    return KindOf(p) == "ClassProperty" ? At<Obj>(p.field, layout::kFClassPropertyMetaClassOffset) : nullptr;
+}
+
+Prop EnumUnderlyingOf(const Prop& p) {
+    if (KindOf(p) != "EnumProperty") return {};
+    uint8_t* underlying = At<uint8_t*>(p.field, layout::kFEnumPropertyUnderlyingOffset);
+    return underlying ? Prop{underlying, 0, At<int32_t>(underlying, layout::kFPropertyValueSizeOffset)} : Prop{};
+}
+
+Prop InnerOf(const Prop& p) {
+    if (KindOf(p) != "ArrayProperty") return {};
+    uint8_t* inner = At<uint8_t*>(p.field, layout::kFArrayPropertyInnerOffset);
+    return inner ? Prop{inner, At<int32_t>(inner, layout::kFPropertyValueLocationOffset),
+                        At<int32_t>(inner, layout::kFPropertyValueSizeOffset)}
+                 : Prop{};
 }
 
 std::vector<std::string> PropertyNames(Obj structure) {
@@ -352,6 +390,30 @@ std::vector<std::string> PropertyNames(Obj structure) {
         for (uint8_t* f = At<uint8_t*>(s, layout::kUStructFirstPropertyOffset); f; f = At<uint8_t*>(f, layout::kFFieldNextFieldOffset))
             out.push_back(FieldName(f));
     return out;
+}
+
+bool MemoryReadable(const void* pointer, size_t bytes) {
+    return Readable(reinterpret_cast<uintptr_t>(pointer), bytes);
+}
+
+bool ReadBoolValue(const uint8_t* base, const Prop& property, bool* out) {
+    if (!base || !out || KindOf(property) != "BoolProperty" || property.size <= 0) return false;
+    const uint8_t byteIndex = At<uint8_t>(property.field, layout::kFBoolPropertyByteIndexOffset);
+    const uint8_t bitMask = At<uint8_t>(property.field, layout::kFBoolPropertyBitMaskOffset);
+    if (byteIndex >= property.size || bitMask == 0 ||
+        !Readable(reinterpret_cast<uintptr_t>(base + property.offset + byteIndex), 1)) return false;
+    *out = (base[property.offset + byteIndex] & bitMask) != 0;
+    return true;
+}
+
+bool WriteBoolValue(uint8_t* base, const Prop& property, bool value) {
+    bool ignored = false;
+    if (!ReadBoolValue(base, property, &ignored)) return false;
+    const uint8_t byteIndex = At<uint8_t>(property.field, layout::kFBoolPropertyByteIndexOffset);
+    const uint8_t bitMask = At<uint8_t>(property.field, layout::kFBoolPropertyBitMaskOffset);
+    uint8_t& byte = base[property.offset + byteIndex];
+    byte = value ? static_cast<uint8_t>(byte | bitMask) : static_cast<uint8_t>(byte & ~bitMask);
+    return true;
 }
 
 int NestedOffset(Obj structure, const std::vector<const char*>& path, Prop* last) {

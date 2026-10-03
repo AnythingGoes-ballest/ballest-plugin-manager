@@ -216,9 +216,7 @@ void WinPivot(ui::Window* w, float x, float y) {
     w->layoutDirty = true;
 }
 void WinOffset(ui::Window* w, float x, float y) {
-    w->offsetX = x;
-    w->offsetY = y;
-    w->layoutDirty = true;
+    ui::SetOffset(w, x, y);
 }
 void WinCornerRadius(ui::Window* w, float radius) {
     w->cornerRadius = radius < 0 ? 0 : radius;
@@ -231,6 +229,12 @@ void WinBackground(ui::Window* w, float r, float g, float b, float a) {
 bool WinGetVisible(ui::Window* w) { return w->visible; }
 void WinSetVisible(ui::Window* w, bool v) { w->visible = v; }
 ui::Widget* WinText(ui::Window* w, const std::string& s, float size) { return ui::AddWidget(w, ui::Kind::Text, s, size); }
+ui::Widget* WinWrappedText(ui::Window* w, float width, const std::string& s, float size) {
+    ui::Widget* text = ui::AddWidget(w, ui::Kind::Text, s, size);
+    text->textWidth = width;
+    text->wrap = true;
+    return text;
+}
 ui::Widget* WinTextAt(ui::Window* w, const std::string& s, float size, float x, float y) {
     return ui::AddPlaced(w, ui::Kind::Text, s, size, x, y, 0, 0);
 }
@@ -433,6 +437,76 @@ bool EditorScreenPosition(int id, float& x, float& y) {
     y = static_cast<float>(sy);
     return ok;
 }
+int EditorSpawnMesh(const std::string& path) {
+    plugins::GameWork work;
+    return editor::SpawnMesh(path);
+}
+std::string EditorSpawnAsset(const std::string& path) {
+    plugins::GameWork work;
+    return editor::SpawnAsset(path);
+}
+bool EditorSetMesh(int id, const std::string& path) {
+    plugins::GameWork work;
+    return editor::SetMesh(id, path);
+}
+bool EditorSetMaterial(int id, const std::string& path) {
+    plugins::GameWork work;
+    return editor::SetMaterial(id, path);
+}
+std::string EditorDescribeMesh(const std::string& path) {
+    plugins::GameWork work;
+    return editor::DescribeMesh(path);
+}
+std::string EditorDescribeAsset(const std::string& path) {
+    plugins::GameWork work;
+    return editor::DescribeAsset(path);
+}
+int EditorRepairMeshes() {
+    plugins::GameWork work;
+    return editor::RepairMeshes();
+}
+std::string CleanPropertyField(std::string value) {
+    for (char& c : value)
+        if (c == '\t' || c == '\r' || c == '\n') c = ' ';
+    return value;
+}
+std::string PropertySnapshot(const std::vector<editor::PropertyInfo>& properties) {
+    std::string snapshot;
+    for (const editor::PropertyInfo& property : properties)
+        snapshot += CleanPropertyField(property.path) + "\t" + CleanPropertyField(property.kind) + "\t" +
+                    (property.editable ? "1" : "0") + "\t" + CleanPropertyField(property.value) + "\t" +
+                    CleanPropertyField(property.readOnlyReason) + "\n";
+    return snapshot;
+}
+std::string EditorInspectProperties(int id) {
+    plugins::GameWork work;
+    return PropertySnapshot(editor::InspectProperties(id));
+}
+std::string EditorInspectPropertiesPage(int id, const std::string& filter, int offset, int limit) {
+    plugins::GameWork work;
+    if (offset < 0) offset = 0;
+    if (limit < 0) limit = 0;
+    if (limit > 200) limit = 200;
+    return PropertySnapshot(editor::InspectPropertiesPage(id, filter, static_cast<size_t>(offset), static_cast<size_t>(limit)));
+}
+std::string EditorInspectPropertyChildren(int id, const std::string& path, int limit) {
+    plugins::GameWork work;
+    if (limit < 0) limit = 0;
+    if (limit > 200) limit = 200;
+    return PropertySnapshot(editor::InspectPropertyChildren(id, path, static_cast<size_t>(limit)));
+}
+std::string EditorPropertyObjectName(int id) {
+    plugins::GameWork work;
+    return editor::PropertyObjectName(id);
+}
+bool EditorSetProperty(int id, const std::string& path, const std::string& value) {
+    plugins::GameWork work;
+    return editor::SetProperty(id, path, value);
+}
+bool EditorSetEditedProperty(int id, const std::string& path, const std::string& value) {
+    plugins::GameWork work;
+    return editor::SetEditedProperty(id, path, value);
+}
 float InputWheel() { return static_cast<float>(game::MouseWheel()); }
 bool InputMousePosition(float& x, float& y) {
     double mx = 0, my = 0;
@@ -618,6 +692,7 @@ void RegisterUi() {
     Method("Window", "bool get_visible() property", asFUNCTION(WinGetVisible));
     Method("Window", "void set_visible(bool) property", asFUNCTION(WinSetVisible));
     Method("Window", "Text@ AddText(const string &in, float size = 16)", asFUNCTION(WinText));
+    Method("Window", "Text@ AddWrappedText(float width, const string &in text = \"\", float size = 16)", asFUNCTION(WinWrappedText));
     Method("Window", "Text@ AddTextAt(const string &in, float size, float x, float y)", asFUNCTION(WinTextAt));
     Method("Window", "Rect@ AddRect(float x, float y, float width, float height)", asFUNCTION(WinRectAt));
     Method("Window", "Button@ AddButton(const string &in)", asFUNCTION(WinButton));
@@ -872,6 +947,19 @@ void RegisterEditor() {
     Global("void ViewForward(double &out, double &out, double &out)", asFUNCTION(EditorViewForward));
     Global("bool ScreenPosition(int, float &out, float &out)", asFUNCTION(EditorScreenPosition));
     Global("bool SetOutline(int, bool)", asFUNCTION(EditorSetOutline));
+    Global("int SpawnMesh(const string &in)", asFUNCTION(EditorSpawnMesh));
+    Global("string SpawnAsset(const string &in)", asFUNCTION(EditorSpawnAsset));
+    Global("bool SetMesh(int, const string &in)", asFUNCTION(EditorSetMesh));
+    Global("bool SetMaterial(int, const string &in)", asFUNCTION(EditorSetMaterial));
+    Global("string DescribeMesh(const string &in)", asFUNCTION(EditorDescribeMesh));
+    Global("string DescribeAsset(const string &in)", asFUNCTION(EditorDescribeAsset));
+    Global("int RepairMeshes()", asFUNCTION(EditorRepairMeshes));
+    Global("string InspectProperties(int)", asFUNCTION(EditorInspectProperties));
+    Global("string InspectPropertiesPage(int, const string &in, int, int)", asFUNCTION(EditorInspectPropertiesPage));
+    Global("string InspectPropertyChildren(int, const string &in, int)", asFUNCTION(EditorInspectPropertyChildren));
+    Global("string PropertyObjectName(int)", asFUNCTION(EditorPropertyObjectName));
+    Global("bool SetProperty(int, const string &in, const string &in)", asFUNCTION(EditorSetProperty));
+    Global("bool SetEditedProperty(int, const string &in, const string &in)", asFUNCTION(EditorSetEditedProperty));
     Global("void Select(const array<int>@)", asFUNCTION(EditorSelect));
     Global("array<int>@ DuplicateSelection()", asFUNCTION(EditorDuplicate));
     Global("void RotatePieces(const array<int>@, double, double, double, double, double, double)", asFUNCTION(EditorRotatePieces));

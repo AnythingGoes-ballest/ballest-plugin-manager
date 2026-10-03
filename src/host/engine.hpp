@@ -54,6 +54,7 @@ Obj Get(const Weak& w);                 // the object, or null once it is gone
 
 Obj FindClass(const std::string& name);         // UClass by short name
 Obj FindObjectByName(const std::string& name);  // first object with this short name (slow: scans everything)
+Obj FindObjectByPath(const std::string& path);  // live object with this complete reflected path
 Obj FindCdo(const std::string& className);      // "Default__<className>", e.g. FindCdo("GameplayStatics")
 
 // --- properties --------------------------------------------------------------------------------------------------
@@ -65,8 +66,16 @@ struct Prop {
 };
 Prop FindProp(Obj structure, const std::string& name);      // on a class/struct/function and its supers
 std::string KindOf(const Prop& p);                          // "StructProperty", "BoolProperty", ...
+uint64_t FlagsOf(const Prop& p);                            // EPropertyFlags, or 0 for no property
 Obj StructOf(const Prop& p);                                // the struct of a StructProperty, else null
+Obj ObjectClassOf(const Prop& p);                           // accepted class of an Object/Class property, else null
+Obj ClassMetaOf(const Prop& p);                             // required superclass of a ClassProperty value, else null
+Prop EnumUnderlyingOf(const Prop& p);                       // numeric storage of an EnumProperty, else empty
+Prop InnerOf(const Prop& p);                                // the element property of an ArrayProperty, else empty
 std::vector<std::string> PropertyNames(Obj structure);
+bool MemoryReadable(const void* pointer, size_t bytes);
+bool ReadBoolValue(const uint8_t* base, const Prop& property, bool* out);
+bool WriteBoolValue(uint8_t* base, const Prop& property, bool value);
 // Offset of a nested member, e.g. {"Font", "Size"} on TextBlock; -1 if any step is missing.
 int NestedOffset(Obj structure, const std::vector<const char*>& path, Prop* last = nullptr);
 

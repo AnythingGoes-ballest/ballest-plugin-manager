@@ -404,6 +404,7 @@ void KeepRestores();
 void Frame() {
     Obj pawn = Pawn();
     gHandler = eng::MakeWeak(pawn ? eng::ReadObj(pawn, "SKGMLEHandler") : nullptr);
+    AssetBrowserFrame();
     if (!Handler()) {
         gPlaced.clear();
         gKnown.clear();

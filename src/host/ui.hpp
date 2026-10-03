@@ -86,6 +86,7 @@ struct Widget {
     float width = 200;                  // slider, dropdown, space, text area, text input and image width; 0 = fill
     float height = 0;                   // text area and image height; 0 = fill
     float textWidth = 0;                // text: a fixed width (0 = as wide as the text)
+    bool wrap = false;                  // text: wrap long lines inside textWidth
     uint8_t justify = 0;                // text: 0 left, 1 centre, 2 right (ETextJustify)
     Color background{0.15f, 0.15f, 0.15f, 1};                               // buttons
     bool backgroundDirty = false;
@@ -169,6 +170,7 @@ struct Window {
 };
 
 Window* MakeWindow(int owner);
+void SetOffset(Window* w, float x, float y);  // moves a live screen window without rebuilding its widgets
 void NewRow(Window* w);                 // widgets added after this go on a new row underneath
 void StartSidebar(Window* w, float width);  // widgets added after this stack in a column on the left
 void StartMain(Window* w);              // ... and after this go back into the rows

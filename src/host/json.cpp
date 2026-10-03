@@ -1,6 +1,8 @@
 #include "json.hpp"
 
 #include <cstdlib>
+#include <iomanip>
+#include <sstream>
 
 namespace json {
 namespace {
@@ -158,6 +160,80 @@ bool Parse(const std::string& text, Value& out, std::string& error) {
         return false;
     }
     return true;
+}
+
+namespace {
+
+std::string Quote(const std::string& text) {
+    std::string out = "\"";
+    const char* hex = "0123456789abcdef";
+    for (unsigned char c : text) {
+        switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\b': out += "\\b"; break;
+            case '\f': out += "\\f"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (c < 0x20) {
+                    out += "\\u00";
+                    out += hex[c >> 4];
+                    out += hex[c & 15];
+                } else {
+                    out += static_cast<char>(c);
+                }
+        }
+    }
+    return out + "\"";
+}
+
+void WriteValue(const Value& value, std::string& out, int depth, bool pretty) {
+    const std::string indent = pretty ? std::string(static_cast<size_t>(depth) * 2, ' ') : std::string();
+    const std::string childIndent = pretty ? std::string(static_cast<size_t>(depth + 1) * 2, ' ') : std::string();
+    switch (value.type) {
+        case Value::Null: out += "null"; break;
+        case Value::Bool: out += value.boolean ? "true" : "false"; break;
+        case Value::Number: {
+            std::ostringstream number;
+            number << std::setprecision(17) << value.number;
+            out += number.str();
+            break;
+        }
+        case Value::String: out += Quote(value.string); break;
+        case Value::Array:
+            out += '[';
+            for (size_t i = 0; i < value.items.size(); ++i) {
+                if (i) out += ',';
+                if (pretty) out += '\n' + childIndent;
+                WriteValue(value.items[i], out, depth + 1, pretty);
+            }
+            if (pretty && !value.items.empty()) out += '\n' + indent;
+            out += ']';
+            break;
+        case Value::Object:
+            out += '{';
+            for (size_t i = 0; i < value.members.size(); ++i) {
+                if (i) out += ',';
+                if (pretty) out += '\n' + childIndent;
+                out += Quote(value.members[i].first);
+                out += pretty ? ": " : ":";
+                WriteValue(value.members[i].second, out, depth + 1, pretty);
+            }
+            if (pretty && !value.members.empty()) out += '\n' + indent;
+            out += '}';
+            break;
+    }
+}
+
+}  // namespace
+
+std::string Stringify(const Value& value, bool pretty) {
+    std::string out;
+    WriteValue(value, out, 0, pretty);
+    out += '\n';
+    return out;
 }
 
 }  // namespace json

@@ -112,6 +112,7 @@ Obj BuildWidget(Obj tree, Widget& item) {
             Obj text = w::Spawn("TextBlock", tree);
             w::SetVisibility(text, w::kHitTestInvisible);     // clicks go to what is under it (a drag surface)
             w::SetFontSize(text, item.size);
+            if (item.wrap) eng::Call(text, "SetAutoWrapText", uint8_t{1});
             w::SetText(text, item.text);
             w::SetTextColor(text, item.color);
             if (item.justify) eng::Call(text, "SetJustification", item.justify);
@@ -727,6 +728,13 @@ void Sync(Widget& item) {
 }
 
 }  // namespace
+
+void SetOffset(Window* win, float x, float y) {
+    win->offsetX = x;
+    win->offsetY = y;
+    if (win->dock == Dock::Screen)
+        if (Obj slot = eng::Get(win->slot)) eng::Call(slot, "SetPosition", w::Vec2{x + win->hudX, y + win->hudY});
+}
 
 namespace {
 void AddRow(Window* win, int view) {

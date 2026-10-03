@@ -78,6 +78,7 @@ constexpr int kFPropertyArrayDimOffset = 0x30;               // ArrayDim: elemen
 // Fields of container properties, after FProperty's own 0x70 bytes. Checked by the type dump (eng::DumpTypes): every
 // pointer read must lead to a property, and the dump matched the pre-update .usmap for types the update left alone.
 constexpr int kFObjectPropertyClassOffset = 0x70;            // FObjectPropertyBase::PropertyClass
+constexpr int kFClassPropertyMetaClassOffset = 0x78;         // FClassProperty::MetaClass
 constexpr int kFBytePropertyEnumOffset = 0x70;               // FByteProperty::Enum (null for a plain byte)
 constexpr int kFEnumPropertyUnderlyingOffset = 0x70;         // FEnumProperty::UnderlyingProp
 constexpr int kFEnumPropertyEnumOffset = 0x78;               // FEnumProperty::Enum

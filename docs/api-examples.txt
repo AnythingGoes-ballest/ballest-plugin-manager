@@ -758,6 +758,12 @@ Adds a tick box with a label next to it. `size` is the label's font height (16 i
 UI::CheckBox@ xAxis = window.AddCheckBox("X", 16);
 xAxis.checked = true;
 
+== UI::Window.AddWrappedText
+Adds non-scrollable text constrained to `width` pixels. Long lines wrap and the widget grows vertically until all
+of its text is visible. `size` is the font height (16 if left out).
+--
+UI::Text@ tooltip = window.AddWrappedText(620, "A long description that should wrap without a scrollbar.", 14);
+
 == UI::Window.DockInEditorDetails
 Makes the window a section of the track editor's details panel, under the game's transform and paint sections, shown
 while pieces are selected. Call it before adding widgets. `SetAnchor`, `SetOffset` and `movable` don't apply to a
@@ -1543,6 +1549,72 @@ will affect. Selecting or deselecting the piece resets it. Returns false if the 
 Requires host 0.13.0.
 --
 Editor::SetOutline(piece, true);    // about to be selected
+
+== Editor::SpawnMesh
+Spawns a cooked Static Mesh as a persistent editor piece and returns its id, or -1 on failure.
+--
+int piece = Editor::SpawnMesh("/Game/Path/SM_Example.SM_Example");
+
+== Editor::SpawnAsset
+Loads an asset and performs its natural editor action. The returned text describes what was spawned, previewed or
+loaded, or why the action could not be performed.
+--
+status.text = Editor::SpawnAsset("/Game/Path/BP_Example.BP_Example");
+
+== Editor::SetMesh
+Applies a cooked Static Mesh to a compatible selected editor piece. Returns false for an unsupported piece or path.
+--
+Editor::SetMesh(piece, "/Game/Path/SM_Example.SM_Example");
+
+== Editor::SetMaterial
+Applies a cooked Material or Material Instance to every reflected mesh-component slot on a piece.
+--
+Editor::SetMaterial(piece, "/Game/Path/M_Example.M_Example");
+
+== Editor::DescribeMesh
+Loads a Static Mesh and returns its resolved object path, type and inheritance, or an empty string if it did not resolve.
+--
+Log::Info(Editor::DescribeMesh("/Game/Path/SM_Example.SM_Example"));
+
+== Editor::DescribeAsset
+Loads any cooked asset and returns its resolved object path, type and inheritance, or an empty string if it did not resolve.
+--
+Log::Info(Editor::DescribeAsset(assetPath));
+
+== Editor::RepairMeshes
+Reasserts visibility, render passes and collision on compatible loaded mesh pieces, returning how many were repaired.
+--
+Log::Info("repaired " + Editor::RepairMeshes() + " pieces");
+
+== Editor::InspectProperties
+Returns reflected actor and component fields as tab-separated lines: path, kind, editable flag, value and reason.
+--
+string snapshot = Editor::InspectProperties(piece);
+
+== Editor::InspectPropertiesPage
+Returns one filtered page of the same tab-separated property records. `offset` and `limit` are record counts.
+--
+string page = Editor::InspectPropertiesPage(piece, "material", 0, 20);
+
+== Editor::InspectPropertyChildren
+Returns the immediate children of a reflected struct or array property as tab-separated records.
+--
+string children = Editor::InspectPropertyChildren(piece, "Actor.SomeStruct", 64);
+
+== Editor::PropertyObjectName
+The selected actor object's reflected name, or an empty string if the id is invalid.
+--
+string actorName = Editor::PropertyObjectName(piece);
+
+== Editor::SetProperty
+Safely writes a supported reflected value from text. Nested and component paths are allowed but are runtime-only.
+--
+bool changed = Editor::SetProperty(piece, "Actor.SomeFloat", "1.5");
+
+== Editor::SetEditedProperty
+Writes a supported reflected value and marks supported top-level actor fields for Ballest's native `.balledit` arrays.
+--
+bool changed = Editor::SetEditedProperty(piece, "Actor.TotalLaps", "3");
 
 == Editor::Select
 Selects exactly these pieces, with the editor's own highlight and gizmo.

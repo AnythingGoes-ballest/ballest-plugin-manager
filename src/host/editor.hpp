@@ -28,6 +28,12 @@ struct Rot {                            // FRotator's order in memory
     double pitch = 0, yaw = 0, roll = 0;
 };
 
+struct PropertyInfo {
+    std::string path, kind, value;
+    bool editable = false;
+    std::string readOnlyReason;
+};
+
 void Frame();                           // after game::Frame
 bool Open();                            // the track editor is running
 
@@ -44,6 +50,22 @@ bool ScreenPosition(int id, double* x, double* y);
 // The editor's selection outline on a piece, as the game draws it for a selected one (read from BP_BaseItem: its Main
 // mesh renders custom depth with stencil 1), without selecting it. Selecting or deselecting it resets it.
 bool SetOutline(int id, bool on);
+
+// Asset Browser support: cooked asset actions and safe reflected property inspection/editing.
+int SpawnMesh(const std::string& assetPath);
+std::string SpawnAsset(const std::string& assetPath);
+bool SetMesh(int id, const std::string& assetPath);
+bool SetMaterial(int id, const std::string& assetPath);
+int RepairMeshes();
+std::string DescribeAsset(const std::string& assetPath);
+std::string DescribeMesh(const std::string& assetPath);
+std::vector<PropertyInfo> InspectProperties(int id);
+std::vector<PropertyInfo> InspectPropertiesPage(int id, const std::string& filter, size_t offset, size_t limit);
+std::vector<PropertyInfo> InspectPropertyChildren(int id, const std::string& path, size_t limit);
+std::string PropertyObjectName(int id);
+bool SetProperty(int id, const std::string& path, const std::string& value);
+bool SetEditedProperty(int id, const std::string& path, const std::string& value);
+void AssetBrowserFrame();
 
 // Selects exactly these pieces (the editor's own selection, with its pivot and highlighting).
 void Select(const std::vector<int>& ids);
