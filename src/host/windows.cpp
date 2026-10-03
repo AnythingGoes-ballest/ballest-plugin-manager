@@ -60,6 +60,22 @@ Obj LoadTexture(const std::string& path) {
     return texture;
 }
 
+// A font asset of the game's ("/Game/UI/Fonts/CocogoosePro.CocogoosePro"), loaded once while it lives. Only fonts:
+// anything else at that path is refused, so a text block never holds some other kind of object as its font.
+Obj LoadFont(const std::string& path) {
+    static std::map<std::string, eng::Weak> fonts;
+    if (Obj cached = eng::Get(fonts[path])) return cached;
+    if (path.rfind("/Game/", 0) != 0) return nullptr;
+    Obj asset = cosmetics::LoadAsset(eng::Widen(path));
+    if (asset && eng::ClassOf(asset) != eng::FindClass("Font")) {
+        hostlog::Warn("not a font: " + path);
+        asset = nullptr;
+    }
+    if (!asset) hostlog::Warn("font could not be loaded: " + path);
+    fonts[path] = eng::MakeWeak(asset);
+    return asset;
+}
+
 void ShowImage(Obj image, const std::string& path) {
     Obj texture = LoadTexture(path);
     if (image && texture) eng::Call(image, "SetBrushFromTexture", texture, uint8_t{0});
@@ -112,6 +128,7 @@ Obj BuildWidget(Obj tree, Widget& item) {
             Obj text = w::Spawn("TextBlock", tree);
             w::SetVisibility(text, w::kHitTestInvisible);     // clicks go to what is under it (a drag surface)
             w::SetFontSize(text, item.size);
+            if (!item.font.empty()) w::SetFontObject(text, LoadFont(item.font));
             w::SetText(text, item.text);
             w::SetTextColor(text, item.color);
             if (item.justify) eng::Call(text, "SetJustification", item.justify);
@@ -344,7 +361,8 @@ void Build(Window& win) {
     }
     if (win.cornerRadius > 0) w::RoundCorners(border, win.cornerRadius);     // as cards are
     eng::Call(border, "SetBrushColor", win.background);
-    const w::Margin padding = sized ? w::Margin{16, 16, 16, 16} : w::Margin{12, 8, 12, 8};
+    w::Margin padding = sized ? w::Margin{16, 16, 16, 16} : w::Margin{12, 8, 12, 8};
+    if (win.paddingX >= 0) padding = {win.paddingX, win.paddingY, win.paddingX, win.paddingY};
 
     // With a sidebar: HorizontalBox > [SizeBox > sidebar VerticalBox, rows VerticalBox (fills)].
     Obj content = column, sidebar = nullptr;
@@ -440,7 +458,8 @@ void Build(Window& win) {
         }
         Obj slot = eng::Call(parent, "AddChildToVerticalBox", row).ReturnObj();
         if (!slot) return;
-        if (!firstInParent) eng::Call(slot, "SetPadding", w::Margin{0, card >= 0 ? 4.0f : 8.0f, 0, 0});
+        const float rowGap = win.rowGap >= 0 ? win.rowGap : card >= 0 ? 4.0f : 8.0f;
+        if (!firstInParent && rowGap > 0) eng::Call(slot, "SetPadding", w::Margin{0, rowGap, 0, 0});
         for (const auto& item : win.items)
             if (!item->retired && !item->inSidebar && item->row == static_cast<int>(r) && item->kind == Kind::TextArea && item->height <= 0) {
                 w::FillSlot(slot);
@@ -481,11 +500,13 @@ void Build(Window& win) {
             continue;
         }
         int& placed = placedInRow[static_cast<size_t>(item.row)];
-        Obj slot = w::AddToRow(rows[static_cast<size_t>(item.row)], widget, placed++ == 0 ? 0.0f : (item.kind == Kind::Text ? 14.0f : 8.0f));
+        const float gap = placed++ == 0 ? 0.0f : item.gapBefore >= 0 ? item.gapBefore : (item.kind == Kind::Text ? 14.0f : 8.0f);
+        Obj slot = w::AddToRow(rows[static_cast<size_t>(item.row)], widget, gap);
         const bool fillsWidth =
-            (item.kind == Kind::Space || item.kind == Kind::TextArea || item.kind == Kind::TextInput || item.kind == Kind::Image ||
-             item.kind == Kind::Slider) &&
-            item.width <= 0;
+            ((item.kind == Kind::Space || item.kind == Kind::TextArea || item.kind == Kind::TextInput || item.kind == Kind::Image ||
+              item.kind == Kind::Slider) &&
+             item.width <= 0) ||
+            (item.kind == Kind::Text && item.fill);
         if (fillsWidth) w::FillSlot(slot);
         if (item.kind == Kind::TextArea && item.height <= 0) eng::Call(slot, "SetVerticalAlignment", w::kAlignFill);
     }

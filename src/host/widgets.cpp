@@ -157,6 +157,13 @@ void CopyFont(Obj from, Obj to, float sizeScale) {
     }
 }
 
+void SetFontObject(Obj textBlock, Obj font) {
+    if (!textBlock || !font) return;
+    eng::Prop last;
+    const int off = eng::NestedOffset(eng::ClassOf(textBlock), {"Font", "FontObject"}, &last);
+    if (off >= 0 && last.size == sizeof font) std::memcpy(textBlock + off, &font, sizeof font);
+}
+
 void WriteSlateColor(Obj widget, std::vector<const char*> path, Color c) {
     if (!widget) return;
     path.push_back("SpecifiedColor");

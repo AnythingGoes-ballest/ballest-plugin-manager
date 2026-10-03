@@ -633,6 +633,18 @@ Rounds the window's corners, `radius` in the units windows are placed in (`0`, t
 --
 bar.SetCornerRadius(20);    // a pill
 
+== UI::Window.SetPadding
+The space between the window's edges and its rows: `x` on the left and right, `y` at the top and bottom. Without it,
+a window has 12 x 8 (16 all round when it covers part of the screen with `SetScreenSize`). Requires host 0.24.0.
+--
+card.SetPadding(14, 8);
+
+== UI::Window.SetRowGap
+Pixels between one row and the next. Without it, rows are 8 apart (4 inside a card); `0` stacks them with no space,
+for a compact readout. Requires host 0.24.0.
+--
+card.SetRowGap(0);
+
 == UI::Window.SetBackground
 The window's background colour, red, green, blue and opacity from 0 to 1. Opacity `0` removes the background.
 --
@@ -924,6 +936,33 @@ Where the text sits in its width (`SetWidth`): 0 left, 1 centre, 2 right.
 UI::Text@ value = window.AddText("0", 12);
 value.SetWidth(70);
 value.SetAlign(2);          // numbers line up on the right
+
+== UI::Text.SetFont
+Draws the text in one of the game's fonts, by its asset path; size and colour stay as they are. `""` goes back to
+the default font. A path that isn't a font of the game's is ignored with a warning in the host log. The game's own
+menu font is `/Game/UI/Fonts/CocogoosePro.CocogoosePro`. Requires host 0.24.0.
+--
+UI::Text@ label = card.AddText("TOTAL", 12);
+label.SetFont("/Game/UI/Fonts/CocogoosePro.CocogoosePro");
+
+== UI::Text.SetFill
+`true` makes the text take whatever width its row has left, so everything after it in the row is pushed to the
+row's right edge. Rows of a window are as wide as its widest row, so a label that fills lines every row's values up
+on the right. Requires host 0.24.0.
+--
+// TOTAL                1:42:17
+// ATTEMPTS          318    +41
+UI::Text@ label = card.AddText("ATTEMPTS", 12);
+label.SetFill(true);
+card.AddText("318", 15).SetGapBefore(18);
+card.AddText("+41", 15).SetGapBefore(10);
+
+== UI::Text.SetGapBefore
+Pixels between this text and the widget before it in its row (14 without it). Has no effect on the first widget of a
+row. Requires host 0.24.0.
+--
+UI::Text@ delta = card.AddText("+3", 15);
+delta.SetGapBefore(10);
 
 == UI::Text.size
 The font height in pixels.

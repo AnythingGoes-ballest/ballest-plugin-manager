@@ -232,6 +232,15 @@ void WinCornerRadius(ui::Window* w, float radius) {
     w->cornerRadius = radius < 0 ? 0 : radius;
     w->layoutDirty = true;
 }
+void WinPadding(ui::Window* w, float x, float y) {
+    w->paddingX = x < 0 ? 0 : x;
+    w->paddingY = y < 0 ? 0 : y;
+    w->layoutDirty = true;
+}
+void WinRowGap(ui::Window* w, float gap) {
+    w->rowGap = gap < 0 ? 0 : gap;
+    w->layoutDirty = true;
+}
 void WinBackground(ui::Window* w, float r, float g, float b, float a) {
     w->background = {r, g, b, a};
     w->layoutDirty = true;
@@ -320,6 +329,19 @@ void SetTextSize(ui::Widget* w, float size) {
 float GetTextSize(ui::Widget* w) { return w->size; }
 void SetTextWidth(ui::Widget* w, float width) {
     w->textWidth = width;
+    w->window->layoutDirty = true;
+}
+void SetTextFont(ui::Widget* w, const std::string& font) {
+    if (font == w->font) return;
+    w->font = font;
+    w->window->layoutDirty = true;
+}
+void SetTextFill(ui::Widget* w, bool fill) {
+    w->fill = fill;
+    w->window->layoutDirty = true;
+}
+void SetGapBefore(ui::Widget* w, float gap) {
+    w->gapBefore = gap < 0 ? 0 : gap;
     w->window->layoutDirty = true;
 }
 void SetTextAlign(ui::Widget* w, int align) {
@@ -623,6 +645,8 @@ void RegisterUi() {
     Method("Window", "void SetOffset(float, float)", asFUNCTION(WinOffset));
     Method("Window", "void SetBackground(float, float, float, float)", asFUNCTION(WinBackground));
     Method("Window", "void SetCornerRadius(float)", asFUNCTION(WinCornerRadius));
+    Method("Window", "void SetPadding(float x, float y)", asFUNCTION(WinPadding));
+    Method("Window", "void SetRowGap(float)", asFUNCTION(WinRowGap));
     Method("Window", "bool get_visible() property", asFUNCTION(WinGetVisible));
     Method("Window", "void set_visible(bool) property", asFUNCTION(WinSetVisible));
     Method("Window", "Text@ AddText(const string &in, float size = 16)", asFUNCTION(WinText));
@@ -672,6 +696,9 @@ void RegisterUi() {
     Method("Text", "float get_size() property", asFUNCTION(GetTextSize));
     Method("Text", "void SetWidth(float)", asFUNCTION(SetTextWidth));
     Method("Text", "void SetAlign(int)", asFUNCTION(SetTextAlign));
+    Method("Text", "void SetFont(const string &in)", asFUNCTION(SetTextFont));
+    Method("Text", "void SetFill(bool)", asFUNCTION(SetTextFill));
+    Method("Text", "void SetGapBefore(float)", asFUNCTION(SetGapBefore));
     Method("Button", "bool Clicked()", asFUNCTION(Clicked));
     Method("Button", "bool get_hovered() property", asFUNCTION(Hovered));
     Method("Button", "void SetBackground(float, float, float, float)", asFUNCTION(ButtonBackground));

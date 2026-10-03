@@ -87,6 +87,9 @@ struct Widget {
     float height = 0;                   // text area and image height; 0 = fill
     float textWidth = 0;                // text: a fixed width (0 = as wide as the text)
     uint8_t justify = 0;                // text: 0 left, 1 centre, 2 right (ETextJustify)
+    std::string font;                   // text: a font asset of the game's ("/Game/UI/Fonts/..."), "" the default
+    bool fill = false;                  // text: takes the row's leftover width, pushing what follows to the right
+    float gapBefore = -1;               // pixels between it and the widget before it in its row; -1 the default
     Color background{0.15f, 0.15f, 0.15f, 1};                               // buttons
     bool backgroundDirty = false;
     Color color{1, 1, 1, 1};
@@ -142,6 +145,8 @@ struct Window {
     float rectWidth = 0, rectHeight = 0;        // SetRect: a fixed size in pixels (0 = fit the content)
     bool rectPending = false;                   // SetRect on a built window: moved and sized in place, not rebuilt
     float sidebarWidth = 0;                     // 0 = no sidebar
+    float paddingX = -1, paddingY = -1;         // SetPadding: space inside the edges; -1 the default
+    float rowGap = -1;                          // SetRowGap: pixels between rows; -1 the default (8, 4 in a card)
     bool addingToSidebar = false;
     std::vector<int> rowView{0};                // the view each row belongs to; -1 for the header
     std::vector<bool> rowRetired{false};        // rows of a cleared view
