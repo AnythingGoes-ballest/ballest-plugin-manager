@@ -741,6 +741,10 @@ Obj ImageTexture(const std::wstring& file) {
 // ordinary glass (IOR 1.5). Measured with live reflections: -0.13 to -0.7 look nearly the same, the capture does the
 // work, so the example's scale is kept.
 constexpr float kRefractionPerIor = -0.28f;
+// [Glass] Curvature: how far in from the rim the reflection reaches. Measured on Leth Trial: the example's 0.9 laid a
+// white haze of reflection over the whole ball (0 and 0.2 turn it milky white), 1.2 keeps it near the rim so the ball
+// reads as clear glass, 1.5 and up darken it.
+constexpr float kGlassCurvature = 1.2f;
 // What refracting glass reflects until a live capture feeds it (the Customize page's ball, a replay): the HDRI
 // Backdrop plugin's sky the game ships, instead of the example's street photo (measured: it read as a street inside
 // the ball).
@@ -809,6 +813,7 @@ Obj MakeMaterial(const Material& m, Obj worldContext) {
         scalar("[Roughness] Value", m.rough);
         scalar("[Opacity] Value", m.opacity);
         scalar("[Glass] Chromatic Aberration", 0);
+        scalar("[Glass] Curvature", kGlassCurvature);
         // The example instance's plaster normal map frosts the glass and its base colour texture greys it (measured):
         // a flat normal and plain white instead.
         // The engine's Starter Content glass and the game's M_Glass name theirs plainly (read from the packages);
@@ -1354,7 +1359,8 @@ void SetRefractingGlassParent(const std::string& path) { gRefractingParent = eng
 constexpr size_t kUpdateResourceSlot = 0x318;
 bool gProbeAllowed = true;              // the glassprobe test command can turn it off (to measure what it costs)
 double gProbeInterval = 0;              // seconds between captures (0: every frame; 0.1 felt laggy at speed)
-int32_t gProbeSize = 256;               // pixels per cube face
+int32_t gProbeSize = 128;               // pixels per cube face: 128 softens the reflection a little (256 and 128 cost
+                                        // the same, measured: the six scene renders cost, not the pixels)
 bool gProbeLean = true;                 // the capture skips what a small curved reflection doesn't show (below)
 bool gProbeLead = true;                 // captures where the ball will be halfway to the next capture
 
