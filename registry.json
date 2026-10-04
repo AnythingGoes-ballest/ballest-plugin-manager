@@ -104,22 +104,22 @@
     {
       "id": "dominus-ball",
       "name": "Dominus Ball",
-      "description": "Adds a clear ball with the Dominus car from Rocket League inside, standing on the ground and facing where the ball goes.",
+      "description": "Adds a clear ball with the Dominus car from Rocket League inside, standing on the ground and facing where the ball goes, tilting up and down slopes and falls too.",
       "author": "CryT4x",
       "repo": "Cryt4x/ballest-dominus-ball",
-      "version": "1.0.1",
-      "commit": "9c47a85f2bcccee85a2feecc8879a451e0d9ead5",
-      "min_host": "0.16.0",
+      "version": "1.0.3",
+      "commit": "480eb2a08c1b038923ce2f7d8c84a19c5d57af8a",
+      "min_host": "0.20.0",
       "icon": "icon.png",
       "dependencies": [
         "cosmetic-kit"
       ],
       "files": {
-        "info.toml": "1ddaf55ec3c3590c43719b6a6d016ab3149b8fbfb52dfb2beca305bdaf3c4e80",
-        "main.as": "ca29441bbd9c162d4c1ce2a005623ad618b51c707fc058083039d386e3f88e56",
+        "info.toml": "02c57e926a7d44b44aa4fec6ffe1441c0c4ca5a1104a13dbc50cf1bd4ef3b1fc",
+        "main.as": "b6b95e9f86efd7c420cedba311e5fee7d3602f0652ce450f055d0e87929e7174",
         "dominus_preview.png": "69db82485689e1be26e4549e62cbc1c7d2775d804217d3772043ba2173deefcb",
         "icon.png": "69db82485689e1be26e4549e62cbc1c7d2775d804217d3772043ba2173deefcb",
-        "models/dominus.txt": "8116a19671345e3d037a92844400f61ab84d0b12ffaa2fe93007e92559f3123f",
+        "models/dominus.txt": "6d0c58ae48ec2a1e86c43ce120bbd432261b18b588dabb511a4879cb4ac86cb2",
         "models/dominus.glb": "bf259e77fda8bc27f67ad2be51cf4b7ef8c6f93c87eeb41b15bfe04fe66c8a60"
       }
     },
@@ -499,6 +499,27 @@
         "models/baby.txt": "c423820c5845812cb69c3bff025e0f8b25f0262192469d2851e0f2a21fdd3fde",
         "models/gongon.txt": "53491ff866c775587edae44c869ed0992ff1f6c1f30ade8d0fbe6c9e54f9d7a0",
         "models/meemee.txt": "f6fe30c42e11df160122cbd97569d182fc1736f8f8789057806d5fe67819bfe1"
+      }
+    },
+    {
+      "id": "pac-man",
+      "name": "Pac-Man",
+      "description": "Adds a clear ball with Pac-Man inside: he faces where the ball goes and chomps while it rolls, faster the faster it goes.",
+      "author": "CryT4x",
+      "repo": "Cryt4x/ballest-pac-man",
+      "version": "1.0.2",
+      "commit": "7de7c546eef2d74649047ab0630979895375871a",
+      "min_host": "0.16.0",
+      "icon": "icon.png",
+      "dependencies": [
+        "cosmetic-kit"
+      ],
+      "files": {
+        "info.toml": "3a21374ed4476577f8ba4667281f5bbe15eef7bdaaa42cb20ba71f1267472052",
+        "main.as": "2da4fd575c74adb1fa9e3d5b924a4418c1b4a67871c69e0a773a374acce2cf6b",
+        "icon.png": "35e8eca2af05414098bd6cd4bfef5e82d0382a30814a4f1c0419031e5327c774",
+        "pacman_preview.png": "35e8eca2af05414098bd6cd4bfef5e82d0382a30814a4f1c0419031e5327c774",
+        "models/pacman.txt": "41582dfb86321e6e5cddc0c4ee7c8e0d95c425e1a8bb632b9bff7e8f1a02dfb5"
       }
     },
     {
