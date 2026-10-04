@@ -729,6 +729,49 @@ void RegisterUi()
                            Is(win.visible && win.zOrder == 150, "Window.zOrder/Window.visible read back wrong")};
         return All(c);
     });
+    Add("ui", "UI fonts and gaps", "Text.SetFont,Text.SetFill,Window.SetPadding,Window.SetRowGap,Text.SetGapBefore,Button.SetGapBefore,Slider.SetGapBefore,Dropdown.SetGapBefore,TextArea.SetGapBefore,TextInput.SetGapBefore,Image.SetGapBefore,CheckBox.SetGapBefore", function() {
+        if (win is null)
+            return "no window (the widget test failed)";
+        if (step == 0)
+        {
+            uText.visible = true;
+            uText.text = "api font text";
+            uText.SetFont("/Game/UI/Fonts/CocogoosePro.CocogoosePro");
+            uText.SetFill(true);
+            uPlaced.SetFont("/Engine/EngineFonts/Roboto.Roboto");     // not a font of the game's: refused
+            win.SetPadding(14, 8);
+            win.SetRowGap(0);
+            uText.SetGapBefore(18);
+            uButton.SetGapBefore(10);
+            uSlider.SetGapBefore(10);
+            uDrop.SetGapBefore(10);
+            uArea.SetGapBefore(10);
+            uInput.SetGapBefore(10);
+            uImage.SetGapBefore(10);
+            uCheck.SetGapBefore(-1);                                  // negative: the host's default back
+            mark = Log::LineCount();
+            t0 = Host::Time();
+            step = 1;
+            return WAIT;
+        }
+        if (step == 1)
+        {
+            if (Elapsed() < 1)
+                return WAIT;
+            Console::Run("state");
+            step = 2;
+            return WAIT;
+        }
+        string line = ScreenState();
+        if (line == "")
+            return WAIT;
+        array<string> c = {Is(line.findFirst("text[api font text]") >= 0, "Text.SetFont/SetFill: the text is not on screen after the rebuild"),
+                           Is(LogSince("not a font of the game's: /Engine/EngineFonts/Roboto.Roboto"), "Text.SetFont: a path outside /Game/ was not refused")};
+        win.SetPadding(-1, -1);
+        win.SetRowGap(-1);
+        uText.SetFill(false);
+        return All(c);
+    });
     Add("ui", "UI text", "Text.text,Text.SetColor,Text.size,Text.SetWidth,Text.SetAlign,Text.visible,Text.SetPosition,Rect.SetRect,Rect.SetColor,Rect.visible", function() {
         if (win is null)
             return "no window (the widget test failed)";

@@ -107,6 +107,7 @@ def main():
     ap.add_argument("--timeout", type=int, default=1500, help="seconds for the whole run")
     ap.add_argument("--coverage", action="store_true", help="only check (offline) that every documented API has a test")
     ap.add_argument("--slot", type=int, default=0, choices=range(0, 10), help="run in sandboxed test copy N (1-9)")
+    ap.add_argument("--host", default=None, help="with --slot: a host build of its own for the copy (test_instance.py start --host)")
     args = ap.parse_args()
     if args.coverage:
         coverage()
@@ -150,7 +151,7 @@ def main():
     started = time.time()
     print(f"launching the game with {ID} (other plugins off: {', '.join(others) or 'none'})")
     if SLOT:
-        if test_instance.start(SLOT, [], None, False, 180) != 0:
+        if test_instance.start(SLOT, [], None, False, 180, host=args.host) != 0:
             sys.exit(f"slot {SLOT} didn't start sandboxed")
     else:
         os.startfile("steam://rungameid/3339810")

@@ -54,7 +54,7 @@ each be hidden: the labels line up on the left, the values on the right, and a r
 up (a space has no `visible`, so it would hold its row open). `SetGapBefore` sets the gap before any widget in a row,
 and `window.SetPadding` and `window.SetRowGap` set the space inside the window's edges and between rows. Text can
 also be drawn in one of the game's fonts with `text.SetFont("/Game/UI/Fonts/CocogoosePro.CocogoosePro")`. These
-need host 0.24.0:
+need host 0.23.6:
 
 ```cpp
 window.SetPadding(14, 8);

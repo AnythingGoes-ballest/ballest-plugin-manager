@@ -636,14 +636,14 @@ bar.SetCornerRadius(20);    // a pill
 == UI::Window.SetPadding
 The space between the window's edges and its rows: `x` on the left and right, `y` at the top and bottom. Without it,
 a window has 12 x 8 (16 all round when it covers part of the screen with `SetScreenSize`); a negative value puts that
-back. Requires host 0.24.0.
+back. Requires host 0.23.6.
 --
 window.SetPadding(14, 8);
 
 == UI::Window.SetRowGap
 Pixels between one row and the next, and between rows inside a card. Without it, rows are 8 apart (4 inside a card);
 `0` stacks them with no space, for a compact readout, and a negative value puts the default back. The 8 between cards
-and the 12 under a header stay as they are. Requires host 0.24.0.
+and the 12 under a header stay as they are. Requires host 0.23.6.
 --
 window.SetRowGap(0);
 
@@ -927,7 +927,7 @@ resetButton.visible = UI::CursorShown();
 
 == UI::Text.SetGapBefore UI::Button.SetGapBefore UI::Slider.SetGapBefore UI::Dropdown.SetGapBefore UI::TextArea.SetGapBefore UI::TextInput.SetGapBefore UI::Image.SetGapBefore UI::CheckBox.SetGapBefore
 Pixels between this widget and the one before it in its row (14 before a text, 8 before anything else); a negative value puts
-the default back. Has no effect on the first widget of a row. Requires host 0.24.0.
+the default back. Has no effect on the first widget of a row. Requires host 0.23.6.
 --
 UI::Text@ delta = window.AddText("+3", 15);
 delta.SetGapBefore(10);
@@ -949,7 +949,7 @@ value.SetAlign(2);          // numbers line up on the right
 == UI::Text.SetFont
 Draws the text in one of the game's fonts, by its asset path; size and colour stay as they are. `""` goes back to
 the default font. A path that isn't a font of the game's is ignored, with one warning in the host log. The game's own
-menu font is `/Game/UI/Fonts/CocogoosePro.CocogoosePro`. Requires host 0.24.0.
+menu font is `/Game/UI/Fonts/CocogoosePro.CocogoosePro`. Requires host 0.23.6.
 --
 UI::Text@ label = window.AddText("TOTAL", 12);
 label.SetFont("/Game/UI/Fonts/CocogoosePro.CocogoosePro");
@@ -959,7 +959,7 @@ label.SetFont("/Game/UI/Fonts/CocogoosePro.CocogoosePro");
 row's right edge. Rows of a window are as wide as its widest row, so a label that fills lines every row's values up
 on the right. It does what `AddSpace(0)` after the text would, but goes with the text: a row whose widgets are all
 hidden closes up, which a space would keep open. With `SetWidth` as well, the width is the least it takes.
-Requires host 0.24.0.
+Requires host 0.23.6.
 --
 // TOTAL                1:42:17
 // ATTEMPTS          318    +41
