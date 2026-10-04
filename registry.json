@@ -367,17 +367,17 @@
     {
       "id": "grind-stats",
       "name": "Grind Stats",
-      "description": "Time spent, restarts, and respawns and falls at each checkpoint, for every map you play, with totals across all of them.",
-      "author": "AnythingGoes",
+      "description": "Played time, attempts and finishes on a card, all-time and this session, plus restarts, respawns and falls at each checkpoint, for every map you play.",
+      "author": "AnythingGoes, Will",
       "repo": "AnythingGoes-ballest/ballest-grind-stats",
-      "version": "0.1.1",
-      "commit": "7db009c9918640386e8672a64f9a804e2ab0ca5a",
-      "min_host": "0.18.0",
+      "version": "0.2.0",
+      "commit": "7d59f206be2ecf16c0a5befc025cb10fdf0fb590",
+      "min_host": "0.23.6",
       "icon": "icon.png",
       "dependencies": [],
       "files": {
-        "info.toml": "c7e125756a7c90ee2cfcc2b48e48113b737f18711eaf617fa9fe105860d7e9bd",
-        "main.as": "64b86b932d982d3f6e1149695ec9ae2d6b95a12acba3cc6eeb63c36cc343bee0",
+        "info.toml": "c16365ccea1312ebf568071e0e2db6dfec1dec3299c711b53f495fd70031a6e3",
+        "main.as": "7a065b8fc904addadd18f9bb8270d128f0dd0dbd5a82d4e34777779ed42e6027",
         "icon.png": "808400fc93e9ec5a79f02d225da684cd949be6fbee0e0bef6accb27a1bdb1d48"
       }
     },
