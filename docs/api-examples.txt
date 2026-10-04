@@ -430,8 +430,10 @@ Runs the host's own commands, the same ones as the in-game console (footer **plu
 They're for measuring and debugging. The list is in `src/host/testchannel.hpp`.
 
 == Console::Run
-Runs a host command on the next frame. Its output goes to the log. For your own testing and debugging only: plugins
-that use it are not accepted in the registry (see Publishing).
+Runs a host command on the next frame. Its output goes to the log. Only the plugin manager's console box can use it
+(host 0.23.4 and newer: other plugins' calls are ignored, and plugins that use it are not accepted in the registry).
+In a player's game only commands that read run; commands that change the game (moving the ball, time, pausing,
+calling game functions, engine console commands, key presses) are refused, so nothing can help a run.
 --
 // Log the current view target (the camera the game is looking through)
 Console::Run("viewtarget");
@@ -1306,7 +1308,8 @@ if (Race::GetInput(x, y, jump) && jump)
     jumpLight.visible = true;
 
 == Race::SetPaused
-Pauses or unpauses the game, as its own pause does (plugins keep running). Returns false if it couldn't.
+Pauses or unpauses the game, as its own pause does (plugins keep running). Returns false if it couldn't. Not during
+a run that counts (host 0.23.4 and newer): there it returns false; in practice and in editor test runs it pauses.
 --
 bool pausedByUs = !Race::IsPaused() && Race::SetPaused(true);
 // ... later
@@ -1502,7 +1505,9 @@ double pitch, yaw, roll;
 Editor::GetRotation(id, pitch, yaw, roll);
 
 == Editor::SetLocation
-Moves a piece. After moving selected pieces, call `Select` with them so the editor's gizmo follows.
+Moves a piece. After moving selected pieces, call `Select` with them so the editor's gizmo follows. Piece ids are the
+open editor's placed pieces only (host 0.23.4 and newer): anything else, or any id during a test run or outside the
+editor, is refused.
 --
 Editor::SetLocation(id, x + 100, y, z);    // 100 units along X
 Editor::Select(Editor::Selection());

@@ -111,12 +111,18 @@ void RemoveOwner(int owner) {
     ReleaseCamera(owner);
 }
 
+// Shapes are for looking at: nothing collides with them.
+Obj NoCollision(Obj actor) {
+    if (Obj mesh = actor ? eng::ReadObj(actor, "DynamicMeshComponent") : nullptr) eng::Call(mesh, "SetCollisionEnabled", uint8_t{0});
+    return actor;
+}
+
 int Tube(int owner, const std::vector<std::array<double, 3>>& path, double radius, float r, float g, float b, bool glow, float opacity) {
-    return Keep(owner, models::SpawnTube(path, radius, {r, g, b, glow, 8, opacity}));
+    return Keep(owner, NoCollision(models::SpawnTube(path, radius, {r, g, b, glow, 8, opacity})));
 }
 
 int Ball(int owner, double radius, float r, float g, float b, bool glow) {
-    return Keep(owner, models::SpawnBall(radius, {r, g, b, glow, 8}));
+    return Keep(owner, NoCollision(models::SpawnBall(radius, {r, g, b, glow, 8})));
 }
 
 bool Move(int owner, int id, double x, double y, double z) {

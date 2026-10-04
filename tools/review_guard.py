@@ -14,6 +14,7 @@ Exits 1 with the problems listed. tools/registry.py add runs the same check befo
 """
 import json
 import subprocess
+import re
 import sys
 import urllib.request
 from pathlib import Path
@@ -40,6 +41,10 @@ def suffix(name):
     return Path(name.lower()).suffix
 
 
+# Console::Run however it's spelled: spaces around the ::, or the namespace opened (using namespace Console).
+CONSOLE = re.compile(rb"\bConsole\s*::|\bnamespace\s+Console\b")
+
+
 def file_problems(name, data):
     """What's wrong with one file a plugin or a pull request brings in."""
     ext = suffix(name)
@@ -47,8 +52,8 @@ def file_problems(name, data):
         return [f"{name}: a built or packed file ({ext}); only reviewable source is accepted"]
     if ext not in DATA_EXTENSIONS and b"\0" in data[:65536]:
         return [f"{name}: binary content in a file that should be text"]
-    if ext == ".as" and b"Console::" in data:
-        return [f"{name}: uses Console:: ({data.count(b'Console::')}x), which gets around the plugin API"]
+    if ext == ".as" and CONSOLE.search(data):
+        return [f"{name}: uses Console:: ({len(CONSOLE.findall(data))}x), which gets around the plugin API"]
     return []
 
 
@@ -100,7 +105,7 @@ def check_changed(base):
     for line in git("diff", "-U0", f"{base}...HEAD").decode("utf-8", "replace").splitlines():
         if line.startswith("+++ "):
             path = line[6:] if line.startswith("+++ b/") else None
-        elif (line.startswith("+") and path and path.endswith(".as") and "Console::" in line
+        elif (line.startswith("+") and path and path.endswith(".as") and CONSOLE.search(line.encode())
               and not path.startswith(CONSOLE_ALLOWED_PATHS)):
             problems.append(f"{path}: adds Console:: ({line[1:].strip()[:80]})")
     return problems

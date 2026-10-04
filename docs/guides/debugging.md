@@ -66,7 +66,9 @@ bool reset = resetButton.Clicked();
 
 ## The console
 
-The console's text box runs the host's own commands, the same list as `Console::Run`. The useful ones:
+The console's text box runs the host's own commands, the same list as `Console::Run`. In a player's game only the
+commands that read run (host 0.23.4 and newer); the ones that change the game are for sandboxed test copies. The
+useful ones:
 
 | Command | Shows |
 |---|---|

@@ -39,6 +39,10 @@
 
 namespace testchannel {
 
+// Test commands that change the game (and Console::Run beyond reading) are allowed: only in a sandboxed test copy whose
+// blocks are all verified in place. Never in a player's game.
+bool MutationsAllowed();
+
 void Frame();                               // game thread, every frame: runs queued commands, reads the file
 void Enqueue(const std::string& command);   // run on the next Frame, outside any plugin's time budget
 

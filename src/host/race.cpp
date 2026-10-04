@@ -1,4 +1,8 @@
 #include "race.hpp"
+#if __has_include("sandbox.hpp")
+#include "sandbox.hpp"
+#define HOST_HAS_SANDBOX 1
+#endif
 
 #include <windows.h>
 
@@ -208,19 +212,22 @@ bool AlreadyHidden(Obj o, int kind) {
     return false;
 }
 
-void ApplyPractice() {
+bool ApplyPractice() {
     Obj controller = game::PlayerController();
-    if (!controller) return;
+    if (!controller) return false;
+    int timelines = 0, triggers = 0, liveTriggers = 0;
     // The race timer (BP_MyPlayerController): its two timelines stopped, the times it keeps at 999.999, the text the
     // timer shows (RaceTimeText, which the HUD reads) set once. The text block itself is left alone: setting it would
     // replace its binding.
     bool stopped = false;
     for (const char* timeline : {"GameTime2", "LapTime"})
-        if (Obj t = eng::ReadObj(controller, timeline))
+        if (Obj t = eng::ReadObj(controller, timeline)) {
+            ++timelines;
             if (eng::Call(t, "IsPlaying").ReturnBool()) {
                 eng::Call(t, "Stop");
                 stopped = true;
             }
+        }
     for (const char* name : {"ActualRaceTime", "ActualLapTime"}) eng::WriteBytes(controller, name, &kPracticeTime, sizeof kPracticeTime);
     if (!gTimerShifted) {
         double start = 0;
@@ -253,6 +260,10 @@ void ApplyPractice() {
                 eng::Call(o, "SetCollisionEnabled", kNoCollision);
                 gHidden.push_back({eng::MakeWeak(o), 2, kQueryOnly});
             }
+            if (AlreadyHidden(o, 2)) {
+                ++triggers;
+                if (eng::Call(o, "GetCollisionEnabled").ReturnAs<uint8_t>(kQueryOnly) != kNoCollision) ++liveTriggers;
+            }
             return true;
         }
         for (Obj c : hideClasses)
@@ -275,6 +286,8 @@ void ApplyPractice() {
             }
         return true;
     });
+    // Verified, or practice isn't on: the timer's two timelines found, and checkpoint triggers found, all off.
+    return timelines == 2 && triggers > 0 && liveTriggers == 0;
 }
 
 void ReleasePractice(const std::string& why) {
@@ -525,6 +538,19 @@ void Frame() {
     int32_t runId = -1;
     if (pawn && eng::FindProp(eng::ClassOf(pawn), "RaceId")) eng::ReadBytes(pawn, "RaceId", &runId, sizeof runId);
     gRunId = runId;
+#ifdef HOST_HAS_SANDBOX
+    // A sandboxed test copy races live only on the user's own test map, the workshop map "stasis" (project rule, after
+    // a teleported finish reached the real leaderboard from a test copy): on any other live track every run is practice
+    // (timer stopped, finish off), also before the track has been read. Test runs in the editor (the user's own
+    // unreleased maps, the rule's other half) keep their timer and checkpoints.
+    static const char kTestMap[] = "custom:3805348161:";
+    if (sandbox::On() && gActive && runId >= 0 && !gPractice && gTrack.key.rfind(kTestMap, 0) != 0 &&
+        gTrack.key.find("LevelEditor") == std::string::npos) {
+        hostlog::Info("sandbox: not the test map (" + (gTrack.key.empty() ? std::string("not read yet") : gTrack.key) +
+                      "): this run is practice");
+        StartPractice();
+    }
+#endif
     if (gPractice) {
         if (pawn != eng::Get(gPracticeBall)) ReleasePractice("a new ball");
         else if (runId != gPracticeRun) ReleasePractice("a new run");
@@ -658,6 +684,10 @@ bool Input(double* x, double* y, bool* jump) {
 }
 
 bool SetPaused(bool paused) {
+    if (paused && gActive && !gPractice && !EditorTesting()) {
+        hostlog::Warn("race: not pausing a run that counts");
+        return false;
+    }
     Obj controller = game::PlayerController();
     return controller && eng::Call(Library("GameplayStatics"), "SetGamePaused", controller, static_cast<uint8_t>(paused ? 1 : 0)).ReturnBool();
 }
@@ -703,7 +733,7 @@ bool LoadBall(const std::string& state, bool momentum) {
     Obj ball = Ball(), controller = game::PlayerController();
     if (!ball || !controller || state.empty()) return false;
     StartPractice();
-    if (!gPractice) return false;                               // never move a ball whose run could still finish
+    if (!gPractice || !ApplyPractice()) return false;          // never move a ball whose run could still finish
     Vec3 at, linear, angular;
     Rot turn, control;
     struct Arm {
@@ -791,7 +821,11 @@ void StartPractice() {
     gPracticeRun = gRunId;
     gPracticeBall = eng::MakeWeak(ball);
     gPracticeGeneration = game::Generation();
-    ApplyPractice();
+    if (!ApplyPractice()) {             // fails closed: if the game changed and practice can't be verified, no practice
+        ReleasePractice("practice could not be verified (timer or checkpoints not found)");
+        hostlog::Warn("race: practice could not be verified; not turned on");
+        return;
+    }
     gNextPracticeApply = game::Seconds() + 0.5;
     hostlog::Info("race: practice on (timer stopped, checkpoints and finish off, leaderboard and ghosts hidden)");
 }

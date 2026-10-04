@@ -1,4 +1,5 @@
 #include "editor.hpp"
+#include "race.hpp"
 
 #include <windows.h>
 
@@ -81,8 +82,12 @@ Obj Handler() { return eng::Get(gHandler); }
 Obj Resolve(int id) {
     static eng::Weak actorClass;
     if (!eng::Get(actorClass)) actorClass = eng::MakeWeak(eng::FindClass("Actor"));
+    if (!Handler() || race::EditorTesting()) return nullptr;            // the editor, not a run
     Obj o = id >= 0 && id < eng::NumObjects() ? eng::ObjectAt(id) : nullptr;
-    return o && eng::IsA(o, eng::Get(actorClass)) ? o : nullptr;
+    if (!o || !eng::IsA(o, eng::Get(actorClass))) return nullptr;
+    for (Obj piece : eng::ReadObjArray(Handler(), "AllActors"))       // a placed piece, nothing else
+        if (piece == o) return o;
+    return nullptr;
 }
 
 int IdOf(Obj actor) { return eng::MakeWeak(actor).index; }

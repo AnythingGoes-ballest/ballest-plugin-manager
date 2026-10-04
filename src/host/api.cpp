@@ -62,7 +62,15 @@ unsigned LogLineCount() { return static_cast<unsigned>(hostlog::LineCount()); }
 std::string LogLine(unsigned i) { return hostlog::Line(i); }
 std::string HostVersion() { return plugins::kHostVersion; }
 double HostTime() { return game::Seconds(); }
-void ConsoleRun(const std::string& command) { testchannel::Enqueue(command); }
+void ConsoleRun(const std::string& command) {
+    // Not for plugins in general (review rule, now enforced here): the bundled plugin manager's console box, and the
+    // API tests in a completely sandboxed test copy.
+    if (!plugins::CurrentIsEssential() && !(plugins::CurrentId() == "api-tests" && testchannel::MutationsAllowed())) {
+        hostlog::Write("warn", plugins::CurrentId(), "Console::Run is only for the plugin manager");
+        return;
+    }
+    testchannel::Enqueue(command);
+}
 std::string StorageGet(const std::string& key, const std::string& fallback) { return storage::Get(plugins::CurrentId(), key, fallback); }
 void StorageSet(const std::string& key, const std::string& value) { storage::Set(plugins::CurrentId(), key, value); }
 

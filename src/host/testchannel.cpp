@@ -8,6 +8,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -28,9 +29,34 @@
 #include "settings.hpp"
 #include "tracks.hpp"
 #include "ui.hpp"
+#if __has_include("sandbox.hpp")
+#include "sandbox.hpp"
+#define HOST_HAS_SANDBOX 1
+#endif
 
 namespace testchannel {
+
+bool MutationsAllowed() {
+#ifdef HOST_HAS_SANDBOX
+    return sandbox::Complete();
+#else
+    return false;
+#endif
+}
+
 namespace {
+
+// The commands that only read the game or the host, allowed in any game. Every other command changes something (a
+// test channel command once teleported a ball into the goal and the time reached the real leaderboard), so it runs
+// only when MutationsAllowed().
+bool ReadOnlyCommand(const std::string& name) {
+    static const std::set<std::string> kReadOnly = {
+        "state", "fps", "soundstate", "checkpoints", "openstate", "functions", "instances", "props", "find", "struct",
+        "viewtarget", "materials", "watch", "children", "fnbytes", "matparams", "race", "ballstate", "ballsave", "hud",
+        "widgetpath", "strprop", "objprop", "listprop", "dumptypes", "objbytes", "membytes", "objarray", "cosmetics",
+        "skinmats", "sandbox", "sandboxtest"};
+    return kReadOnly.count(name) > 0;
+}
 
 long long gHostFrames = 0;              // host frames so far, and where the last "fps" started counting
 long long gFpsFrames = 0;
@@ -874,8 +900,13 @@ void Run(const std::string& cmd) {
     };
     const Args words = Words(cmd);
     const auto it = words.empty() ? commands.end() : commands.find(words[0]);
-    if (it == commands.end()) hostlog::Warn("test: unknown command '" + cmd + "'");
-    else it->second(words, cmd);
+    if (it == commands.end()) {
+        hostlog::Warn("test: unknown command '" + cmd + "'");
+    } else if (!ReadOnlyCommand(words[0]) && !MutationsAllowed()) {
+        hostlog::Warn("test: refused '" + words[0] + "': it changes the game, which only a completely sandboxed test copy may do");
+    } else {
+        it->second(words, cmd);
+    }
 }
 
 std::vector<std::string> gQueue;
