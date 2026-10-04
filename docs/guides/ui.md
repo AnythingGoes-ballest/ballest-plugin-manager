@@ -49,6 +49,22 @@ window.AddText("restarts 12", 18);
 
 A hidden widget (`widget.visible = false`) takes no space, so its row closes up.
 
+`text.SetFill(true)` does the same pushing from a text itself, which suits a list of label and value rows that can
+each be hidden: the labels line up on the left, the values on the right, and a row with every widget hidden closes
+up (a space has no `visible`, so it would hold its row open). `SetGapBefore` sets the gap before any widget in a row,
+and `window.SetPadding` and `window.SetRowGap` set the space inside the window's edges and between rows. Text can
+also be drawn in one of the game's fonts with `text.SetFont("/Game/UI/Fonts/CocogoosePro.CocogoosePro")`. These
+need host 0.24.0:
+
+```cpp
+window.SetPadding(14, 8);
+window.SetRowGap(0);
+UI::Text@ label = window.AddText("TOTAL", 12);
+label.SetFont("/Game/UI/Fonts/CocogoosePro.CocogoosePro");
+label.SetFill(true);
+window.AddText("1:42:17", 15).SetGapBefore(18);
+```
+
 ## Placed items
 
 Rows suit forms. For anything drawn to measure (bars, charts, a timeline), place rectangles and text at positions

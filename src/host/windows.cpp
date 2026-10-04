@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <map>
+#include <set>
 
 #include "cosmetics.hpp"
 #include "editor.hpp"
@@ -58,6 +59,26 @@ Obj LoadTexture(const std::string& path) {
     if (!texture) hostlog::Warn("image could not be loaded: " + path);
     textures[path] = eng::MakeWeak(texture);
     return texture;
+}
+
+// A font asset of the game's ("/Game/UI/Fonts/CocogoosePro.CocogoosePro"), loaded once while it lives. Only fonts:
+// anything else at that path is refused, so a text block never holds some other kind of object as its font. A path
+// that fails is remembered, so it is warned about once and not loaded again on every rebuild.
+Obj LoadFont(const std::string& path) {
+    static std::map<std::string, eng::Weak> fonts;
+    static std::set<std::string> refused;
+    if (refused.count(path)) return nullptr;
+    if (auto it = fonts.find(path); it != fonts.end())
+        if (Obj cached = eng::Get(it->second)) return cached;
+    Obj asset = path.rfind("/Game/", 0) == 0 ? cosmetics::LoadAsset(eng::Widen(path)) : nullptr;
+    if (asset && !eng::IsA(asset, eng::FindClass("Font"))) asset = nullptr;
+    if (!asset) {
+        hostlog::Warn("not a font of the game's: " + path);
+        refused.insert(path);
+        return nullptr;
+    }
+    fonts[path] = eng::MakeWeak(asset);
+    return asset;
 }
 
 void ShowImage(Obj image, const std::string& path) {
@@ -112,6 +133,7 @@ Obj BuildWidget(Obj tree, Widget& item) {
             Obj text = w::Spawn("TextBlock", tree);
             w::SetVisibility(text, w::kHitTestInvisible);     // clicks go to what is under it (a drag surface)
             w::SetFontSize(text, item.size);
+            if (!item.font.empty()) w::SetFontObject(text, LoadFont(item.font));
             w::SetText(text, item.text);
             w::SetTextColor(text, item.color);
             if (item.justify) eng::Call(text, "SetJustification", item.justify);
@@ -344,7 +366,8 @@ void Build(Window& win) {
     }
     if (win.cornerRadius > 0) w::RoundCorners(border, win.cornerRadius);     // as cards are
     eng::Call(border, "SetBrushColor", win.background);
-    const w::Margin padding = sized ? w::Margin{16, 16, 16, 16} : w::Margin{12, 8, 12, 8};
+    w::Margin padding = sized ? w::Margin{16, 16, 16, 16} : w::Margin{12, 8, 12, 8};
+    if (win.paddingX >= 0) padding = {win.paddingX, win.paddingY, win.paddingX, win.paddingY};
 
     // With a sidebar: HorizontalBox > [SizeBox > sidebar VerticalBox, rows VerticalBox (fills)].
     Obj content = column, sidebar = nullptr;
@@ -389,10 +412,13 @@ void Build(Window& win) {
     }
 
     // The header (rows of view -1, shown with every view) above one VerticalBox per view, each taking all the
-    // height; only the shown view is visible.
+    // height; only the shown view is visible. The gap under the header is only there when it has rows.
     Obj headerBox = w::Spawn("VerticalBox", tree);
     if (!headerBox) return;
-    if (Obj slot = eng::Call(column, "AddChildToVerticalBox", headerBox).ReturnObj()) eng::Call(slot, "SetPadding", w::Margin{0, 0, 0, 12});
+    bool hasHeader = false;
+    for (size_t r = 0; r < win.rowView.size(); ++r) hasHeader = hasHeader || (!win.rowRetired[r] && win.rowView[r] < 0);
+    if (Obj slot = eng::Call(column, "AddChildToVerticalBox", headerBox).ReturnObj())
+        if (hasHeader) eng::Call(slot, "SetPadding", w::Margin{0, 0, 0, 12});
     std::vector<Obj> viewBoxes;
     for (int v = 0; v < win.views; ++v) {
         Obj box = w::Spawn("VerticalBox", tree);
@@ -440,7 +466,8 @@ void Build(Window& win) {
         }
         Obj slot = eng::Call(parent, "AddChildToVerticalBox", row).ReturnObj();
         if (!slot) return;
-        if (!firstInParent) eng::Call(slot, "SetPadding", w::Margin{0, card >= 0 ? 4.0f : 8.0f, 0, 0});
+        const float rowGap = win.rowGap >= 0 ? win.rowGap : card >= 0 ? 4.0f : 8.0f;
+        if (!firstInParent && rowGap > 0) eng::Call(slot, "SetPadding", w::Margin{0, rowGap, 0, 0});
         for (const auto& item : win.items)
             if (!item->retired && !item->inSidebar && item->row == static_cast<int>(r) && item->kind == Kind::TextArea && item->height <= 0) {
                 w::FillSlot(slot);
@@ -481,11 +508,13 @@ void Build(Window& win) {
             continue;
         }
         int& placed = placedInRow[static_cast<size_t>(item.row)];
-        Obj slot = w::AddToRow(rows[static_cast<size_t>(item.row)], widget, placed++ == 0 ? 0.0f : (item.kind == Kind::Text ? 14.0f : 8.0f));
+        const float gap = placed++ == 0 ? 0.0f : item.gapBefore >= 0 ? item.gapBefore : (item.kind == Kind::Text ? 14.0f : 8.0f);
+        Obj slot = w::AddToRow(rows[static_cast<size_t>(item.row)], widget, gap);
         const bool fillsWidth =
-            (item.kind == Kind::Space || item.kind == Kind::TextArea || item.kind == Kind::TextInput || item.kind == Kind::Image ||
-             item.kind == Kind::Slider) &&
-            item.width <= 0;
+            ((item.kind == Kind::Space || item.kind == Kind::TextArea || item.kind == Kind::TextInput || item.kind == Kind::Image ||
+              item.kind == Kind::Slider) &&
+             item.width <= 0) ||
+            (item.kind == Kind::Text && item.fill);
         if (fillsWidth) w::FillSlot(slot);
         if (item.kind == Kind::TextArea && item.height <= 0) eng::Call(slot, "SetVerticalAlignment", w::kAlignFill);
     }

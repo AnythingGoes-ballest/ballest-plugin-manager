@@ -47,6 +47,7 @@ Color TextColor(Obj textBlock);
 // The Size of an FSlateFontInfo member; by default a TextBlock's Font.
 void SetFontSize(Obj widget, float size, std::vector<const char*> fontPath = {"Font"});
 void CopyFont(Obj from, Obj to, float sizeScale = 1.0f);            // font and colour of another text block
+void SetFontObject(Obj textBlock, Obj font);                        // the font face (a UFont); size and colour stay
 void WriteSlateColor(Obj widget, std::vector<const char*> path, Color c);   // an FSlateColor member
 void Unfocusable(Obj widget);           // so Space never presses the last clicked control
 void Transparent(Obj button);           // a Button that draws nothing but its content
