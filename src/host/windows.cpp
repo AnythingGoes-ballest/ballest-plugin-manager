@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <map>
+#include <set>
 
 #include "cosmetics.hpp"
 #include "editor.hpp"
@@ -61,17 +62,21 @@ Obj LoadTexture(const std::string& path) {
 }
 
 // A font asset of the game's ("/Game/UI/Fonts/CocogoosePro.CocogoosePro"), loaded once while it lives. Only fonts:
-// anything else at that path is refused, so a text block never holds some other kind of object as its font.
+// anything else at that path is refused, so a text block never holds some other kind of object as its font. A path
+// that fails is remembered, so it is warned about once and not loaded again on every rebuild.
 Obj LoadFont(const std::string& path) {
     static std::map<std::string, eng::Weak> fonts;
-    if (Obj cached = eng::Get(fonts[path])) return cached;
-    if (path.rfind("/Game/", 0) != 0) return nullptr;
-    Obj asset = cosmetics::LoadAsset(eng::Widen(path));
-    if (asset && eng::ClassOf(asset) != eng::FindClass("Font")) {
-        hostlog::Warn("not a font: " + path);
-        asset = nullptr;
+    static std::set<std::string> refused;
+    if (refused.count(path)) return nullptr;
+    if (auto it = fonts.find(path); it != fonts.end())
+        if (Obj cached = eng::Get(it->second)) return cached;
+    Obj asset = path.rfind("/Game/", 0) == 0 ? cosmetics::LoadAsset(eng::Widen(path)) : nullptr;
+    if (asset && !eng::IsA(asset, eng::FindClass("Font"))) asset = nullptr;
+    if (!asset) {
+        hostlog::Warn("not a font of the game's: " + path);
+        refused.insert(path);
+        return nullptr;
     }
-    if (!asset) hostlog::Warn("font could not be loaded: " + path);
     fonts[path] = eng::MakeWeak(asset);
     return asset;
 }
@@ -407,10 +412,13 @@ void Build(Window& win) {
     }
 
     // The header (rows of view -1, shown with every view) above one VerticalBox per view, each taking all the
-    // height; only the shown view is visible.
+    // height; only the shown view is visible. The gap under the header is only there when it has rows.
     Obj headerBox = w::Spawn("VerticalBox", tree);
     if (!headerBox) return;
-    if (Obj slot = eng::Call(column, "AddChildToVerticalBox", headerBox).ReturnObj()) eng::Call(slot, "SetPadding", w::Margin{0, 0, 0, 12});
+    bool hasHeader = false;
+    for (size_t r = 0; r < win.rowView.size(); ++r) hasHeader = hasHeader || (!win.rowRetired[r] && win.rowView[r] < 0);
+    if (Obj slot = eng::Call(column, "AddChildToVerticalBox", headerBox).ReturnObj())
+        if (hasHeader) eng::Call(slot, "SetPadding", w::Margin{0, 0, 0, 12});
     std::vector<Obj> viewBoxes;
     for (int v = 0; v < win.views; ++v) {
         Obj box = w::Spawn("VerticalBox", tree);

@@ -232,13 +232,14 @@ void WinCornerRadius(ui::Window* w, float radius) {
     w->cornerRadius = radius < 0 ? 0 : radius;
     w->layoutDirty = true;
 }
+// SetPadding, SetRowGap and SetGapBefore: any negative value puts the host's default back.
 void WinPadding(ui::Window* w, float x, float y) {
-    w->paddingX = x < 0 ? 0 : x;
-    w->paddingY = y < 0 ? 0 : y;
+    w->paddingX = x < 0 || y < 0 ? -1 : x;
+    w->paddingY = x < 0 || y < 0 ? -1 : y;
     w->layoutDirty = true;
 }
 void WinRowGap(ui::Window* w, float gap) {
-    w->rowGap = gap < 0 ? 0 : gap;
+    w->rowGap = gap < 0 ? -1 : gap;
     w->layoutDirty = true;
 }
 void WinBackground(ui::Window* w, float r, float g, float b, float a) {
@@ -332,7 +333,6 @@ void SetTextWidth(ui::Widget* w, float width) {
     w->window->layoutDirty = true;
 }
 void SetTextFont(ui::Widget* w, const std::string& font) {
-    if (font == w->font) return;
     w->font = font;
     w->window->layoutDirty = true;
 }
@@ -340,8 +340,8 @@ void SetTextFill(ui::Widget* w, bool fill) {
     w->fill = fill;
     w->window->layoutDirty = true;
 }
-void SetGapBefore(ui::Widget* w, float gap) {
-    w->gapBefore = gap < 0 ? 0 : gap;
+void SetWidgetGapBefore(ui::Widget* w, float gap) {
+    w->gapBefore = gap < 0 ? -1 : gap;
     w->window->layoutDirty = true;
 }
 void SetTextAlign(ui::Widget* w, int align) {
@@ -698,7 +698,6 @@ void RegisterUi() {
     Method("Text", "void SetAlign(int)", asFUNCTION(SetTextAlign));
     Method("Text", "void SetFont(const string &in)", asFUNCTION(SetTextFont));
     Method("Text", "void SetFill(bool)", asFUNCTION(SetTextFill));
-    Method("Text", "void SetGapBefore(float)", asFUNCTION(SetGapBefore));
     Method("Button", "bool Clicked()", asFUNCTION(Clicked));
     Method("Button", "bool get_hovered() property", asFUNCTION(Hovered));
     Method("Button", "void SetBackground(float, float, float, float)", asFUNCTION(ButtonBackground));
@@ -734,6 +733,9 @@ void RegisterUi() {
     Method("CheckBox", "void SetColor(float, float, float, float)", asFUNCTION(CheckColor));
     Method("CheckBox", "void set_visible(bool) property", asFUNCTION(SetWidgetVisible));
     Method("CheckBox", "bool get_visible() property", asFUNCTION(GetWidgetVisible));
+    for (const char* type : {"Text", "Button", "Slider", "Dropdown", "TextArea", "TextInput", "Image", "CheckBox"}) {
+        Method(type, "void SetGapBefore(float)", asFUNCTION(SetWidgetGapBefore));
+    }
 }
 
 // Keys are Windows virtual-key codes, and controller buttons after them (input.hpp); the common ones are named,
