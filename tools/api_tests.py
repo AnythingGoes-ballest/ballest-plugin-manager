@@ -31,7 +31,10 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
 import gen_api_docs  # noqa: E402
-import test_instance  # noqa: E402
+try:
+    import test_instance  # noqa: E402  (Windows only: the docs check, --coverage, also runs on Linux in CI)
+except (ImportError, KeyError, AttributeError, OSError):
+    test_instance = None
 
 DATA = Path(os.environ.get("LOCALAPPDATA", ".")) / "Ballest" / "Saved" / "PluginManager"
 SAVED = DATA.parent
