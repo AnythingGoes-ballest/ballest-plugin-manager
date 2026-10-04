@@ -11,7 +11,7 @@ CXX=tools/llvm-mingw/bin/x86_64-w64-mingw32-clang++
 AS=third_party/angelscript
 OBJS=$(ls build/host/*.o | grep -v "/main.o\|/exports.o\|/exports_stubs.o")
 $CXX -std=c++20 -O1 -isystem $AS/include -isystem $AS/add_on -c tools/tests/ascheck.cpp -o build/ascheck.o
-$CXX -static -o build/ascheck.exe build/ascheck.o $OBJS build/as/*.o -lkernel32 -luser32
+$CXX -static -o build/ascheck.exe build/ascheck.o $OBJS build/as/*.o -lkernel32 -luser32 -lws2_32 -lshell32 -lole32 -luuid
 $CXX -std=c++17 -O2 -static -o build/ghostdata_test.exe tools/tests/ghostdata_test.cpp src/host/ghostdata.cpp src/host/json.cpp
 if [ $# -eq 0 ]; then set -- plugins/*/; fi
 build/ascheck.exe "$@" | grep -v "info: Compiling"

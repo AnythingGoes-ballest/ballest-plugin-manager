@@ -1,7 +1,7 @@
 """API tests: runs every test of tools/api-tests in the game and reports each documented API function as passing,
 failing, skipped or untested.
 
-    python tools/api_tests.py [--phases core,ui,...] [--editor-map <map name part>] [--track <level>] [--keep] [--strict]
+    python tools/api_tests.py [--slot N] [--phases core,ui,...] [--editor-map <map name part>] [--track <level>] [--keep] [--strict]
     python tools/api_tests.py --coverage      (no game) checks every documented API has a test, and every test names real ones
 
 The test plugin (tools/api-tests) is installed for the run only, with every other plugin turned off so nothing else
@@ -10,7 +10,9 @@ a simulated replay, a workshop track, the track editor and a test run there). Ea
 them onto the API as docs/api-examples.txt documents it (tools/gen_api_docs.py reads both), so a function no test
 covers shows as untested.
 
-It refuses to start while the game is running (it never takes over a game in use). The player's plugin settings and
+--slot N runs it in sandboxed test copy N (tools/test_instance.py), beside the player's own game: its plugins, data,
+saves and crashes are the copy's own. Without --slot it runs in the player's install, started through Steam, and
+refuses to start while the game is running (it never takes over a game in use). The player's plugin settings and
 storage, the plugins turned off, and window_at_start.txt are put back afterwards, and the saves and saved maps are
 checked for changes. The report goes to build/api-test-report.md (and .json). Exit code 1 if anything failed (and,
 with --strict, if anything is untested).
@@ -29,6 +31,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
 import gen_api_docs  # noqa: E402
+import test_instance  # noqa: E402
 
 DATA = Path(os.environ.get("LOCALAPPDATA", ".")) / "Ballest" / "Saved" / "PluginManager"
 SAVED = DATA.parent
@@ -38,12 +41,15 @@ PROCESS = "Ballest-Win64-Shipping.exe"
 GAME_DIR = Path(os.environ.get("BALLEST_GAME_DIR", r"C:\Program Files (x86)\Steam\steamapps\common\Ballest of Them All\Ballest\Binaries\Win64"))
 PLUGINS = GAME_DIR / "plugins"
 SOURCE = HERE / "api-tests"
+SLOT = 0
 ID = "api-tests"
 REPORT = ROOT / "build" / "api-test-report"
 RESULT = re.compile(r"\[api-tests\] RESULT (PASS|FAIL|SKIP) (.*?) covers=(\S*) \| ?(.*)$")
 
 
 def running():
+    if SLOT:
+        return bool(test_instance.alive(SLOT))
     out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {PROCESS}", "/FO", "CSV", "/NH"], capture_output=True, text=True).stdout
     return PROCESS.lower() in out.lower()
 
@@ -97,14 +103,27 @@ def main():
     ap.add_argument("--strict", action="store_true", help="exit 1 if any API is untested")
     ap.add_argument("--timeout", type=int, default=1500, help="seconds for the whole run")
     ap.add_argument("--coverage", action="store_true", help="only check (offline) that every documented API has a test")
+    ap.add_argument("--slot", type=int, default=0, choices=range(0, 10), help="run in sandboxed test copy N (1-9)")
     args = ap.parse_args()
     if args.coverage:
         coverage()
+    global SLOT, DATA, SAVED, LOG, CRASHES, PLUGINS
+    if not args.slot and not args.coverage:
+        sys.exit("api_tests.py only runs in a sandboxed test copy (its race tests teleport and fling the ball): pass --slot N")
+    if args.slot:
+        SLOT = args.slot
+        DATA = test_instance.data_dir(SLOT)
+        SAVED = test_instance.user_dir(SLOT) / "Saved"
+        LOG, CRASHES, PLUGINS = DATA / "host.log", SAVED / "Crashes", DATA / "plugins"
+        if not running():
+            test_instance.prepare(SLOT, None, False, False)
+    elif any(test_instance.alive(n) for n in range(1, 10)):
+        sys.exit("test copies are running, and Steam won't start the game while they are: use --slot N")
     if running():
         sys.exit("Ballest is running; close it first (this never takes over a game in use).")
 
     # The player's state, put back afterwards.
-    backup = Path(os.environ.get("TEMP", ".")) / "ballest-api-tests-backup"
+    backup = Path(os.environ.get("TEMP", ".")) / f"ballest-api-tests-backup-slot{SLOT}-{os.getpid()}"   # never shared between runs
     shutil.rmtree(backup, ignore_errors=True)
     backup.mkdir(parents=True)
     for name in ("off.txt", "window_at_start.txt"):
@@ -127,7 +146,11 @@ def main():
 
     started = time.time()
     print(f"launching the game with {ID} (other plugins off: {', '.join(others) or 'none'})")
-    os.startfile("steam://rungameid/3339810")
+    if SLOT:
+        if test_instance.start(SLOT, [], None, False, 180) != 0:
+            sys.exit(f"slot {SLOT} didn't start sandboxed")
+    else:
+        os.startfile("steam://rungameid/3339810")
     finished, reason = False, "timed out"
     seen = 0
     try:
@@ -154,7 +177,10 @@ def main():
     finally:
         crashes = [d.name for d in CRASHES.glob("UECC-*") if d.stat().st_mtime > started] if CRASHES.exists() else []
         if not args.keep and running():
-            subprocess.run(["taskkill", "/IM", PROCESS, "/F"], capture_output=True)
+            if SLOT:
+                test_instance.stop(SLOT)
+            else:
+                subprocess.run(["taskkill", "/IM", PROCESS, "/F"], capture_output=True)
             time.sleep(3)
         shutil.rmtree(PLUGINS / ID, ignore_errors=True)
         for name in ("off.txt", "window_at_start.txt"):

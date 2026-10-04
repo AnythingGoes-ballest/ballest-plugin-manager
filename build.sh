@@ -22,7 +22,7 @@ for f in src/host/*.cpp src/proxy/exports.cpp; do
   $CXX $FLAGS -c "$f" -o build/host/$(basename "$f" .cpp).o
 done
 $CXX -c src/proxy/exports.S -o build/host/exports_stubs.o
-$CXX -shared -static -o build/version.sym.dll build/host/*.o build/as/*.o src/proxy/version.def -lkernel32 -luser32
+$CXX -shared -static -o build/version.sym.dll build/host/*.o build/as/*.o src/proxy/version.def -lkernel32 -luser32 -lws2_32 -lshell32 -lole32 -luuid
 tools/llvm-mingw/bin/llvm-strip -o build/version.dll build/version.sym.dll
 echo "built build/version.dll ($(stat -c %s build/version.dll) bytes)"
 if [ "${1:-}" = "install" ]; then

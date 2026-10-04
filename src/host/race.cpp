@@ -92,6 +92,9 @@ double ParseTime(const std::string& text) {
 Track gTrack;
 bool gTrackDone = false;
 double gNextTrackRead = 0;
+int gTaintedRun = -2;                   // the run the host touched (-1: before a run started, on this map)
+int gTaintedGeneration = -1;
+std::string gTaintWhy;
 int gTrackGeneration = -1;
 
 Obj RaceUi() {
@@ -538,6 +541,10 @@ void Frame() {
     int32_t runId = -1;
     if (pawn && eng::FindProp(eng::ClassOf(pawn), "RaceId")) eng::ReadBytes(pawn, "RaceId", &runId, sizeof runId);
     gRunId = runId;
+    // The touched run's mark: carried into the run that starts after a touch made before it, cleared when a later run
+    // starts (not when this one ends: the upload comes after the end).
+    if (gTaintedRun == -1 && runId >= 0) gTaintedRun = runId;
+    else if (gTaintedRun >= 0 && runId >= 0 && runId != gTaintedRun) gTaintedRun = -2;
 #ifdef HOST_HAS_SANDBOX
     // A sandboxed test copy races live only on the user's own test map, the workshop map "stasis" (project rule, after
     // a teleported finish reached the real leaderboard from a test copy): on any other live track every run is practice
@@ -587,6 +594,36 @@ void Frame() {
 
 bool OnTrack() { return gOnTrack; }
 bool Active() { return gActive; }
+
+void TaintRun(const std::string& why) {
+    if (!gOnTrack) return;
+    if (gTaintedRun != gRunId || gTaintWhy != why) hostlog::Info("race: this run won't go to a leaderboard (" + why + ")");
+    gTaintedRun = gRunId;
+    gTaintedGeneration = game::Generation();
+    gTaintWhy = why;
+}
+
+bool RunTainted(std::string* why) {
+    if (gPractice) {
+        *why = "practice";
+        return true;
+    }
+    // Touched in this run (or before it started, on this map). It lasts past the finish (measured: the run id reads
+    // -1 once a run is complete, which is when the game uploads) until another run starts.
+    if (gTaintedGeneration == game::Generation() && gTaintedRun != -2) {
+        *why = gTaintWhy;
+        return true;
+    }
+    if (Obj controller = game::PlayerController()) {
+        const float dilation = eng::Call(Library("GameplayStatics"), "GetGlobalTimeDilation", controller).ReturnAs<float>(1.0f);
+        if (std::fabs(dilation - 1.0f) > 0.0001f) {
+            *why = "game time not at normal speed";
+            return true;
+        }
+    }
+    return false;
+}
+
 int Restarts() { return gRestarts; }
 int Respawns() { return gRespawns; }
 int Falls() { return gFalls; }
@@ -622,6 +659,7 @@ bool CheckpointTrigger(int index, double* x, double* y, double* z) {
 }
 
 bool MoveBall(double x, double y, double z) {
+    TaintRun("the ball was moved by the host");
     Obj ball = PlayedBall();
     if (!ball) return false;
     eng::Params p(eng::FunctionOn(ball, "K2_SetActorLocation"));

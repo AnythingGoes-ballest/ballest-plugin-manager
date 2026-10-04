@@ -1,4 +1,5 @@
 #include "game.hpp"
+#include "sandbox.hpp"
 
 #include <cstring>
 #include <vector>
@@ -190,6 +191,7 @@ bool WindowFitsScreen() {
 }
 
 bool MaximizeWindow() {
+    if (sandbox::On()) return false;            // a test copy's window stays as it was started, behind the player's
     HWND w = GameWindow();
     if (!w || (GetWindowLongW(w, GWL_STYLE) & WS_CAPTION) != WS_CAPTION) return false;
     ShowWindow(w, SW_MAXIMIZE);
@@ -233,7 +235,8 @@ void SetMaximizeAtStart(const std::string& pluginId, int mode) {
 
 // Runs on a thread of its own from the host's start, while the game is still loading: the window appears seconds
 // before any plugin can run (measured: Fit Window's own check maximized it only once the engine was up).
-void EarlyWindowFit(const std::wstring& gameDir) {
+void EarlyWindowFit(const std::wstring& pluginsDir) {
+    if (sandbox::On()) return;
     std::set<std::string> off;
     if (FILE* f = _wfopen((hostlog::DataDir() + L"\\off.txt").c_str(), L"r")) {
         char id[256];
@@ -243,7 +246,7 @@ void EarlyWindowFit(const std::wstring& gameDir) {
     int mode = 0;
     std::string by;
     for (const auto& [id, m] : ReadAtStart()) {
-        const std::wstring folder = gameDir + L"\\plugins\\" + std::wstring(id.begin(), id.end());
+        const std::wstring folder = pluginsDir + L"\\" + std::wstring(id.begin(), id.end());
         if (off.count(id) || GetFileAttributesW(folder.c_str()) == INVALID_FILE_ATTRIBUTES) continue;
         if (m > mode) {
             mode = m;

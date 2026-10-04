@@ -7,6 +7,7 @@
 #include <cstring>
 #include <string>
 
+#include "sandbox.hpp"
 #include "draw.hpp"
 #include "postprocess.hpp"
 #include "ghosts.hpp"
@@ -83,7 +84,8 @@ void AfterFault() {
     gHostOff = true;
     hostlog::Error("the host crashed (" + where + "); plugins are off until the game restarts");
 }
-std::wstring gGameDir;
+std::wstring gGameDir, gPluginsDir;
+bool gSlotHost = false;                     // this is a test copy's own host build (sandbox::OwnHostPath)
 bool gInFrame = false, gPluginsLoaded = false;
 
 std::wstring ExePath() {
@@ -96,7 +98,7 @@ void HostFrame(float dt) {
     if (!gPluginsLoaded) {
         gPluginsLoaded = true;
         hostlog::Info("first frame on the game thread; loading plugins");
-        plugins::LoadAll(gGameDir + L"\\plugins");
+        plugins::LoadAll(gPluginsDir);
         registry::Refresh();
     }
     input::Frame();
@@ -179,12 +181,37 @@ DWORD WINAPI InitThread(LPVOID) {
     gGameDir = exe.substr(0, exe.find_last_of(L'\\'));
     hostlog::Open();
     hostlog::Info(std::string("Ballest plugin host ") + plugins::kHostVersion + " starting");
-    registry::CleanUpOldHost(gGameDir);      // the previous version.dll, if an update replaced it
-    if (GetFileAttributesW((gGameDir + L"\\plugins\\DISABLED").c_str()) != INVALID_FILE_ATTRIBUTES) {
+    // A sandboxed test copy with a plugins folder of its own (in its data folder) runs those plugins, so copies
+    // being worked on side by side don't share one set; and it leaves the shared install (version.dll) alone.
+    gPluginsDir = gGameDir + L"\\plugins";
+    if (sandbox::On()) {
+        const std::wstring own = hostlog::DataDir() + L"\\plugins";
+        const DWORD attributes = GetFileAttributesW(own.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY)) gPluginsDir = own;
+        if (gSlotHost) hostlog::Info("sandbox: running the copy's own host build");
+        hostlog::Info("sandbox: plugins from " + eng::Narrow(gPluginsDir.c_str(), static_cast<int>(gPluginsDir.size())));
+    } else {
+        registry::CleanUpOldHost(gGameDir);  // the previous version.dll, if an update replaced it
+    }
+    if (GetFileAttributesW((gPluginsDir + L"\\DISABLED").c_str()) != INVALID_FILE_ATTRIBUTES) {
         hostlog::Info("plugins\\DISABLED exists; host stays inactive");
         return 0;
     }
-    game::EarlyWindowFit(gGameDir);          // before the engine is up: the window appears long before plugins run
+    game::EarlyWindowFit(gPluginsDir);          // before the engine is up: the window appears long before plugins run
+    if (sandbox::On()) hostlog::Info("sandbox mode is on for this session: nothing leaves this computer or changes your records");
+    // Steam's interfaces appear during engine start: the sandbox's blocks, or in a player's game the upload guard
+    CloseHandle(CreateThread(nullptr, 0, [](LPVOID) -> DWORD {
+            for (int i = 0; i < 6000 && !sandbox::InstallSteam(); ++i) Sleep(20);
+            if (!sandbox::InstallSteam())
+                hostlog::Error(sandbox::On() ? "sandbox: Steam never started; its uploads are NOT blocked" : "upload guard: Steam never started");
+            if (!sandbox::On()) return 0;
+            for (int i = 0; i < 6; ++i) {            // the game starts its audio during engine start
+                const bool muted = sandbox::MuteAudio();
+                if (i == 0 || !muted) hostlog::Info(std::string("sandbox: sound ") + (muted ? "muted" : "NOT MUTED"));
+                Sleep(5000);
+            }
+            return 0;
+        }, nullptr, 0, nullptr));
     if (!eng::Init(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)))) return 0;
     InstallFaultGuard();
     for (int attempt = 0; attempt < 600; ++attempt) {        // up to five minutes
@@ -203,6 +230,22 @@ DWORD WINAPI InitThread(LPVOID) {
 
 }  // namespace
 
+// Whether a host build has the sandbox compiled in (its status line's text is in the file).
+bool HasSandbox(const std::wstring& path) {
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    LARGE_INTEGER size{};
+    std::string bytes;
+    if (GetFileSizeEx(f, &size) && size.QuadPart > 0 && size.QuadPart < (64LL << 20)) {
+        bytes.resize(static_cast<size_t>(size.QuadPart));
+        DWORD read = 0;
+        if (!ReadFile(f, bytes.data(), static_cast<DWORD>(bytes.size()), &read, nullptr)) bytes.clear();
+        bytes.resize(read);
+    }
+    CloseHandle(f);
+    return bytes.find("sandbox: status ") != std::string::npos && bytes.find("the game's leaderboard interface not seen yet") != std::string::npos;
+}
+
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(module);
@@ -210,7 +253,23 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         // Only the game itself gets the host; any other program that loads this DLL just gets version.dll.
         const std::wstring exe = ExePath();
         if (_wcsicmp(exe.substr(exe.find_last_of(L'\\') + 1).c_str(), L"Ballest-Win64-Shipping.exe") == 0)
+        {
+            // A sandboxed test copy can run a host build of its own (tools/test_instance.py --host): loaded in place
+            // of this one, which then stays out of the way, so a host change is tried in a slot while every other
+            // copy (and the player's game) runs the installed host. That build runs this again, as itself.
+            if (sandbox::Flagged()) {
+                wchar_t self[MAX_PATH];
+                GetModuleFileNameW(module, self, MAX_PATH);
+                const std::wstring own = sandbox::OwnHostPath();
+                gSlotHost = _wcsicmp(self, own.c_str()) == 0;
+                // Only a build that has the sandbox in it: a build without (releases before 0.23.5 have none) would run
+                // this copy unsandboxed. Checked by the sandbox's own status text in the file (accidents, not tampering).
+                if (!gSlotHost && GetFileAttributesW(own.c_str()) != INVALID_FILE_ATTRIBUTES && HasSandbox(own) && LoadLibraryW(own.c_str()))
+                    return TRUE;
+            }
+            sandbox::InstallEarly();         // before any of the game's own code runs
             CloseHandle(CreateThread(nullptr, 0, InitThread, nullptr, 0, nullptr));
+        }
     }
     return TRUE;
 }

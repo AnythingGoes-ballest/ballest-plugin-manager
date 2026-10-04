@@ -38,7 +38,7 @@ void* WindowHandle();                   // the game's own top-level window (an H
 // window_at_start.txt as "<plugin id> <mode>". At a start, before any plugin runs, the host watches for the game's
 // window and maximizes it at once for any such plugin still installed and not turned off (EarlyWindowFit).
 void SetMaximizeAtStart(const std::string& pluginId, int mode);
-void EarlyWindowFit(const std::wstring& gameDir);
+void EarlyWindowFit(const std::wstring& pluginsDir);
 
 // The text input being typed in, or null. While there is one, input is UI-only with it focused: the game's
 // viewport ignores keys, so the player controller (whose "any key" event moves menu focus) and the pawn never

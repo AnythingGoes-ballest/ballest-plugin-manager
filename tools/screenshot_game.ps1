@@ -1,5 +1,6 @@
-# Saves a screenshot of Ballest's window client area to the given PNG path.
-param([string]$Path)
+# Saves a screenshot of Ballest's window client area to the given PNG path: the game process GamePid's, or the
+# first one running (with test copies running too, pass the pid).
+param([string]$Path, [int]$GamePid = 0)
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
 $signature = @'
@@ -39,7 +40,7 @@ Add-Type -TypeDefinition $signature
 # physical pixels, and the capture is a crop of the window's top-left corner.
 [void][NativeShot]::SetProcessDPIAware()
 
-$game = Get-Process -Name "Ballest-Win64-Shipping" | Select-Object -First 1
+$game = if ($GamePid) { Get-Process -Id $GamePid -ErrorAction SilentlyContinue } else { Get-Process -Name "Ballest-Win64-Shipping" | Select-Object -First 1 }
 if (-not $game) { throw "Ballest is not running" }
 $handle = [NativeShot]::FindGameWindow([uint32]$game.Id)
 if ($handle -eq [IntPtr]::Zero) { throw "no Ballest window" }

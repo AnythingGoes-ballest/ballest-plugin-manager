@@ -893,6 +893,8 @@ void Run(const std::string& cmd) {
              eng::Call(eng::FindCdo("KismetSystemLibrary"), "CollectGarbage");
              Report("gc requested");
          }},
+        {"sandbox", [](const Args&, const std::string&) { Report("sandbox: " + sandbox::Status()); }},
+        {"sandboxtest", [](const Args&, const std::string&) { Report("sandbox test: " + sandbox::SelfTest()); }},
         {"replaycam", [](const Args& a, const std::string&) {
              replay::SetCameraDistance(std::atof(Arg(a, 1).c_str()));
              replay::SetSeeThrough(Arg(a, 2) == "1");
@@ -905,6 +907,7 @@ void Run(const std::string& cmd) {
     } else if (!ReadOnlyCommand(words[0]) && !MutationsAllowed()) {
         hostlog::Warn("test: refused '" + words[0] + "': it changes the game, which only a completely sandboxed test copy may do");
     } else {
+        if (!ReadOnlyCommand(words[0])) race::TaintRun("test command " + words[0]);
         it->second(words, cmd);
     }
 }

@@ -18,6 +18,10 @@ void Frame();                   // after game::Frame
 
 bool OnTrack();                 // a race controller exists (a track is loaded, not the main menu)
 bool Active();                  // a race is running
+// The upload guard's question: whether this run must not reach a leaderboard, and why (the host touched it: a test
+// command that changes the game, the ball moved by the host, practice, or game time not at normal speed).
+bool RunTainted(std::string* why);
+void TaintRun(const std::string& why);  // from now until the next run
 int Restarts();                 // restarts from the beginning since the host started
 int Respawns();                 // respawns at a checkpoint from R (not falls) since the host started
 int Falls();                    // falls into a kill zone since the host started (each respawns at a checkpoint or the start)
