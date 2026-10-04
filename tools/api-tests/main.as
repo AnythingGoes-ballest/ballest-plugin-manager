@@ -2113,15 +2113,18 @@ void RegisterEditor()
                            Is(Editor::RepairMeshes() >= 0, "Editor::RepairMeshes returned a negative count")};
         return All(c);
     });
-    Add("editor", "Editor reflected properties", "Editor::InspectProperties,Editor::InspectPropertiesPage,Editor::InspectPropertyChildren,Editor::PropertyObjectName,Editor::SetProperty,Editor::SetEditedProperty", function() {
+    Add("editor", "Editor reflected properties are read-only", "Editor::InspectProperties,Editor::InspectPropertiesPage,Editor::InspectPropertyChildren,Editor::PropertyObjectName", function() {
         string all = Editor::InspectProperties(piece);
         string page = Editor::InspectPropertiesPage(piece, "", 0, 4);
         array<string> c = {Is(all != "", "Editor::InspectProperties returned no fields"),
                            Is(page != "", "Editor::InspectPropertiesPage returned no fields"),
+                           Is(all.findFirst("\t1\t") < 0 && all.findFirst("read-only inspection") >= 0, "Editor::InspectProperties advertised an editable field"),
+                           Is(Editor::InspectProperties(-1) == "", "Editor::InspectProperties accepted a non-piece id"),
+                           Is(Editor::InspectPropertiesPage(-1, "", 0, 4) == "", "Editor::InspectPropertiesPage accepted a non-piece id"),
                            Is(Editor::InspectPropertyChildren(piece, "Actor.__ApiTestsMissing", 4) == "", "Editor::InspectPropertyChildren returned fields for a missing path"),
-                           Is(Editor::PropertyObjectName(piece) != "", "Editor::PropertyObjectName returned an empty name"),
-                           Is(!Editor::SetProperty(piece, "Actor.__ApiTestsMissing", "1"), "Editor::SetProperty accepted a missing path"),
-                           Is(!Editor::SetEditedProperty(piece, "Actor.__ApiTestsMissing", "1"), "Editor::SetEditedProperty accepted a missing path")};
+                           Is(Editor::InspectPropertyChildren(-1, "Actor.Location", 4) == "", "Editor::InspectPropertyChildren accepted a non-piece id"),
+                           Is(Editor::PropertyObjectName(-1) == "", "Editor::PropertyObjectName accepted a non-piece id"),
+                           Is(Editor::PropertyObjectName(piece) != "", "Editor::PropertyObjectName returned an empty name")};
         return All(c);
     });
     Add("editor", "Editor move and turn a piece", "Editor::GetLocation,Editor::SetLocation,Editor::GetRotation,Editor::SetRotation", function() {

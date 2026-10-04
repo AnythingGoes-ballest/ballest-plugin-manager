@@ -1551,70 +1551,68 @@ Requires host 0.13.0.
 Editor::SetOutline(piece, true);    // about to be selected
 
 == Editor::SpawnMesh
-Spawns a cooked Static Mesh as a persistent editor piece and returns its id, or -1 on failure.
+While the level editor is open, spawns a cooked Static Mesh as a persistent editor piece and returns its id, or -1
+on failure.
 --
 int piece = Editor::SpawnMesh("/Game/Path/SM_Example.SM_Example");
 
 == Editor::SpawnAsset
-Loads an asset and performs its natural editor action. The returned text describes what was spawned, previewed or
-loaded, or why the action could not be performed.
+While the level editor is open, loads a visual asset and performs a bounded editor action. Static meshes become editor
+pieces, materials become preview pieces or projected decals, and Niagara systems are transient previews. Arbitrary
+Blueprint Actor classes and non-visual assets are not spawned. The returned text describes the result.
 --
-status.text = Editor::SpawnAsset("/Game/Path/BP_Example.BP_Example");
+status.text = Editor::SpawnAsset("/Game/Path/SM_Example.SM_Example");
 
 == Editor::SetMesh
-Applies a cooked Static Mesh to a compatible selected editor piece. Returns false for an unsupported piece or path.
+Applies a cooked Static Mesh to a compatible piece currently owned by the open level editor. Returns false for an
+unsupported piece, a stale or non-editor id, or an invalid path.
 --
 Editor::SetMesh(piece, "/Game/Path/SM_Example.SM_Example");
 
 == Editor::SetMaterial
-Applies a cooked Material or Material Instance to every reflected mesh-component slot on a piece.
+Applies a cooked Material or Material Instance to every mesh-component slot on a piece currently owned by the open
+level editor. Stale ids and actors outside the editor's piece list are rejected.
 --
 Editor::SetMaterial(piece, "/Game/Path/M_Example.M_Example");
 
 == Editor::DescribeMesh
-Loads a Static Mesh and returns its resolved object path, type and inheritance, or an empty string if it did not resolve.
+While the level editor is open, loads a Static Mesh and returns its resolved object path, type and inheritance, or an
+empty string if it did not resolve.
 --
 Log::Info(Editor::DescribeMesh("/Game/Path/SM_Example.SM_Example"));
 
 == Editor::DescribeAsset
-Loads any cooked asset and returns its resolved object path, type and inheritance, or an empty string if it did not resolve.
+While the level editor is open, loads any cooked asset for description and returns its resolved object path, type and
+inheritance, or an empty string if it did not resolve.
 --
 Log::Info(Editor::DescribeAsset(assetPath));
 
 == Editor::RepairMeshes
-Reasserts visibility, render passes and collision on compatible loaded mesh pieces, returning how many were repaired.
+While the level editor is open, reasserts visibility, render passes and collision on compatible pieces in the editor's
+own piece list, returning how many were repaired.
 --
 Log::Info("repaired " + Editor::RepairMeshes() + " pieces");
 
 == Editor::InspectProperties
-Returns reflected actor and component fields as tab-separated lines: path, kind, editable flag, value and reason.
+Returns read-only reflected actor and component fields for a piece currently owned by the open level editor. Each
+tab-separated line contains path, kind, editable flag (always 0), value and reason.
 --
 string snapshot = Editor::InspectProperties(piece);
 
 == Editor::InspectPropertiesPage
-Returns one filtered page of the same tab-separated property records. `offset` and `limit` are record counts.
+Returns one filtered page of the same read-only tab-separated property records. `offset` and `limit` are record counts.
 --
 string page = Editor::InspectPropertiesPage(piece, "material", 0, 20);
 
 == Editor::InspectPropertyChildren
-Returns the immediate children of a reflected struct or array property as tab-separated records.
+Returns the immediate children of a reflected struct or array property as read-only tab-separated records.
 --
 string children = Editor::InspectPropertyChildren(piece, "Actor.SomeStruct", 64);
 
 == Editor::PropertyObjectName
-The selected actor object's reflected name, or an empty string if the id is invalid.
+The reflected name of a piece currently owned by the open level editor, or an empty string if the id is invalid.
 --
 string actorName = Editor::PropertyObjectName(piece);
-
-== Editor::SetProperty
-Safely writes a supported reflected value from text. Nested and component paths are allowed but are runtime-only.
---
-bool changed = Editor::SetProperty(piece, "Actor.SomeFloat", "1.5");
-
-== Editor::SetEditedProperty
-Writes a supported reflected value and marks supported top-level actor fields for Ballest's native `.balledit` arrays.
---
-bool changed = Editor::SetEditedProperty(piece, "Actor.TotalLaps", "3");
 
 == Editor::Select
 Selects exactly these pieces, with the editor's own highlight and gizmo.

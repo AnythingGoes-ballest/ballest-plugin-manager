@@ -51,7 +51,7 @@ bool ScreenPosition(int id, double* x, double* y);
 // mesh renders custom depth with stencil 1), without selecting it. Selecting or deselecting it resets it.
 bool SetOutline(int id, bool on);
 
-// Asset Browser support: cooked asset actions and safe reflected property inspection/editing.
+// Asset Browser support: visual cooked-asset actions and read-only reflected property inspection.
 int SpawnMesh(const std::string& assetPath);
 std::string SpawnAsset(const std::string& assetPath);
 bool SetMesh(int id, const std::string& assetPath);
@@ -63,8 +63,6 @@ std::vector<PropertyInfo> InspectProperties(int id);
 std::vector<PropertyInfo> InspectPropertiesPage(int id, const std::string& filter, size_t offset, size_t limit);
 std::vector<PropertyInfo> InspectPropertyChildren(int id, const std::string& path, size_t limit);
 std::string PropertyObjectName(int id);
-bool SetProperty(int id, const std::string& path, const std::string& value);
-bool SetEditedProperty(int id, const std::string& path, const std::string& value);
 void AssetBrowserFrame();
 
 // Selects exactly these pieces (the editor's own selection, with its pivot and highlighting).

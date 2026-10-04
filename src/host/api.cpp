@@ -499,14 +499,6 @@ std::string EditorPropertyObjectName(int id) {
     plugins::GameWork work;
     return editor::PropertyObjectName(id);
 }
-bool EditorSetProperty(int id, const std::string& path, const std::string& value) {
-    plugins::GameWork work;
-    return editor::SetProperty(id, path, value);
-}
-bool EditorSetEditedProperty(int id, const std::string& path, const std::string& value) {
-    plugins::GameWork work;
-    return editor::SetEditedProperty(id, path, value);
-}
 float InputWheel() { return static_cast<float>(game::MouseWheel()); }
 bool InputMousePosition(float& x, float& y) {
     double mx = 0, my = 0;
@@ -958,8 +950,6 @@ void RegisterEditor() {
     Global("string InspectPropertiesPage(int, const string &in, int, int)", asFUNCTION(EditorInspectPropertiesPage));
     Global("string InspectPropertyChildren(int, const string &in, int)", asFUNCTION(EditorInspectPropertyChildren));
     Global("string PropertyObjectName(int)", asFUNCTION(EditorPropertyObjectName));
-    Global("bool SetProperty(int, const string &in, const string &in)", asFUNCTION(EditorSetProperty));
-    Global("bool SetEditedProperty(int, const string &in, const string &in)", asFUNCTION(EditorSetEditedProperty));
     Global("void Select(const array<int>@)", asFUNCTION(EditorSelect));
     Global("array<int>@ DuplicateSelection()", asFUNCTION(EditorDuplicate));
     Global("void RotatePieces(const array<int>@, double, double, double, double, double, double)", asFUNCTION(EditorRotatePieces));

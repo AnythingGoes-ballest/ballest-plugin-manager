@@ -1,7 +1,5 @@
 ﻿#include "editor.hpp"
 
-#include <windows.h>
-
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -9,20 +7,16 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
-#include <filesystem>
-#include <fstream>
 #include <iomanip>
 #include <limits>
 #include <map>
 #include <set>
 #include <sstream>
 #include <string>
-#include <type_traits>
 #include <vector>
 
 #include "cosmetics.hpp"
 #include "game.hpp"
-#include "json.hpp"
 #include "layout.hpp"
 #include "log.hpp"
 
@@ -42,18 +36,6 @@ struct CachedMesh {
 };
 std::vector<CachedMesh> gMeshCache;
 
-struct EditedProperty {
-    eng::Weak actor;
-    std::string path, kind, value;
-};
-std::vector<EditedProperty> gEditedProperties;
-std::map<std::wstring, std::filesystem::file_time_type> gKnownSaveTimes;
-std::wstring gActiveSaveFile;
-ULONGLONG gNextSaveScan = 0;
-int gPersistenceGeneration = -1;
-bool NativeActorProperty(const EditedProperty& edited, std::string* arrayName, std::string* propertyType);
-void PersistenceFrame();
-
 Obj Math() { return eng::FindCdo("KismetMathLibrary"); }
 Obj Pawn() {
     Obj controller = game::PlayerController();
@@ -65,17 +47,16 @@ Obj Handler() {
     gAssetHandler = eng::MakeWeak(pawn ? eng::ReadObj(pawn, "SKGMLEHandler") : nullptr);
     return eng::Get(gAssetHandler);
 }
+std::vector<Obj> AllActors();
 Obj Resolve(int id) {
-    Obj actorClass = eng::FindClass("Actor");
+    if (!Handler() || !Pawn()) return nullptr;
     Obj object = id >= 0 && id < eng::NumObjects() ? eng::ObjectAt(id) : nullptr;
-    return object && actorClass && eng::IsA(object, actorClass) ? object : nullptr;
+    if (!object) return nullptr;
+    const std::vector<Obj> pieces = AllActors();
+    return std::find(pieces.begin(), pieces.end(), object) != pieces.end() ? object : nullptr;
 }
 int IdOf(Obj actor) { return eng::MakeWeak(actor).index; }
 
-struct Quat { double x = 0, y = 0, z = 0, w = 1; };
-Quat ToQuat(const Rot& rotation) {
-    return eng::Call(Math(), "Conv_RotatorToQuaternion", rotation).ReturnAs<Quat>();
-}
 Obj MeshComponent(Obj actor) {
     if (!actor) return nullptr;
     Obj cls = eng::ClassOf(actor);
@@ -536,17 +517,6 @@ std::string SpawnAsset(const std::string& assetPath) {
                       : "Spawned " + eng::ObjName(asset) + " (piece " + std::to_string(id) + ")";
     }
 
-    // Depending on cooking, a Blueprint path may resolve to UBlueprint or directly to its generated UClass.
-    Obj generated = nullptr;
-    if (IsAssetA(asset, "Blueprint")) generated = eng::ReadObj(asset, "GeneratedClass");
-    else if (IsAssetA(asset, "Class")) generated = asset;
-    if (generated && IsSubclassOf(generated, eng::FindClass("Actor"))) {
-        Obj actor = SpawnEditorActor(generated);
-        if (!actor) return "Could not spawn actor Blueprint: " + assetPath;
-        hostlog::Info("editor: spawned actor blueprint " + assetPath);
-        return "Spawned " + eng::ObjName(generated) + " (piece " + std::to_string(IdOf(actor)) + ")";
-    }
-
     const Vec3 location = eng::Call(Pawn(), "K2_GetActorLocation").ReturnAs<Vec3>();
     if (IsAssetA(asset, "NiagaraSystem")) {
         Obj lib = eng::FindCdo("NiagaraFunctionLibrary");
@@ -563,24 +533,6 @@ std::string SpawnAsset(const std::string& assetPath) {
             return "Previewing Niagara system " + eng::ObjName(asset) + " (not saved with the level)";
         }
         return "Could not preview Niagara system: " + assetPath;
-    }
-
-    if (IsAssetA(asset, "SoundBase")) {
-        Obj statics = eng::FindCdo("GameplayStatics");
-        eng::Params p(eng::FunctionOn(statics, "SpawnSoundAtLocation"));
-        p.Set("WorldContextObject", Pawn());
-        p.Set("Sound", asset);
-        p.Set("Location", location);
-        p.Set("Rotation", Rot{});
-        p.Set("VolumeMultiplier", 1.0f);
-        p.Set("PitchMultiplier", 1.0f);
-        p.Set("StartTime", 0.0f);
-        p.Set("bAutoDestroy", uint8_t{1});
-        if (eng::Invoke(statics, p) && p.ReturnObj()) {
-            hostlog::Info("editor: previewed sound " + assetPath);
-            return "Playing sound " + eng::ObjName(asset) + " (not saved with the level)";
-        }
-        return "Could not play sound asset: " + assetPath;
     }
 
     if (IsAssetA(asset, "MaterialInterface")) {
@@ -655,11 +607,13 @@ std::string DescribeObject(const std::string& assetPath, Obj asset) {
 }
 
 std::string DescribeAsset(const std::string& assetPath) {
+    if (!Handler() || !Pawn()) return "";
     Obj asset = assetPath.empty() ? nullptr : cosmetics::LoadAsset(eng::Widen(assetPath));
     return DescribeObject(assetPath, asset);
 }
 
 std::string DescribeMesh(const std::string& assetPath) {
+    if (!Handler() || !Pawn()) return "";
     return DescribeObject(assetPath, StaticMesh(assetPath));
 }
 
@@ -899,166 +853,6 @@ bool ResolvePropertyPath(Obj actor, const std::string& path, ResolvedProperty* r
     return false;
 }
 
-template <class T>
-bool ParseSigned(const std::string& text, T* out) {
-    errno = 0; char* end = nullptr;
-    const long long v = std::strtoll(text.c_str(), &end, 10);
-    if (errno || end == text.c_str() || *end || v < static_cast<long long>(std::numeric_limits<T>::min()) ||
-        v > static_cast<long long>(std::numeric_limits<T>::max())) return false;
-    *out = static_cast<T>(v); return true;
-}
-
-template <class T>
-bool ParseUnsigned(const std::string& text, T* out) {
-    if (!text.empty() && text[0] == '-') return false;
-    errno = 0; char* end = nullptr;
-    const unsigned long long v = std::strtoull(text.c_str(), &end, 10);
-    if (errno || end == text.c_str() || *end || v > static_cast<unsigned long long>(std::numeric_limits<T>::max())) return false;
-    *out = static_cast<T>(v); return true;
-}
-
-bool ParseNumber(const std::string& text, double* out) {
-    errno = 0; char* end = nullptr;
-    const double v = std::strtod(text.c_str(), &end);
-    if (errno || end == text.c_str() || *end || !std::isfinite(v)) return false;
-    *out = v; return true;
-}
-
-std::vector<std::string> SplitComponents(const std::string& text) {
-    std::vector<std::string> out;
-    size_t start = 0;
-    while (start <= text.size()) {
-        const size_t comma = text.find(',', start);
-        const size_t end = comma == std::string::npos ? text.size() : comma;
-        size_t first = text.find_first_not_of(" \t", start), last = text.find_last_not_of(" \t", end ? end - 1 : 0);
-        if (first == std::string::npos || first >= end || last == std::string::npos) return {};
-        out.push_back(text.substr(first, last - first + 1));
-        if (comma == std::string::npos) break;
-        start = comma + 1;
-    }
-    return out;
-}
-
-template <class T, size_t N>
-bool ParseRealComponents(const std::string& text, std::array<T, N>* out) {
-    const auto fields = SplitComponents(text);
-    if (fields.size() != N) return false;
-    for (size_t i = 0; i < N; ++i) {
-        double value = 0;
-        if (!ParseNumber(fields[i], &value) || std::fabs(value) > static_cast<double>(std::numeric_limits<T>::max())) return false;
-        (*out)[i] = static_cast<T>(value);
-    }
-    return true;
-}
-
-template <class T, size_t N>
-bool ParseIntegerComponents(const std::string& text, std::array<T, N>* out) {
-    const auto fields = SplitComponents(text);
-    if (fields.size() != N) return false;
-    for (size_t i = 0; i < N; ++i)
-        if constexpr (std::is_signed_v<T>) {
-            if (!ParseSigned(fields[i], &(*out)[i])) return false;
-        } else if (!ParseUnsigned(fields[i], &(*out)[i])) return false;
-    return true;
-}
-
-bool WritePropertyBytes(Obj base, const eng::Prop& property, const void* value, size_t size) {
-    if (!base || !property || property.size != static_cast<int32_t>(size) ||
-        !eng::MemoryReadable(base + property.offset, size)) return false;
-    std::memcpy(base + property.offset, value, size);
-    return true;
-}
-
-bool WriteNumeric(Obj object, const eng::Prop& property, const std::string& kind, const std::string& value) {
-    if (kind == "ByteProperty") { uint8_t v{}; return ParseUnsigned(value, &v) && WritePropertyBytes(object, property, &v, sizeof v); }
-    if (kind == "Int8Property") { int8_t v{}; return ParseSigned(value, &v) && WritePropertyBytes(object, property, &v, sizeof v); }
-    if (kind == "Int16Property") { int16_t v{}; return ParseSigned(value, &v) && WritePropertyBytes(object, property, &v, sizeof v); }
-    if (kind == "IntProperty") { int32_t v{}; return ParseSigned(value, &v) && WritePropertyBytes(object, property, &v, sizeof v); }
-    if (kind == "Int64Property") { int64_t v{}; return ParseSigned(value, &v) && WritePropertyBytes(object, property, &v, sizeof v); }
-    if (kind == "UInt16Property") { uint16_t v{}; return ParseUnsigned(value, &v) && WritePropertyBytes(object, property, &v, sizeof v); }
-    if (kind == "UInt32Property") { uint32_t v{}; return ParseUnsigned(value, &v) && WritePropertyBytes(object, property, &v, sizeof v); }
-    if (kind == "UInt64Property") { uint64_t v{}; return ParseUnsigned(value, &v) && WritePropertyBytes(object, property, &v, sizeof v); }
-    if (kind == "FloatProperty") {
-        double n{};
-        if (!ParseNumber(value, &n) || std::fabs(n) > std::numeric_limits<float>::max()) return false;
-        const float v = static_cast<float>(n);
-        return WritePropertyBytes(object, property, &v, sizeof v);
-    }
-    if (kind == "DoubleProperty") { double v{}; return ParseNumber(value, &v) && WritePropertyBytes(object, property, &v, sizeof v); }
-    return false;
-}
-
-bool WriteStruct(Obj object, const eng::Prop& property, const std::string& value) {
-    const std::string type = eng::ObjName(eng::StructOf(property));
-    if ((type == "Vector" || type == "Rotator") && property.size == 24) { std::array<double, 3> v{}; return ParseRealComponents(value, &v) && WritePropertyBytes(object, property, v.data(), sizeof v); }
-    if (type == "Vector2D" && property.size == 16) { std::array<double, 2> v{}; return ParseRealComponents(value, &v) && WritePropertyBytes(object, property, v.data(), sizeof v); }
-    if ((type == "Vector4" || type == "Quat") && property.size == 32) { std::array<double, 4> v{}; return ParseRealComponents(value, &v) && WritePropertyBytes(object, property, v.data(), sizeof v); }
-    if (type == "LinearColor" && property.size == 16) { std::array<float, 4> v{}; return ParseRealComponents(value, &v) && WritePropertyBytes(object, property, v.data(), sizeof v); }
-    if (type == "Color" && property.size == 4) { std::array<uint8_t, 4> v{}; return ParseIntegerComponents(value, &v) && WritePropertyBytes(object, property, v.data(), sizeof v); }
-    if (type == "IntPoint" && property.size == 8) { std::array<int32_t, 2> v{}; return ParseIntegerComponents(value, &v) && WritePropertyBytes(object, property, v.data(), sizeof v); }
-    if (type == "IntVector" && property.size == 12) { std::array<int32_t, 3> v{}; return ParseIntegerComponents(value, &v) && WritePropertyBytes(object, property, v.data(), sizeof v); }
-    if (type == "IntVector4" && property.size == 16) { std::array<int32_t, 4> v{}; return ParseIntegerComponents(value, &v) && WritePropertyBytes(object, property, v.data(), sizeof v); }
-    return false;
-}
-
-bool ClassDerivesFrom(Obj candidate, Obj required) {
-    if (!candidate || !required) return candidate == required;
-    for (Obj cls = candidate; cls; cls = eng::SuperOf(cls))
-        if (cls == required) return true;
-    return false;
-}
-
-bool WriteReference(Obj object, const eng::Prop& property, const std::string& value) {
-    Obj referenced = nullptr;
-    if (value != "None" && value != "none" && value != "null" && value != "0") {
-        referenced = eng::FindObjectByPath(value);
-        if (!referenced) return false;
-        const std::string kind = eng::KindOf(property);
-        if (kind == "ObjectProperty") {
-            if (!eng::IsA(referenced, eng::ObjectClassOf(property))) return false;
-        } else if (kind == "ClassProperty") {
-            Obj classClass = eng::FindClass("Class");
-            if (!classClass || !eng::IsA(referenced, classClass) || !ClassDerivesFrom(referenced, eng::ClassMetaOf(property))) return false;
-        } else {
-            return false;
-        }
-    }
-    return WritePropertyBytes(object, property, &referenced, sizeof referenced);
-}
-
-bool WriteName(Obj object, const eng::Prop& property, const std::string& value) {
-    const std::wstring wide = eng::Widen(value);
-    const eng::FString input{wide.c_str(), static_cast<int32_t>(wide.size() + 1), static_cast<int32_t>(wide.size() + 1)};
-    struct FNameValue { uint32_t index; int32_t number; } converted{};
-    const eng::Params result = eng::Call(eng::FindCdo("KismetStringLibrary"), "Conv_StringToName", input);
-    size_t size = 0;
-    const uint8_t* returned = result.Return(&size);
-    if (!result.Invoked() || !returned || size != sizeof converted) return false;
-    std::memcpy(&converted, returned, sizeof converted);
-    return WritePropertyBytes(object, property, &converted, sizeof converted);
-}
-
-bool WriteString(Obj object, const eng::Prop& property, const std::string& value) {
-    const std::wstring wide = eng::Widen(value), empty;
-    const eng::FString input{wide.c_str(), static_cast<int32_t>(wide.size() + 1), static_cast<int32_t>(wide.size() + 1)};
-    const eng::FString suffix{empty.c_str(), 1, 1};
-    const eng::Params owned = eng::Call(eng::FindCdo("KismetStringLibrary"), "Concat_StrStr", input, suffix);
-    size_t size = 0;
-    const uint8_t* returned = owned.Return(&size);
-    // Concat_StrStr gives the result its own allocation. Transfer that value into the property instead of pointing the
-    // property at the temporary input buffer. The previous allocation is intentionally retained because this header-only
-    // host has no safe reflected FString destructor; leaking on an explicit edit is preferable to freeing unknown memory.
-    return owned.Invoked() && returned && size == 16 && WritePropertyBytes(object, property, returned, size);
-}
-
-bool WriteText(Obj object, const eng::Prop& property, const std::string& value) {
-    const eng::Params text = eng::MakeText(value);
-    size_t size = 0;
-    const uint8_t* returned = text.Return(&size);
-    // Transfer the conversion result's reference to the property. Do not ReleaseText here: the property now owns it.
-    return text.Invoked() && returned && size == 16 && WritePropertyBytes(object, property, returned, size);
-}
-
 }  // namespace
 
 namespace {
@@ -1092,9 +886,7 @@ std::vector<PropertyInfo> InspectPropertiesPage(int id, const std::string& filte
                     if (LowerAscii(path + " " + kind + " " + value).find(query) == std::string::npos) continue;
                     if (matched++ < offset) continue;
                 }
-                // Asset Browser intentionally exposes an input for every reflected field. `SetProperty` still validates
-                // the exact type and returns false when no safe text assignment exists for that representation.
-                out.push_back({path, kind, value, true, reason});
+                out.push_back({path, kind, value, false, reason.empty() ? "read-only inspection" : reason});
                 if (out.size() >= limit) return out;
             }
         }
@@ -1122,8 +914,9 @@ std::vector<PropertyInfo> InspectPropertyChildren(int id, const std::string& pat
             const std::string childKind = eng::KindOf(property);
             if (!property || childKind.empty() || property.offset < 0 || property.size <= 0 ||
                 property.offset > resolved.property.size || property.size > resolved.property.size - property.offset) continue;
-            out.push_back({path + "." + name, childKind, DisplayProperty(base, name, property, childKind), true,
-                           ReadOnlyReason(property, childKind)});
+            const std::string reason = ReadOnlyReason(property, childKind);
+            out.push_back({path + "." + name, childKind, DisplayProperty(base, name, property, childKind), false,
+                           reason.empty() ? "read-only inspection" : reason});
             if (out.size() >= limit) break;
         }
     } else if (kind == "ArrayProperty") {
@@ -1140,8 +933,10 @@ std::vector<PropertyInfo> InspectPropertyChildren(int id, const std::string& pat
             if (!ArrayValueAt(resolved.base, resolved.property, static_cast<int32_t>(i), &element, &inner)) break;
             const std::string childKind = eng::KindOf(inner);
             if (childKind.empty()) continue;
+            const std::string reason = ReadOnlyReason(inner, childKind);
             out.push_back({path + "[" + std::to_string(i) + "]", childKind,
-                           DisplayProperty(element, "", inner, childKind), true, ReadOnlyReason(inner, childKind)});
+                           DisplayProperty(element, "", inner, childKind), false,
+                           reason.empty() ? "read-only inspection" : reason});
         }
     }
     return out;
@@ -1151,361 +946,6 @@ std::string PropertyObjectName(int id) {
     Obj actor = Resolve(id);
     return actor ? eng::ObjName(actor) : "";
 }
-
-bool SetProperty(int id, const std::string& path, const std::string& value) {
-    ResolvedProperty resolved;
-    if (!ResolvePropertyPath(Resolve(id), path, &resolved)) return false;
-    const eng::Prop& p = resolved.property;
-    const std::string kind = eng::KindOf(p);
-    if ((eng::FlagsOf(p) & (layout::kPropertyFlagIsParameter | layout::kPropertyFlagIsReturnValue)) != 0) return false;
-    bool changed = false;
-    if (kind == "BoolProperty") {
-        bool v = false;
-        if (value == "true" || value == "1" || value == "on" || value == "yes") v = true;
-        else if (value != "false" && value != "0" && value != "off" && value != "no") return false;
-        changed = eng::WriteBoolValue(resolved.base, p, v);
-    } else if (NumericKind(kind)) {
-        changed = WriteNumeric(resolved.base, p, kind, value);
-    } else if (kind == "EnumProperty") {
-        const eng::Prop underlying = eng::EnumUnderlyingOf(p);
-        changed = underlying && underlying.size == p.size && WriteNumeric(resolved.base, p, eng::KindOf(underlying), value);
-    } else if (kind == "NameProperty") {
-        changed = WriteName(resolved.base, p, value);
-    } else if (kind == "StrProperty") {
-        changed = WriteString(resolved.base, p, value);
-    } else if (kind == "TextProperty") {
-        changed = WriteText(resolved.base, p, value);
-    } else if (kind == "ObjectProperty" || kind == "ClassProperty") {
-        changed = WriteReference(resolved.base, p, value);
-    } else if (kind == "StructProperty") {
-        changed = WriteStruct(resolved.base, p, value);
-    }
-    if (changed) {
-        if (eng::FindFunction(eng::ClassOf(resolved.owner), "MarkRenderStateDirty")) eng::Call(resolved.owner, "MarkRenderStateDirty");
-        if (eng::FindFunction(eng::ClassOf(resolved.owner), "UpdateComponentToWorld")) eng::Call(resolved.owner, "UpdateComponentToWorld");
-        hostlog::Info("editor: set " + path + " = " + value + " on " + eng::ObjName(resolved.actor));
-    }
-    return changed;
-}
-
-bool SetEditedProperty(int id, const std::string& path, const std::string& value) {
-    if (!SetProperty(id, path, value)) return false;
-    Obj actor = Resolve(id);
-    ResolvedProperty resolved;
-    if (!actor || !ResolvePropertyPath(actor, path, &resolved)) return false;
-    const EditedProperty submitted{eng::MakeWeak(actor), path, eng::KindOf(resolved.property),
-                                   DisplayProperty(resolved.base, resolved.name, resolved.property,
-                                                   eng::KindOf(resolved.property))};
-    std::string arrayName, propertyType;
-    if (!NativeActorProperty(submitted, &arrayName, &propertyType)) {
-        hostlog::Info("editor: applied runtime-only property " + path +
-                      "; Ballest native saves support only top-level actor Bool/Float/Int/Text/Name/String fields");
-        return true;
-    }
-    for (EditedProperty& edited : gEditedProperties)
-        if (eng::Get(edited.actor) == actor && edited.path == path) {
-            edited = submitted;
-            return true;
-        }
-    gEditedProperties.push_back(submitted);
-    return true;
-}
-
-namespace {
-
-std::wstring UserSavedMapsDir() {
-    wchar_t local[MAX_PATH] = {};
-    const DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH);
-    return (length ? std::wstring(local, length) : std::wstring(L".")) + L"\\Ballest\\Saved\\UserSavedMaps";
-}
-
-bool ReadFile(const std::wstring& path, std::string* out) {
-    std::ifstream file(path.c_str(), std::ios::binary);
-    if (!file) return false;
-    out->assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
-    return static_cast<bool>(file) || file.eof();
-}
-
-bool WriteFileAtomically(const std::wstring& path, const std::string& text) {
-    const std::wstring temporary = path + L".asset-browser.tmp";
-    {
-        std::ofstream file(temporary.c_str(), std::ios::binary | std::ios::trunc);
-        file.write(text.data(), static_cast<std::streamsize>(text.size()));
-        if (!file) return false;
-    }
-    if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        DeleteFileW(temporary.c_str());
-        return false;
-    }
-    return true;
-}
-
-json::Value StringValue(const std::string& value) {
-    json::Value out;
-    out.type = json::Value::String;
-    out.string = value;
-    return out;
-}
-
-json::Value NumberValue(double value) {
-    json::Value out;
-    out.type = json::Value::Number;
-    out.number = value;
-    return out;
-}
-
-json::Value BoolValue(bool value) {
-    json::Value out;
-    out.type = json::Value::Bool;
-    out.boolean = value;
-    return out;
-}
-
-json::Value* EnsureArray(json::Value& object, const std::string& name) {
-    if (json::Value* existing = object.Get(name)) {
-        if (existing->type != json::Value::Array) {
-            existing->type = json::Value::Array;
-            existing->items.clear();
-            existing->members.clear();
-        }
-        return existing;
-    }
-    json::Value array;
-    array.type = json::Value::Array;
-    object.members.emplace_back(name, std::move(array));
-    return &object.members.back().second;
-}
-
-const json::Value* Member(const json::Value& object, const std::string& name, json::Value::Type type) {
-    const json::Value* value = object.Get(name);
-    return value && value->type == type ? value : nullptr;
-}
-
-bool NumberMember(const json::Value& object, const std::string& name, double* out) {
-    const json::Value* value = Member(object, name, json::Value::Number);
-    if (!value) return false;
-    *out = value->number;
-    return true;
-}
-
-std::string NormalizedClassPath(std::string path) {
-    const size_t quote = path.find('\'');
-    if (quote != std::string::npos) path.erase(0, quote + 1);
-    if (!path.empty() && path.back() == '\'') path.pop_back();
-    return path;
-}
-
-bool ItemMatchesActor(const json::Value& item, Obj actor) {
-    if (!actor || item.type != json::Value::Object) return false;
-    const json::Value* actorToSpawn = Member(item, "actorToSpawn", json::Value::String);
-    const json::Value* transform = Member(item, "itemTransform", json::Value::Object);
-    const json::Value* translation = transform ? Member(*transform, "translation", json::Value::Object) : nullptr;
-    const json::Value* rotation = transform ? Member(*transform, "rotation", json::Value::Object) : nullptr;
-    const json::Value* scale = transform ? Member(*transform, "scale3D", json::Value::Object) : nullptr;
-    if (!actorToSpawn || !translation || !rotation || !scale ||
-        NormalizedClassPath(actorToSpawn->string) != eng::PathOf(eng::ClassOf(actor))) return false;
-    double tx = 0, ty = 0, tz = 0, rx = 0, ry = 0, rz = 0, rw = 1, sx = 1, sy = 1, sz = 1;
-    if (!NumberMember(*translation, "x", &tx) || !NumberMember(*translation, "y", &ty) ||
-        !NumberMember(*translation, "z", &tz) || !NumberMember(*rotation, "x", &rx) ||
-        !NumberMember(*rotation, "y", &ry) || !NumberMember(*rotation, "z", &rz) ||
-        !NumberMember(*rotation, "w", &rw) || !NumberMember(*scale, "x", &sx) ||
-        !NumberMember(*scale, "y", &sy) || !NumberMember(*scale, "z", &sz)) return false;
-    const Vec3 liveLocation = eng::Call(actor, "K2_GetActorLocation").ReturnAs<Vec3>();
-    const Vec3 liveScale = eng::Call(actor, "GetActorScale3D").ReturnAs<Vec3>();
-    const Quat liveRotation = ToQuat(eng::Call(actor, "K2_GetActorRotation").ReturnAs<Rot>());
-    const double dot = std::fabs(liveRotation.x * rx + liveRotation.y * ry + liveRotation.z * rz + liveRotation.w * rw);
-    return Near(liveLocation, {tx, ty, tz}, 0.1) && Near(liveScale, {sx, sy, sz}, 0.001) && dot > 0.99999;
-}
-
-json::Value* MatchingItem(json::Value& root, Obj actor) {
-    json::Value* items = root.Get("items");
-    if (!items || items->type != json::Value::Array) return nullptr;
-    for (json::Value& item : items->items)
-        if (ItemMatchesActor(item, actor)) return &item;
-    return nullptr;
-}
-
-bool RemoveMember(json::Value& object, const std::string& name) {
-    for (auto member = object.members.begin(); member != object.members.end(); ++member) {
-        if (member->first != name) continue;
-        object.members.erase(member);
-        return true;
-    }
-    return false;
-}
-
-bool NativeActorProperty(const EditedProperty& edited, std::string* arrayName, std::string* propertyType) {
-    if (edited.path.rfind("Actor.", 0) != 0 || edited.path.find('.', 6) != std::string::npos ||
-        edited.path.find('[', 6) != std::string::npos) return false;
-    if (edited.kind == "BoolProperty") { *arrayName = "boolProperties"; *propertyType = "Bool"; return true; }
-    if (edited.kind == "FloatProperty" || edited.kind == "DoubleProperty") {
-        *arrayName = "floatProperties"; *propertyType = "Float"; return true;
-    }
-    if (edited.kind == "ByteProperty" || edited.kind == "Int8Property" || edited.kind == "Int16Property" ||
-        edited.kind == "IntProperty" || edited.kind == "UInt16Property" || edited.kind == "EnumProperty") {
-        *arrayName = "intProperties"; *propertyType = "Int"; return true;
-    }
-    if (edited.kind == "TextProperty") { *arrayName = "textProperties"; *propertyType = "Text"; return true; }
-    if (edited.kind == "NameProperty") { *arrayName = "nameProperties"; *propertyType = "Name"; return true; }
-    if (edited.kind == "StrProperty") { *arrayName = "stringProperties"; *propertyType = "String"; return true; }
-    return false;
-}
-
-bool UpsertNativeProperty(json::Value& item, const EditedProperty& edited) {
-    std::string arrayName, propertyType;
-    if (!NativeActorProperty(edited, &arrayName, &propertyType)) return false;
-    json::Value* properties = EnsureArray(item, arrayName);
-    const std::string name = edited.path.substr(6);
-    json::Value current;
-    if (edited.kind == "BoolProperty") {
-        current = BoolValue(edited.value == "true");
-    } else if (arrayName == "floatProperties" || arrayName == "intProperties") {
-        double number = 0;
-        if (!ParseNumber(edited.value, &number)) return false;
-        current = NumberValue(number);
-    } else {
-        current = StringValue(edited.value);
-    }
-    for (json::Value& entry : properties->items) {
-        if (entry.type != json::Value::Object || entry.Str("propertyName") != name) continue;
-        if (json::Value* value = entry.Get("currentValue")) *value = current;
-        else entry.members.emplace_back("currentValue", current);
-        return true;
-    }
-    json::Value entry;
-    entry.type = json::Value::Object;
-    entry.members.emplace_back("currentValue", current);
-    entry.members.emplace_back("propertyName", StringValue(name));
-    entry.members.emplace_back("propertyType", StringValue(propertyType));
-    properties->items.push_back(std::move(entry));
-    return true;
-}
-
-bool PatchSavedFile(const std::wstring& path) {
-    std::string text, error;
-    json::Value root;
-    if (!ReadFile(path, &text) || !json::Parse(text, root, error) || root.type != json::Value::Object) {
-        hostlog::Warn("editor: could not read saved property data: " + error);
-        return false;
-    }
-    bool changed = false;
-    for (EditedProperty& edited : gEditedProperties) {
-        Obj actor = eng::Get(edited.actor);
-        ResolvedProperty resolved;
-        if (!actor || !ResolvePropertyPath(actor, edited.path, &resolved)) continue;
-        edited.kind = eng::KindOf(resolved.property);
-        edited.value = DisplayProperty(resolved.base, resolved.name, resolved.property, edited.kind);
-        json::Value* item = MatchingItem(root, actor);
-        if (!item) continue;
-        changed = RemoveMember(*item, "unrealProperties") || changed;
-        changed = UpsertNativeProperty(*item, edited) || changed;
-    }
-    if (!changed) return true;
-    if (!WriteFileAtomically(path, json::Stringify(root))) {
-        hostlog::Warn("editor: could not update Ballest native property arrays");
-        return false;
-    }
-    hostlog::Info("editor: wrote user-edited properties to Ballest native arrays in " +
-                  eng::Narrow(path.c_str(), static_cast<int>(path.size())));
-    return true;
-}
-
-std::vector<std::wstring> SavedFiles() {
-    std::vector<std::wstring> out;
-    const std::wstring pattern = UserSavedMapsDir() + L"\\*.balledit";
-    WIN32_FIND_DATAW found{};
-    HANDLE search = FindFirstFileW(pattern.c_str(), &found);
-    if (search == INVALID_HANDLE_VALUE) return out;
-    do {
-        if (!(found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) out.push_back(UserSavedMapsDir() + L"\\" + found.cFileName);
-    } while (FindNextFileW(search, &found));
-    FindClose(search);
-    return out;
-}
-
-std::string CurrentMapName() {
-    Obj cls = eng::FindClass("W_SaveLoad_C");
-    std::string fallback;
-    eng::ForEachObject([&](Obj object) {
-        if (eng::ClassOf(object) != cls || eng::IsDefaultObject(object) || !eng::IsLive(object)) return true;
-        eng::Params current = eng::Call(object, "GetCurrentMapName");
-        size_t size = 0;
-        const uint8_t* name = current.Get("MapName", &size);
-        if (current.Invoked() && name && size == 16) {
-            const std::string value = eng::ReadFString(name);
-            if (!value.empty()) {
-                fallback = value;
-            }
-        }
-        for (const char* property : {"LastSavedLevelName", "TargetLevel"}) {
-            const eng::Prop p = eng::FindProp(eng::ClassOf(object), property);
-            if (eng::KindOf(p) != "StrProperty" || p.size != 16) continue;
-            const std::string value = eng::ReadFString(object + p.offset);
-            if (!value.empty()) fallback = value;
-        }
-        return true;
-    });
-    return fallback;
-}
-
-std::wstring SaveFileForCurrentMap() {
-    const std::string current = CurrentMapName();
-    if (current.empty()) return gActiveSaveFile;
-    const std::wstring wanted = eng::Widen(current);
-    for (const std::wstring& file : SavedFiles()) {
-        const size_t slash = file.find_last_of(L"\\/");
-        const std::wstring name = slash == std::wstring::npos ? file : file.substr(slash + 1);
-        if (name == wanted || name == wanted + L".balledit" || name.find(L"&" + wanted) != std::wstring::npos)
-            return file;
-    }
-    return gActiveSaveFile;
-}
-
-void PersistenceFrame() {
-    if (gPersistenceGeneration != game::Generation()) {
-        gPersistenceGeneration = game::Generation();
-        gEditedProperties.clear();
-        gActiveSaveFile.clear();
-        gKnownSaveTimes.clear();
-        for (const std::wstring& file : SavedFiles()) {
-            std::error_code error;
-            gKnownSaveTimes[file] = std::filesystem::last_write_time(file, error);
-        }
-    }
-    if (GetTickCount64() >= gNextSaveScan) {
-        const std::wstring current = SaveFileForCurrentMap();
-        if (!current.empty() && current != gActiveSaveFile) {
-            gActiveSaveFile = current;
-            hostlog::Info("editor: active saved map " + eng::Narrow(current.c_str(), static_cast<int>(current.size())));
-        }
-    }
-    if (GetTickCount64() < gNextSaveScan) return;
-    gNextSaveScan = GetTickCount64() + 500;
-    for (const std::wstring& file : SavedFiles()) {
-        std::error_code error;
-        const auto written = std::filesystem::last_write_time(file, error);
-        if (error) continue;
-        const auto known = gKnownSaveTimes.find(file);
-        if (known == gKnownSaveTimes.end()) {
-            gKnownSaveTimes[file] = written;
-            gActiveSaveFile = file;
-            if (!gEditedProperties.empty() && PatchSavedFile(file)) {
-                std::error_code refreshedError;
-                gKnownSaveTimes[file] = std::filesystem::last_write_time(file, refreshedError);
-            }
-            continue;
-        }
-        if (written == known->second) continue;
-        known->second = written;
-        gActiveSaveFile = file;
-        if (!gEditedProperties.empty() && PatchSavedFile(file)) {
-            std::error_code refreshedError;
-            known->second = std::filesystem::last_write_time(file, refreshedError);
-        }
-    }
-}
-
-}  // namespace
 
 int RepairMeshes() {
     int repaired = 0;
@@ -1536,10 +976,7 @@ int RepairMeshes() {
 }
 
 void AssetBrowserFrame() {
-    if (Open()) {
-        PersistenceFrame();
-        return;
-    }
+    if (Open()) return;
     gRepairReported.clear();
     gCircuitDecalCache.clear();
     gMeshCache.clear();
