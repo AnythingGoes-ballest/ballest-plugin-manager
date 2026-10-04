@@ -228,6 +228,8 @@ FooterButton* AddPanelButton(Panel* panel, const std::string& label) {
 
 namespace footer {
 
+const std::vector<std::unique_ptr<FooterButton>>& Buttons() { return gButtons; }
+
 void Frame() {
     if (gButtons.empty() && gPanels.empty()) return;
     // The footer is looked for again twice a second, and whenever the one in use is gone.

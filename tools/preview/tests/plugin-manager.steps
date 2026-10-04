@@ -1,0 +1,20 @@
+# plugins: plugins/plugin-manager plugins/hello-world
+# The plugin manager's menu, offline: the installed tab, browse against a four-plugin registry, a search, and a
+# plugin's settings page with a change, reset and Escape back.
+click plugins
+dump
+click browse
+dump
+type rain
+dump
+type
+click installed
+click settings
+dump
+setting hello-world Every 120
+dump
+click reset#2
+press escape
+dump
+press escape
+dump

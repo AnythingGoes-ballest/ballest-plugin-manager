@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plugin preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&family=Montserrat:wght@700;800&display=swap" rel="stylesheet">
+<style>
+  /* The game's own font, if a copy is in tools/preview/fonts (not in the repo: it is the game's); a stand-in otherwise. */
+  @font-face { font-family: "GameDisplay"; src: url("/font"); }
+  :root { --stand-in: "GameDisplay", "Montserrat", sans-serif; }
+  html, body { margin: 0; height: 100%; background: #0b0d12; overflow: hidden; font-family: Roboto, sans-serif; }
+  #stage {
+    position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; overflow: hidden;
+    background: radial-gradient(ellipse at 60% 40%, #1d3f8f 0%, #0d1c45 45%, #05070d 100%);
+  }
+  #footer {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 40px; background: #000; display: flex;
+    justify-content: flex-end; align-items: center; gap: 40px; padding-right: 150px; z-index: 900;
+  }
+  #footer button {
+    background: none; border: 0; color: #9a9a9a; font: 700 26px var(--stand-in); cursor: pointer; padding: 0;
+  }
+  #footer button:hover { color: #fff; }
+  .win { position: absolute; box-sizing: border-box; display: flex; flex-direction: column; }
+  .body { display: flex; flex: 1; min-height: 0; position: relative; }
+  .side { display: flex; flex-direction: column; flex: none; margin-right: 16px; }
+  .side > * + * { margin-top: 6px; }
+  .main { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+  .view { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .view.scroll { overflow-y: auto; }
+  .view.scroll > * { flex: none; }
+  .card { border-radius: 10px; padding: 10px 14px; display: flex; flex-direction: column; flex: none; }
+  .row { display: flex; align-items: center; flex: none; }
+  .placed { position: absolute; inset: 0; pointer-events: none; }
+  .placed > * { position: absolute; }
+  .t { white-space: pre; font-weight: 700; line-height: 1.2; }
+  .b {
+    font: 700 20px Roboto, sans-serif; color: #fff; border: 1px solid rgba(255,255,255,.85); border-radius: 3px;
+    padding: 1px 12px; cursor: pointer; white-space: pre;
+  }
+  .b:hover { filter: brightness(1.6); }
+  .b:active { filter: brightness(.8); }
+  .icon { width: 56px; height: 22px; padding: 0; font-size: 14px; }
+  input.in {
+    box-sizing: border-box; background: #4d4d59; color: #fff; border: 0; border-radius: 3px; padding: 3px 6px;
+    font-family: Roboto, sans-serif; font-weight: 700; outline: none; min-width: 0;
+  }
+  input.in::placeholder { color: #aaa; }
+  .inbox { position: relative; display: flex; }
+  .inbox .x {
+    position: absolute; right: 4px; top: 50%; transform: translateY(-50%); border: 0; background: none; color: #b3b3b3;
+    cursor: pointer; font-weight: 700; border-radius: 9px; padding: 0 7px;
+  }
+  .inbox .x:hover { color: #fff; background: rgba(255,255,255,.18); }
+  select.dd { background: #222; color: #fff; border: 1px solid #555; font: 700 20px Roboto, sans-serif; }
+  input[type=range] { accent-color: #8cd900; }
+  .ta { overflow-y: auto; white-space: pre-wrap; font-weight: 700; color: #fff; line-height: 1.2; }
+  .img { object-fit: contain; display: block; flex: none; }
+  #bar {
+    position: fixed; right: 8px; top: 8px; z-index: 10; display: flex; gap: 6px; font: 12px Roboto, sans-serif;
+  }
+  #bar a, #bar span { color: #ccd; background: #1a1d26cc; padding: 4px 8px; border-radius: 6px; text-decoration: none; }
+  #bar .bad { color: #ff736b; }
+</style>
+</head>
+<body>
+<div id="stage"><div id="footer"></div></div>
+<div id="bar"><span id="status">connecting</span><a href="/text" target="_blank">text</a><a href="/log" target="_blank">log</a></div>
+<script>
+"use strict";
+const W = 1920, H = 1080;
+const stage = document.getElementById("stage"), footerEl = document.getElementById("footer"), statusEl = document.getElementById("status");
+const valueSeqs = new Map();      // text input id -> the valueSeq its box shows
+let lastJson = "";
+
+function fit() {
+  const s = Math.min(innerWidth / W, innerHeight / H);
+  stage.style.transform = `translate(${(innerWidth - W * s) / 2}px, ${(innerHeight - H * s) / 2}px) scale(${s})`;
+}
+addEventListener("resize", fit);
+fit();
+
+// Widget colours are linear (the game brightens them on screen); the page shows them as the game does.
+function srgb(c) { return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055; }
+function css(c) { return `rgba(${Math.round(srgb(c[0]) * 255)},${Math.round(srgb(c[1]) * 255)},${Math.round(srgb(c[2]) * 255)},${c[3]})`; }
+// Font sizes are Slate points: 4/3 of a unit each.
+function px(size) { return (size * 4 / 3) + "px"; }
+function family(font) { return font ? "var(--stand-in)" : "Roboto, sans-serif"; }
+
+let queue = [], sending = false;
+function send(type, id, value) {
+  queue.push(`${type}\n${id}\n${value ?? ""}`);
+  flush();
+}
+async function flush() {
+  if (sending || !queue.length) return;
+  sending = true;
+  const body = queue.join("\n\x1e\n");
+  queue = [];
+  try { await fetch("/input", {method: "POST", body}); } catch (e) {}
+  sending = false;
+  flush();
+}
+
+function widget(it) {
+  let el;
+  switch (it.kind) {
+    case "text":
+      el = document.createElement("span");
+      el.className = "t";
+      el.textContent = it.text;
+      el.style.fontSize = px(it.size);
+      el.style.fontFamily = family(it.font);
+      el.style.color = css(it.color);
+      if (it.textWidth > 0) { el.style.width = it.textWidth + "px"; el.style.display = "inline-block"; }
+      if (it.justify) el.style.textAlign = ["left", "center", "right"][it.justify];
+      break;
+    case "button":
+      el = document.createElement("button");
+      el.className = "b";
+      el.textContent = it.text;
+      el.style.background = css(it.background);
+      el.onclick = () => send("click", it.id);
+      el.onmouseenter = () => send("hover", it.id, 1);
+      el.onmouseleave = () => send("hover", it.id, 0);
+      break;
+    case "icon":
+      el = document.createElement("button");
+      el.className = "b icon";
+      el.textContent = {play: "▶", pause: "❚❚", down: "▼", up: "▲"}[it.text] || it.text;
+      el.style.background = css(it.background);
+      if (it.text === "down" || it.text === "up") el.style.width = "30px";
+      el.onclick = () => send("click", it.id);
+      break;
+    case "slider":
+      el = document.createElement("input");
+      el.type = "range"; el.min = 0; el.max = 1; el.step = 0.001; el.value = it.value;
+      if (it.width > 0) el.style.width = it.width + "px";
+      el.oninput = () => send("slider", it.id, el.value);
+      el.onchange = () => send("release", it.id);
+      break;
+    case "dropdown":
+      el = document.createElement("select");
+      el.className = "dd";
+      it.options.forEach((o, i) => el.add(new Option(o, i)));
+      el.value = it.selected;
+      if (it.width > 0) el.style.width = it.width + "px";
+      el.onchange = () => send("select", it.id, el.value);
+      break;
+    case "space":
+      el = document.createElement("div");
+      el.style.flex = it.width > 0 ? "none" : "1";
+      if (it.width > 0) el.style.width = it.width + "px";
+      break;
+    case "textarea":
+      el = document.createElement("div");
+      el.className = "ta";
+      el.dataset.id = it.id;
+      el.textContent = it.text;
+      el.style.fontSize = px(it.size);
+      if (it.width > 0) el.style.width = it.width + "px";
+      if (it.height > 0) el.style.height = it.height + "px";
+      break;
+    case "input": {
+      el = document.createElement("div");
+      el.className = "inbox";
+      const box = document.createElement("input");
+      box.className = "in";
+      box.dataset.id = it.id;
+      box.placeholder = it.text;
+      box.readOnly = it.readOnly;
+      box.style.fontSize = px(it.size);
+      box.value = it.value;
+      valueSeqs.set(it.id, it.valueSeq);
+      box.style.width = "100%";
+      el.style.width = it.width > 0 ? it.width + "px" : "auto";
+      box.oninput = () => { send("type", it.id, box.value); if (x) x.style.display = box.value ? "" : "none"; };
+      box.onkeydown = (e) => { if (e.key === "Enter") send("submit", it.id, box.value); if (e.key === "Escape") send("key", "", 27); };
+      box.onfocus = () => send("focus", it.id, 1);
+      box.onblur = () => send("focus", it.id, 0);
+      el.appendChild(box);
+      let x = null;
+      if (it.clear) {
+        x = document.createElement("button");
+        x.className = "x";
+        x.textContent = "x";
+        x.style.fontSize = px(it.size + 2);
+        x.style.display = it.value ? "" : "none";
+        x.onclick = () => { box.value = ""; x.style.display = "none"; send("clear", it.id); };
+        el.appendChild(x);
+      }
+      if (it.focus) setTimeout(() => box.focus(), 0);
+      break;
+    }
+    case "image":
+      if (it.text) {
+        el = document.createElement("img");
+        el.src = "/file?p=" + encodeURIComponent(it.text);
+        el.onerror = () => { el.removeAttribute("src"); el.style.background = "#050506"; };
+      } else {
+        el = document.createElement("div");
+        el.style.background = "#050506";
+      }
+      el.className = "img";
+      if (it.width > 0) el.style.width = it.width + "px";
+      if (it.height > 0) el.style.height = it.height + "px";
+      break;
+    case "check": {
+      el = document.createElement("label");
+      el.className = "t";
+      el.style.fontSize = px(it.size);
+      el.style.color = it.colorSet ? css(it.color) : "#fff";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = it.checked;
+      box.onchange = () => send("check", it.id, box.checked ? 1 : 0);
+      el.append(box, " " + it.text);
+      break;
+    }
+    case "rect":
+      el = document.createElement("div");
+      el.style.background = css(it.color);
+      break;
+    default:
+      el = document.createElement("span");
+  }
+  if (!it.visible) el.style.display = "none";
+  return el;
+}
+
+function fills(it) {
+  return (["space", "textarea", "input", "image", "slider"].includes(it.kind) && it.width <= 0) || (it.kind === "text" && it.fill);
+}
+
+function windowEl(w) {
+  const el = document.createElement("div");
+  el.className = "win";
+  el.dataset.id = w.id;
+  el.style.zIndex = w.z;
+  el.style.background = css(w.background);
+  if (w.radius > 0) el.style.borderRadius = w.radius + "px";
+  const sized = w.screen[0] > 0 && w.screen[1] > 0;
+  let pad = sized ? [16, 16] : [12, 8];
+  if (w.padding[0] >= 0) pad = [w.padding[0], w.padding[1]];
+  el.style.padding = `${pad[1]}px ${pad[0]}px`;
+  if (sized) {
+    Object.assign(el.style, {left: (1 - w.screen[0]) / 2 * W + "px", top: (1 - w.screen[1]) / 2 * H + "px",
+                             width: w.screen[0] * W + "px", height: w.screen[1] * H + "px"});
+  } else {
+    el.style.left = w.anchor[0] * W + w.offset[0] + "px";
+    el.style.top = w.anchor[1] * H + w.offset[1] + "px";
+    el.style.transform = `translate(${-w.pivot[0] * 100}%, ${-w.pivot[1] * 100}%)`;
+    if (w.rect[0] > 0) { el.style.width = w.rect[0] + "px"; el.style.height = w.rect[1] + "px"; }
+  }
+  const body = document.createElement("div");
+  body.className = "body";
+  el.appendChild(body);
+  let side = null;
+  if (w.sidebar > 0) {
+    side = document.createElement("div");
+    side.className = "side";
+    side.style.width = w.sidebar + "px";
+    body.appendChild(side);
+  }
+  const main = document.createElement("div");
+  main.className = "main";
+  body.appendChild(main);
+  const header = document.createElement("div");
+  header.className = "row-parent";
+  header.style.display = "flex";
+  header.style.flexDirection = "column";
+  main.appendChild(header);
+  const views = [];
+  for (let v = 0; v < w.views; v++) {
+    const box = document.createElement("div");
+    box.className = "view" + (w.scrolling.includes(v) ? " scroll" : "");
+    box.dataset.key = w.id + ":" + v;
+    if (v !== w.shownView) box.style.display = "none";
+    main.appendChild(box);
+    views.push(box);
+  }
+  // Rows, in order: each in its view (or the header), cards gathering theirs into one rounded box.
+  const rows = [], cards = new Map(), count = new Map();
+  w.rows.forEach(([view, card, retired], r) => {
+    if (retired) return;
+    let parent = view < 0 ? header : views[view];
+    const row = document.createElement("div");
+    row.className = "row";
+    let first;
+    if (card >= 0) {
+      let c = cards.get(card);
+      if (!c) {
+        c = document.createElement("div");
+        c.className = "card";
+        c.style.background = css(w.card);
+        if ((count.get(parent) || 0) > 0) c.style.marginTop = "8px";
+        count.set(parent, (count.get(parent) || 0) + 1);
+        parent.appendChild(c);
+        cards.set(card, c);
+      }
+      parent = c;
+      first = !(count.get(c) || 0);
+      count.set(c, (count.get(c) || 0) + 1);
+    } else {
+      first = !(count.get(parent) || 0);
+      count.set(parent, (count.get(parent) || 0) + 1);
+    }
+    const gap = w.rowGap >= 0 ? w.rowGap : card >= 0 ? 4 : 8;
+    if (!first && gap > 0) row.style.marginTop = gap + "px";
+    parent.appendChild(row);
+    rows[r] = {row, card: card >= 0 ? cards.get(card) : null, n: 0};
+  });
+  if (count.get(header)) header.style.marginBottom = "12px";
+  let placed = null;
+  for (const it of w.items) {
+    const e = widget(it);
+    if (it.placed) {
+      if (!placed) { placed = document.createElement("div"); placed.className = "placed"; body.appendChild(placed); }
+      Object.assign(e.style, {left: it.placed[0] + "px", top: it.placed[1] + "px"});
+      if (it.kind === "rect") Object.assign(e.style, {width: it.placed[2] + "px", height: it.placed[3] + "px"});
+      placed.appendChild(e);
+      continue;
+    }
+    if (it.side) { if (side) side.appendChild(e); continue; }
+    const slot = rows[it.row];
+    if (!slot) continue;
+    if (slot.n++ > 0) e.style.marginLeft = (it.gap >= 0 ? it.gap : it.kind === "text" ? 14 : 8) + "px";
+    if (fills(it)) { e.style.flex = "1"; e.style.minWidth = "0"; }
+    if (it.kind === "textarea" && it.height <= 0) {
+      slot.row.style.flex = "1"; slot.row.style.minHeight = "0"; slot.row.style.alignItems = "stretch";
+      if (slot.card) { slot.card.style.flex = "1"; slot.card.style.minHeight = "0"; }
+    }
+    slot.row.appendChild(e);
+  }
+  if (!w.visible) el.style.display = "none";
+  return el;
+}
+
+function render(screen) {
+  // Keep what the browser owns across a redraw: scroll positions, the text box being typed in (the element itself,
+  // so the caret stays), and text areas scrolled to their end.
+  const scrolls = new Map();
+  stage.querySelectorAll(".view.scroll").forEach(v => scrolls.set(v.dataset.key, v.scrollTop));
+  const areas = new Map();
+  stage.querySelectorAll(".ta").forEach(a => areas.set(a.dataset.id, {top: a.scrollTop, atEnd: a.scrollTop >= a.scrollHeight - a.clientHeight - 2}));
+  const active = document.activeElement && document.activeElement.classList.contains("in") ? document.activeElement : null;
+  const activeValue = active ? active.value : null;
+
+  stage.querySelectorAll(".win").forEach(e => e.remove());
+  for (const w of screen.windows) stage.appendChild(windowEl(w));
+
+  stage.querySelectorAll(".view.scroll").forEach(v => { if (scrolls.has(v.dataset.key)) v.scrollTop = scrolls.get(v.dataset.key); });
+  stage.querySelectorAll(".ta").forEach(a => {
+    const was = areas.get(a.dataset.id);
+    a.scrollTop = !was || was.atEnd ? a.scrollHeight : was.top;
+  });
+  if (active) {
+    const fresh = stage.querySelector(`input.in[data-id="${active.dataset.id}"]`);
+    if (fresh) {
+      const seq = valueSeqs.get(active.dataset.id);
+      const model = fresh.value;
+      fresh.replaceWith(active);
+      // The plugin set the box (cleared it after Enter, say): take its value; otherwise keep what's typed.
+      active.value = seq !== active._seq ? model : activeValue;
+      active._seq = seq;
+      active.focus();
+    }
+  }
+  stage.querySelectorAll("input.in").forEach(b => { b._seq = valueSeqs.get(b.dataset.id); });
+
+  footerEl.replaceChildren(...screen.footer.map(f => {
+    const b = document.createElement("button");
+    b.textContent = f.label;
+    b.onclick = () => send("footer", f.id);
+    return b;
+  }));
+}
+
+addEventListener("keydown", (e) => {
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+  const codes = {Escape: 27, Enter: 13, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, " ": 32, Tab: 9};
+  let vk = codes[e.key];
+  if (!vk && e.key.length === 1 && /[a-z0-9]/i.test(e.key)) vk = e.key.toUpperCase().charCodeAt(0);
+  if (!vk && /^F\d+$/.test(e.key)) vk = 111 + Number(e.key.slice(1));
+  if (vk) { send("key", "", vk); e.preventDefault(); }
+});
+
+async function poll() {
+  try {
+    const r = await fetch("/screen");
+    const text = await r.text();
+    if (text !== lastJson) {
+      lastJson = text;
+      render(JSON.parse(text));
+    }
+    statusEl.textContent = "live";
+    statusEl.className = "";
+  } catch (e) {
+    statusEl.textContent = "preview not running";
+    statusEl.className = "bad";
+  }
+  setTimeout(poll, 100);
+}
+poll();
+</script>
+</body>
+</html>
