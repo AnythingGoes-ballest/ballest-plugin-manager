@@ -5,6 +5,15 @@
 //
 // Implementation: footer.cpp (the main menu / race footer), windows.cpp (windows anywhere on screen), both built
 // from widgets.hpp. Game objects are only ever held as eng::Weak.
+//
+// The descriptions are the seam between plugins and the screen. A screen is whatever shows them: once a frame it
+// draws footer::Buttons() and windows::All() as they are, and writes what the player did back into the same structs,
+// where the API reads it: a button's clickPending (and hovered), a slider's value and dragging, a dropdown's selected
+// and changedPending, a check box's checked and changedPending, a text input's typed, focused, submitted and
+// submitPending (clearing the box when clearOnSubmit) and clearedPending; it shows a text input's pendingValue when
+// valuePending is set. The game's screen is footer::Frame and windows::Frame (UMG, through reflection); the
+// preview (tools/preview) is a second one that draws them in a browser, without the game. The eng::Weak members and
+// the shown* bookkeeping belong to the game's screen.
 #pragma once
 #include <memory>
 #include <string>
@@ -220,6 +229,7 @@ void HideOwner(int owner);
 bool SimulateClick(const std::string& label);
 std::string Status();
 double Height();                        // the footer bar's height on screen (UI units), 0 when there is none
+const std::vector<std::unique_ptr<FooterButton>>& Buttons();     // every footer entry, for a screen to draw
 }  // namespace footer
 
 namespace windows {
@@ -233,6 +243,7 @@ bool Typing();
 void RemoveOwner(int owner);
 void HideOwner(int owner);
 std::string Status();
+const std::vector<std::unique_ptr<Window>>& All();              // every window, for a screen to draw
 }  // namespace windows
 
 }  // namespace ui

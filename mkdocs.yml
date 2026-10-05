@@ -62,6 +62,7 @@ nav:
       - Settings: guides/settings.md
       - Saving data and timing: guides/storage.md
       - Debugging: guides/debugging.md
+      - Previewing windows: guides/preview.md
       - Publishing a plugin: guides/publishing.md
       - Custom cosmetics: guides/cosmetics.md
       - Drawing in the world: guides/world.md

@@ -1,0 +1,92 @@
+{
+  "plugins": [
+    {
+      "id": "cosmetic-kit",
+      "name": "Cosmetic Kit",
+      "description": "Lets plugins add custom balls, hats and goal explosions to a custom section of the Customize page, and remembers which ones you wear.",
+      "author": "AnythingGoes",
+      "repo": "AnythingGoes-ballest/ballest-cosmetic-kit",
+      "version": "0.1.0",
+      "commit": "2054e53b48f61c7c81c85c25108f86f866288f7b",
+      "min_host": "0.8.0",
+      "icon": "icon.png",
+      "dependencies": [],
+      "files": {
+        "info.toml": "3cc2293d99dee9eb91265b1c0248fad6e6ff6e9c358a28633e550934b834c0fb",
+        "main.as": "df675e35a640fd15e40193edafbfd3388e1d79f4fd94a5609f9efdf266ac4dc0",
+        "icon.png": "1ce5f38e5dddb42a50efb9dd0f5f049b92f213c8069c29ebb911c0a0736fd384"
+      }
+    },
+    {
+      "id": "grind-stats",
+      "name": "Grind Stats",
+      "description": "Played time, attempts and finishes on a card, all-time and this session, plus restarts, respawns and falls at each checkpoint, for every map you play.",
+      "author": "AnythingGoes, Will",
+      "repo": "AnythingGoes-ballest/ballest-grind-stats",
+      "version": "0.2.0",
+      "commit": "7d59f206be2ecf16c0a5befc025cb10fdf0fb590",
+      "min_host": "0.23.6",
+      "icon": "icon.png",
+      "dependencies": [],
+      "files": {
+        "info.toml": "c16365ccea1312ebf568071e0e2db6dfec1dec3299c711b53f495fd70031a6e3",
+        "main.as": "7a065b8fc904addadd18f9bb8270d128f0dd0dbd5a82d4e34777779ed42e6027",
+        "icon.png": "808400fc93e9ec5a79f02d225da684cd949be6fbee0e0bef6accb27a1bdb1d48"
+      }
+    },
+    {
+      "id": "rainbow-ball",
+      "name": "Rainbow Ball",
+      "description": "A rainbow ball whose rainbow keeps moving round it as it rolls.",
+      "author": "AnythingGoes",
+      "repo": "AnythingGoes-ballest/ballest-rainbow-ball",
+      "version": "0.1.0",
+      "commit": "5b8f85535657a02a432ca11f99f61d9ca2c16185",
+      "min_host": "0.17.1",
+      "icon": "icon.png",
+      "dependencies": [
+        "cosmetic-kit"
+      ],
+      "files": {
+        "info.toml": "d1059ee84962fa51f59f2706ccf9cace6b665590c96a62afed2badd3118e3451",
+        "main.as": "d859e8067dc2e7e8bda285b742d9f7dcd4b15eb24950e231f8d2d2580418539c",
+        "icon.png": "cf6faf7c021eb870643b0ea5584f39a41ad127cba84bdd75df98d38349eec796",
+        "preview.png": "cf6faf7c021eb870643b0ea5584f39a41ad127cba84bdd75df98d38349eec796",
+        "models/rainbow.txt": "c364c5eb371ee52c9050180d48136d7cf174b40fe13a25e3ed56393d86ec89b5",
+        "models/rainbow.glb": "3294de31c0a6ce5e3f588870d0f60f8e2696d02149ef87185580e79edf11bf1a"
+      }
+    },
+    {
+      "id": "replay-manager",
+      "name": "Replay Manager",
+      "description": "Pause, speed (.1x to 5x), scrubbing, default / follow 3D / free cameras, camera distance, and seeing through objects.",
+      "author": "AnythingGoes",
+      "repo": "AnythingGoes-ballest/ballest-replay-manager",
+      "version": "0.3.0",
+      "commit": "f7526205a5dcb2e01f6e91da44edbf564d8ce4fd",
+      "min_host": "0.9.0",
+      "icon": "icon.png",
+      "dependencies": [],
+      "files": {
+        "info.toml": "dd395c11c9f8efff7bcf602a3dc34c2eb41c5f2725d796449312da85642b3f6c",
+        "main.as": "b338ca8886429c555292c021a97d8fb8b5b28947b60b00f15cb283756e40c3c7",
+        "icon.png": "93ff162118c1ede8d14cbd2bc333f7a25823f14f7c6c5732e654059d4460acfe"
+      }
+    }
+  ],
+  "host": {
+    "version": "0.23.6",
+    "repo": "AnythingGoes-ballest/ballest-plugin-manager",
+    "commit": "ae85e98378650212f7149831970ce1fdee26e4b3",
+    "dll": "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/download/v0.23.6/version.dll",
+    "dll_sha256": "3bf443ca749a0559df6d96b6bd455c7642af621548fc87b9a3ad6516da2dbdb8",
+    "files": {
+      "plugins/hello-world/info.toml": "5300e78277bc1e92d4d1626ce17ed15e938f37e692b2271b58c3c9c30b79be40",
+      "plugins/hello-world/main.as": "24f510821cb3ea7825bfef6363d92e12fd493b9977038beb9e6c297a692fb23b",
+      "plugins/plugin-manager/default-icon.png": "304d27462febbf15c8645b64ae6b01624e4a59e29e0304ffac1f28313a3ba362",
+      "plugins/plugin-manager/icon.png": "fb60df477ecffe4942dc7500d2f4f6cb8b65d017bde68b49b81541c29f8e144e",
+      "plugins/plugin-manager/info.toml": "d08b9dc72e63042a39ff3f029f06e650d48cd716881c5593ca57a4cccc103ac7",
+      "plugins/plugin-manager/main.as": "788e459012cb0e9cda2b2aa8e572b50c70da222eb8ab46b02e6e0b65de122946"
+    }
+  }
+}
