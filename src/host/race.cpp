@@ -28,8 +28,8 @@ namespace {
 
 bool gOnTrack = false, gActive = false, gComplete = false;
 int gRestarts = 0, gRunId = -1;
-eng::Weak gBall;                // the ball whose counter was read last
-int32_t gLastCounter = 0;
+eng::Weak gBall;                // the ball whose run was read last
+int32_t gLastRun = -1;          // that ball's last raced run id (kept between runs, on the results screen)
 
 struct Vec3 {
     double x = 0, y = 0, z = 0;
@@ -38,12 +38,6 @@ struct Rot {
     double pitch = 0, yaw = 0, roll = 0;
 };
 constexpr uint64_t kNoBone = 0;             // FName None, for the physics functions' BoneName
-
-// The ball's restart counter, or false if this pawn is not a ball (a replay camera, the menu ball, ...).
-bool ReadCounter(Obj pawn, int32_t* counter) {
-    return pawn && eng::FindProp(eng::ClassOf(pawn), "RestartCounterThisSession") &&
-           eng::ReadBytes(pawn, "RestartCounterThisSession", counter, sizeof *counter);
-}
 
 Obj Ball() {
     Obj controller = game::PlayerController();
@@ -575,21 +569,29 @@ void Frame() {
         gLagRestores.clear();
     }
 
-    int32_t counter = 0;
-    if (!ReadCounter(pawn, &counter)) return;
-    if (eng::Get(gBall) == pawn && counter > gLastCounter) {
-        // A fall before the first checkpoint goes back to the start and raises the ball's counter too (measured on
-        // Chaos2); it's a fall, not a restart.
+    // A restart is a new run on the same ball. Since the game's 2026-10-06 update a restart (measured in a run; the
+    // results screen restarts with the same action) keeps the ball and gives it a new RaceId, but no longer raises its
+    // RestartCounterThisSession (measured on stasis: run 93 -> 26, counter stays 1). Only runs that were raced count:
+    // before the first Play the ball reads run 0 with no race active (measured), and the first raced run on a new ball
+    // (a new map) is not a restart either.
+    if (!pawn || !eng::FindProp(eng::ClassOf(pawn), "RaceId")) return;
+    if (eng::Get(gBall) != pawn) {
+        gBall = eng::MakeWeak(pawn);
+        gLastRun = -1;
+    }
+    if (!gActive || runId < 0 || runId == gLastRun) return;
+    if (gLastRun >= 0) {
+        // A fall before the first checkpoint goes back to the start (measured on Chaos2, before the update, as a
+        // restart); it's a fall, not a restart.
         if (gFallRestartOpen && game::Seconds() - gFallAt < kFallToRespawn) {
             gFallRestartOpen = false;
             hostlog::Info("race: back to the start after a fall (not counted as a restart)");
         } else {
-            gRestarts += counter - gLastCounter;
+            ++gRestarts;
             hostlog::Info("race restarted from the beginning (" + std::to_string(gRestarts) + " this session)");
         }
     }
-    gBall = eng::MakeWeak(pawn);
-    gLastCounter = counter;
+    gLastRun = runId;
 }
 
 bool OnTrack() { return gOnTrack; }

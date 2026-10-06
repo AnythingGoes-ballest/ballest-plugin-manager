@@ -1,10 +1,11 @@
 // Races: whether one is running and how often it was restarted from the beginning. Measured on the game:
 //   * the player controller (BP_MyPlayerController_C) has bRaceActive: on while racing, including through
 //     checkpoint respawns; off in menus, after the finish, and for the moment of a restart
-//   * the ball (the controller's pawn, BP_RollingBall_C) has RestartCounterThisSession, which the game raises by
-//     one on every restart from the beginning of the track (Backspace, or R before the first checkpoint), and not
-//     for checkpoint respawns, falls or the track's first start. Each map has a new ball whose counter starts
-//     again, so counting follows the ball: a different ball is a new baseline, not a restart.
+//   * the ball (the controller's pawn, BP_RollingBall_C) has RaceId: the run's id while racing, 0 before the first
+//     Play, -1 after a finish. A restart from the beginning (the Restart race key, or R before the first checkpoint)
+//     keeps the ball and gives it a new RaceId. Since the game's 2026-10-06 update its RestartCounterThisSession no
+//     longer rises on a restart, so restarts are counted by new raced run ids. Each map has a new ball, so counting
+//     follows the ball: a different ball's first run is not a restart.
 // Also the track being raced (name, author, author time, an identity to keep records by), saving and restoring the
 // ball, pausing, and practice runs that can't finish. Game thread only.
 #pragma once

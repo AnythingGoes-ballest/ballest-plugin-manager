@@ -87,8 +87,9 @@ void SetToolbarChoiceSelected(int choice, int selected);
 void AddHotkey(int owner, const std::string& icon, const std::string& label, const std::string& secondIcon = "");
 void RemoveOwner(int owner);            // a plugin's toolbar choices and key rows, and its budget limit
 // The map's piece budget: its limit (the level editor's MaximumMapBudget, read from the game: 300) and what the map
-// uses (the handler's AllocatedBudget, -1 outside the editor). SetBudgetLimit changes the limit for the session, for
-// the plugin that set it; 0 gives the game's own back, as does the plugin stopping.
+// uses (its pieces' BudgetCost added up, -1 outside the editor). SetBudgetLimit changes the limit for the session, for
+// the plugin that set it; 0 gives the game's own back, as does the plugin stopping. The game has had no budget since
+// its 2026-10-06 update, so the limit no longer stops anything.
 int BudgetLimit();
 int BudgetUsed();
 bool SetBudgetLimit(int owner, int limit);

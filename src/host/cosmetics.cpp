@@ -636,6 +636,48 @@ bool Hidden(Obj actor) {
     return eng::ReadBool(actor, "bHidden", &hidden) && hidden;
 }
 
+// --- the game's camera fade ------------------------------------------------------------------------------------------
+// Since the game's 2026-10-06 update the racing ball fades out as the camera comes close (its CameraProximityFade, a
+// BallestCameraFadeComponent). Measured: it keeps a snapshot of every mesh on the ball (and of actors given to
+// RegisterCameraFadeCosmeticActor) and puts a fade copy of each material on in its place: a cooked variant under
+// /Game/Art/Materials/CameraFade, or for a dynamic material a new dynamic one of its parent's variant (a custom image
+// ball's, for one). BeginCameraFadeAppearanceChange puts the originals back and RefreshCameraFadeAppearance takes new
+// snapshots. So the host tells it when the custom look changes, and takes the fade copy of its own material as worn.
+Obj FadeOf(Obj ball) {
+    return ball && eng::FindProp(eng::ClassOf(ball), "CameraProximityFade") ? eng::ReadObj(ball, "CameraProximityFade") : nullptr;
+}
+
+// BallestCameraFadeMaterialSnapshot (from the game's types): Mesh at 0, OriginalMaterials at 0x18, AppliedMaterials at
+// 0x28, 0x48 bytes in all.
+struct ObjArray {
+    Obj* data;
+    int32_t num, max;
+};
+constexpr size_t kSnapshotSize = 0x48, kSnapshotOriginals = 0x18, kSnapshotApplied = 0x28;
+
+// The original material the fade replaced on a component with `copy`, or null if `copy` is not one of its copies.
+Obj FadeOriginal(Obj ball, Obj component, Obj copy) {
+    Obj fade = FadeOf(ball);
+    struct {
+        uint8_t* data;
+        int32_t num, max;
+    } snaps{};
+    if (!fade || !copy || !eng::ReadBytes(fade, "MaterialSnapshots", &snaps, sizeof snaps) || !snaps.data || snaps.num > 1024)
+        return nullptr;
+    for (int i = 0; i < snaps.num; ++i) {
+        const uint8_t* e = snaps.data + i * kSnapshotSize;
+        Obj mesh;
+        std::memcpy(&mesh, e, sizeof mesh);
+        if (mesh != component) continue;
+        ObjArray originals, applied;
+        std::memcpy(&originals, e + kSnapshotOriginals, sizeof originals);
+        std::memcpy(&applied, e + kSnapshotApplied, sizeof applied);
+        for (int j = 0; j < originals.num && j < applied.num; ++j)
+            if (applied.data[j] == copy && originals.data[j] != copy) return originals.data[j];
+    }
+    return nullptr;
+}
+
 // --- a game cosmetic worn locally ----------------------------------------------------------------------------------
 // Put on as the game itself puts a skin on (read from the blueprints): the menu ball as the Customize page previews one
 // (SetSpecialBall for a skin with an actor of its own; ReassignDMI + DetermineMIParams + AssignBasicBallParams for a
@@ -757,6 +799,7 @@ void WearBall(Obj ball, Obj sphere, const Custom* custom) {
     Obj mesh = eng::ReadObj(sphere, "StaticMesh");
     Obj wanted = custom ? eng::Get(custom->material) : nullptr;
     Replaced* r = RecordOf(sphere);
+    if (Obj original = FadeOriginal(ball, sphere, material)) material = original;     // the camera fade's copy of it
     if (wanted) {
         const bool sphereShown = eng::Call(sphere, "IsVisible").ReturnBool();
         const bool skinShown = skinActor && !Hidden(skinActor);
@@ -965,6 +1008,21 @@ Forced& ForcedOf(Obj ball) {
     return gForced.back();
 }
 
+// What each racing ball's camera fade was last set up with (see Wear).
+struct FadeState {
+    eng::Weak ball;
+    std::string look;                               // the local look's ids; empty for the game's own
+    std::vector<Obj> actors;                        // the models' actors registered with it
+};
+std::vector<FadeState> gFades;
+
+FadeState& FadeStateOf(Obj ball) {
+    for (auto& f : gFades)
+        if (eng::Get(f.ball) == ball) return f;
+    gFades.push_back({eng::MakeWeak(ball), "", {}});
+    return gFades.back();
+}
+
 bool PageShown(Obj page) {
     bool active = false;
     return page && eng::ReadBool(page, "bActive", &active) && active;
@@ -1012,42 +1070,74 @@ void Wear() {
         if (!actor) continue;
         const bool menu = eng::ClassOf(actor) == menuClass;
         const bool local = !(menu && publicPreview);
-        Forced& forced = ForcedOf(actor);
-        if (Obj sphere = eng::ReadObj(actor, "Sphere")) {
-            if (Obj skin = local ? gameSkin : nullptr) {
-                if (!WearsSkin(actor, sphere, skin, menu)) PutSkin(actor, sphere, skin, menu);
-                forced.skin = true;
-            } else if (forced.skin) {
-                forced.skin = false;
-                if (Obj own = PublicChoice(actor, menu, 0); own && !WearsSkin(actor, sphere, own, menu)) PutSkin(actor, sphere, own, menu);
-            }
-            const Custom* custom = local ? ball : nullptr;
-            WearBall(actor, sphere, custom);
-            if (custom && custom->hasModel) WearModel(sphere, custom, actor);
-            else RemoveModel(sphere);
-            // Extras (arms, ...): built on the sphere beside the ball's own model, local only like custom cosmetics.
-            for (const std::string& slotName : ExtraSlots()) {
-                const Custom* extra = local ? WornExtra(slotName) : nullptr;
-                if (extra && extra->hasModel) WearModel(sphere, extra, actor, slotName);
-                else RemoveModel(sphere, slotName);
-            }
+        // The camera fade (racing balls): its originals go back before the look changes and it takes new snapshots
+        // after, with the models' actors (see FadeOf). Nothing is asked of it while the game's own look is worn.
+        Obj fade = menu ? nullptr : FadeOf(actor);
+        std::string look;
+        if (fade && local) {
+            if (ball) look += "ball " + ball->id + ";";
+            if (hat) look += "hat " + hat->id + ";";
+            if (gameSkin) look += "skin " + eng::PathOf(gameSkin) + ";";
+            if (gameHat) look += "accessory " + eng::PathOf(gameHat) + ";";
+            for (const std::string& slotName : ExtraSlots())
+                if (const Custom* extra = WornExtra(slotName)) look += slotName + " " + extra->id + ";";
         }
-        if (Obj slot = eng::ReadObj(actor, "AccessorySlot")) {
-            if (Obj accessory = local ? gameHat : nullptr) {
-                SetHatMesh(slot, HatMesh(accessory));
-                forced.hat = true;
-            } else if (forced.hat) {
-                forced.hat = false;
-                if (Obj own = PublicChoice(actor, menu, 1)) SetHatMesh(slot, HatMesh(own));
+        FadeState* faded = fade ? &FadeStateOf(actor) : nullptr;
+        const bool changing = faded && look != faded->look;
+        if (changing) eng::Call(fade, "BeginCameraFadeAppearanceChange", actor);
+        for (int pass = 0; pass < 2; ++pass) {
+            Forced& forced = ForcedOf(actor);
+            if (Obj sphere = eng::ReadObj(actor, "Sphere")) {
+                if (Obj skin = local ? gameSkin : nullptr) {
+                    if (!WearsSkin(actor, sphere, skin, menu)) PutSkin(actor, sphere, skin, menu);
+                    forced.skin = true;
+                } else if (forced.skin) {
+                    forced.skin = false;
+                    if (Obj own = PublicChoice(actor, menu, 0); own && !WearsSkin(actor, sphere, own, menu)) PutSkin(actor, sphere, own, menu);
+                }
+                const Custom* custom = local ? ball : nullptr;
+                WearBall(actor, sphere, custom);
+                if (custom && custom->hasModel) WearModel(sphere, custom, actor);
+                else RemoveModel(sphere);
+                // Extras (arms, ...): built on the sphere beside the ball's own model, local only like custom cosmetics.
+                for (const std::string& slotName : ExtraSlots()) {
+                    const Custom* extra = local ? WornExtra(slotName) : nullptr;
+                    if (extra && extra->hasModel) WearModel(sphere, extra, actor, slotName);
+                    else RemoveModel(sphere, slotName);
+                }
             }
-            WearHat(actor, slot, local ? hat : nullptr);
-            // An extra's tile is an accessory, so the page previewed "no hat" on the menu ball when it was picked: the
-            // hat the ball should show goes back on (a custom or local game hat is put back above, each frame).
-            if (menu && gFixMenuHat && !(local && (hat || gameHat)))
-                if (Obj own = PublicChoice(actor, menu, 1)) SetHatMesh(slot, HatMesh(own));
+            if (Obj slot = eng::ReadObj(actor, "AccessorySlot")) {
+                if (Obj accessory = local ? gameHat : nullptr) {
+                    SetHatMesh(slot, HatMesh(accessory));
+                    forced.hat = true;
+                } else if (forced.hat) {
+                    forced.hat = false;
+                    if (Obj own = PublicChoice(actor, menu, 1)) SetHatMesh(slot, HatMesh(own));
+                }
+                WearHat(actor, slot, local ? hat : nullptr);
+                // An extra's tile is an accessory, so the page previewed "no hat" on the menu ball when it was picked: the
+                // hat the ball should show goes back on (a custom or local game hat is put back above, each frame).
+                if (menu && gFixMenuHat && !(local && (hat || gameHat)))
+                    if (Obj own = PublicChoice(actor, menu, 1)) SetHatMesh(slot, HatMesh(own));
+            }
+            if (!faded) break;
+            const std::vector<Obj> actors = ModelActorsOn(actor);
+            if (!changing && actors == faded->actors) break;
+            if (pass == 0 && !changing) {                   // a model built again: originals back, and worn again
+                eng::Call(fade, "BeginCameraFadeAppearanceChange", actor);
+                continue;
+            }
+            for (Obj part : actors) eng::Call(fade, "RegisterCameraFadeCosmeticActor", actor, part);
+            eng::Call(fade, "RefreshCameraFadeAppearance", actor);
+            faded->look = look;
+            faded->actors = actors;
+            hostlog::Info("cosmetics: camera fade set up for " + (look.empty() ? std::string("the game's own look") : look) +
+                          " (" + std::to_string(actors.size()) + " model actors)");
+            break;
         }
     }
     gFixMenuHat = false;
+    gFades.erase(std::remove_if(gFades.begin(), gFades.end(), [](const FadeState& f) { return !eng::Get(f.ball); }), gFades.end());
     gForced.erase(std::remove_if(gForced.begin(), gForced.end(), [](const Forced& f) { return !eng::Get(f.ball); }), gForced.end());
     for (size_t i = gModels.size(); i-- > 0;)          // balls gone with their map
         if (!eng::Get(gModels[i].component)) {

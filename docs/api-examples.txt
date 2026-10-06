@@ -1721,22 +1721,23 @@ Shows another option on a toolbar button.
 Editor::SetToolbarChoice(rotateChoice, 0);
 
 == Editor::BudgetLimit
-The track editor's piece budget limit: how many pieces a map may have (the game's is 300), or -1 if it can't be read.
-Requires host 0.16.1.
+The track editor's piece budget limit (the game's setting is 300), or -1 if it can't be read. Since the game's
+2026-10-06 update the editor has no piece budget, so nothing is limited by it. Requires host 0.16.1.
 --
 Log::Info("pieces: " + Editor::BudgetUsed() + " of " + Editor::BudgetLimit());
 
 == Editor::BudgetUsed
 How much of the piece budget the map in the editor uses (each piece counts 1, checkpoints 0), or -1 outside the
-editor. The host keeps it right: the game leaves it at 0 when a saved map is opened. Requires host 0.16.1.
+editor. The host counts the pieces itself (the game stopped counting them in its 2026-10-06 update). Requires host
+0.16.1.
 --
 if (Editor::BudgetUsed() > Editor::BudgetLimit() - 10)
     Log::Warn("nearly out of pieces");
 
 == Editor::SetBudgetLimit
-Changes the piece budget limit for the session: new pieces and pastes are allowed up to it. `0` gives the game's own
-back, as does the plugin stopping. Other players' games keep the game's limit. False if it couldn't be changed.
-Requires host 0.16.1.
+Changes the piece budget limit for the session. `0` gives the game's own back, as does the plugin stopping. False if
+it couldn't be changed. Since the game's 2026-10-06 update the editor has no piece budget, so this no longer changes
+how many pieces can be placed. Requires host 0.16.1.
 --
 Editor::SetBudgetLimit(1000);   // room for 1000 pieces
 Editor::SetBudgetLimit(0);      // the game's own again

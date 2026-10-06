@@ -27,8 +27,16 @@ using eng::Params;
 constexpr double kPi = 3.14159265358979323846;
 // Measured materials that render on dynamic meshes: the game's plain ball colour (BaseColor, Metallic, Roughness) and
 // its emissive light (Light_Color, Light_Emissive_Intensity).
+// Since the 2026-10-06 update the racing ball fades out near the camera with materials of the game's own that fade by
+// themselves (cooked copies under /Game/Art/Materials/CameraFade, named after the original and a hash); the ball's fade
+// puts them on in place of their originals (see cosmetics' FadeOf). It knows the ball colour's copy, but not the
+// light's: so lights are built straight on a fade copy, MI_LightEmissiveDimmest's. That is MI_Env_Emissive_Yellow's
+// grandparent, and Yellow and its parent White set only the two parameters set here (measured: same look, and it fades;
+// the menu ball, which has no fade, shows it as before).
 const wchar_t* kColourMaterial = L"/Game/Art/Materials/Instances/Ball/MI_BallRed.MI_BallRed";
 const wchar_t* kGlowMaterial = L"/Game/Art/Materials/Environment/Materials/Instances/MI_Env_Emissive_Yellow.MI_Env_Emissive_Yellow";
+const wchar_t* kGlowFadeMaterial =
+    L"/Game/Art/Materials/CameraFade/Opaque/MI_LightEmissiveDimmest_CF_f9b0ffd01e.MI_LightEmissiveDimmest_CF_f9b0ffd01e";
 // Glass. The stadium water (M_Water_Base) draws in the default translucency pass; M_Glass in the one before depth of
 // field, so water behind it is drawn over it (reported: a clear ball vanished in front of water). Clear glass is
 // M_GlassV2, which is in the default pass with the water, so the two sort by distance. V2 can't be tinted (its
@@ -769,6 +777,17 @@ bool texture(Obj mid, const char* parameter, const wchar_t* asset) {
     return eng::Invoke(mid, p);
 }
 
+// The light's parent: its fade copy, or the light without fade if the game no longer has that copy.
+Obj GlowParent() {
+    static bool noCopy = false;
+    if (!noCopy) {
+        if (Obj copy = cosmetics::LoadAsset(kGlowFadeMaterial)) return copy;
+        noCopy = true;
+        hostlog::Warn("models: the game's camera fade copy of the light material did not load; lights on the ball won't fade");
+    }
+    return cosmetics::LoadAsset(kGlowMaterial);
+}
+
 Obj MakeMaterial(const Material& m, Obj worldContext) {
     if (m.finish == Finish::Image) {
         Obj material = cosmetics::ImageMaterial(ImageTexture(m.image), "ModelImage");
@@ -779,7 +798,7 @@ Obj MakeMaterial(const Material& m, Obj worldContext) {
                           : m.finish == Finish::Glass ? (m.refracts ? (gRefractingParent.empty() ? kRefractingGlassMaterial : gRefractingParent.c_str())
                                                          : m.tinted ? kTintedGlassMaterial : kClearGlassMaterial)
                                                       : kColourMaterial;
-    Obj parent = cosmetics::LoadAsset(path);
+    Obj parent = path == kGlowMaterial ? GlowParent() : cosmetics::LoadAsset(path);
     if (!parent) return nullptr;
     if (path == kTintedGlassMaterial) GlassInWatersPass(parent);
     const Params made = eng::Call(Lib("KismetMaterialLibrary"), "CreateDynamicMaterialInstance", worldContext, parent,

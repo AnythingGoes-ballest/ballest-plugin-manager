@@ -54,7 +54,7 @@ bool ReadOnlyCommand(const std::string& name) {
         "state", "fps", "soundstate", "checkpoints", "openstate", "functions", "instances", "props", "find", "struct",
         "viewtarget", "materials", "watch", "children", "fnbytes", "matparams", "race", "ballstate", "ballsave", "hud",
         "widgetpath", "strprop", "objprop", "listprop", "dumptypes", "objbytes", "membytes", "objarray", "cosmetics",
-        "skinmats", "sandbox", "sandboxtest"};
+        "skinmats", "sandbox", "sandboxtest", "fade"};
     return kReadOnly.count(name) > 0;
 }
 
@@ -325,6 +325,44 @@ void Materials(const std::string& fragment) {
     Report("materials: " + std::to_string(shown) + " shown");
 }
 
+// The camera fade on each ball (the game's BallestCameraFadeComponent, from 2026-10-06): its settings and every mesh it
+// has given fade materials, with the materials before and after.
+void Fade(const std::string& filter) {
+    auto names = [](const uint8_t* arr) {
+        struct { eng::Obj* data; int32_t num, max; } h;
+        std::memcpy(&h, arr, sizeof h);
+        std::string out;
+        for (int i = 0; i < h.num && i < 16; ++i) out += (i ? ", " : "") + (h.data[i] ? eng::PathOf(h.data[i]) : std::string("null"));
+        return "[" + out + "]";
+    };
+    for (eng::Obj ball : Instances("BP_RollingBall_C", filter)) {
+        eng::Obj fade = eng::ReadObj(ball, "CameraProximityFade");
+        if (!fade) { Report("fade: " + eng::PathOf(ball) + " has none"); continue; }
+        bool on = false;
+        float start = 0, full = 0, pad = 0;
+        eng::ReadBool(fade, "bFadeEnabled", &on);
+        eng::ReadBytes(fade, "StartClearance", &start, 4);
+        eng::ReadBytes(fade, "FullFadeClearance", &full, 4);
+        eng::ReadBytes(fade, "VisualBoundsPadding", &pad, 4);
+        struct { uint8_t* data; int32_t num, max; } snaps{};
+        eng::ReadBytes(fade, "MaterialSnapshots", &snaps, sizeof snaps);
+        Report("fade: " + eng::PathOf(ball) + " enabled " + std::to_string(on) + " start " + std::to_string(start) +
+               " full " + std::to_string(full) + " padding " + std::to_string(pad) + " body " +
+               eng::PathOf(eng::ReadObj(fade, "RadialBody")) + " snapshots " + std::to_string(snaps.num));
+        for (int i = 0; i < snaps.num && i < 32; ++i) {
+            const uint8_t* e = snaps.data + i * 0x48;
+            eng::Obj mesh;
+            std::memcpy(&mesh, e, sizeof mesh);
+            std::string data;                   // the mesh's custom primitive data (floats)
+            struct { float* data; int32_t num, max; } cpd{};
+            if (mesh && eng::ReadBytes(mesh, "CustomPrimitiveData", &cpd, sizeof cpd))
+                for (int k = 0; k < cpd.num && k < 8; ++k) data += " " + std::to_string(cpd.data[k]);
+            Report("fade:   " + (mesh ? eng::PathOf(mesh) : std::string("null")) + " data" + data + " overrides " + names(e + 0x08) +
+                   " originals " + names(e + 0x18) + " applied " + names(e + 0x28));
+        }
+    }
+}
+
 void ViewTarget() {
     eng::Obj controller = game::PlayerController();
     Report("controller " + eng::PathOf(controller) + " view target " + eng::PathOf(eng::Call(controller, "GetViewTarget").ReturnObj()));
@@ -513,6 +551,13 @@ void Run(const std::string& cmd) {
         {"callx", [](const Args&, const std::string& c) { CallWithArgs(c); }},
         {"viewtarget", [](const Args&, const std::string&) { ViewTarget(); }},
         {"pov", [](const Args& a, const std::string&) { Pov(Arg(a, 1)); }},
+        {"fade", [](const Args& a, const std::string&) { Fade(Arg(a, 1)); }},
+        {"setfloat", [](const Args& a, const std::string& c) {    // setfloat <Class> <filter> <property> <value>: on each
+             const float v = std::strtof(Arg(a, 4).c_str(), nullptr);
+             int n = 0;
+             for (eng::Obj o : Instances(Arg(a, 1), Arg(a, 2))) n += eng::WriteBytes(o, Arg(a, 3), &v, sizeof v) ? 1 : 0;
+             Report(c + " -> " + std::to_string(n) + " set");
+         }},
         {"materials", [](const Args& a, const std::string&) { Materials(Arg(a, 1)); }},
         {"watch", [](const Args& a, const std::string&) { Watch(Arg(a, 1)); }},
         {"objitem", [](const Args& a, const std::string&) { ObjItem(Arg(a, 1), Arg(a, 2)); }},

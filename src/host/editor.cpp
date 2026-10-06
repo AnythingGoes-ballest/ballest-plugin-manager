@@ -352,51 +352,6 @@ void RotateAboutCenter() {
     PlaceAboutCenter(turn);
 }
 
-// The piece budget (the header's "budget" bar) is the handler's AllocatedBudget, which the editor adds each piece's
-// BudgetCost to as it is placed and takes it off as it is deleted. Opening a saved map leaves it at 0 whatever the map
-// holds (measured on the 2026-09-29 build, with every plugin off: 19 pieces of cost 1 each, AllocatedBudget 0, the bar
-// empty; the same empty bar shows in a screenshot from before that update), so the bar reads empty and the budget's
-// limit is not enforced. The handler's own InitializeBudget counts the map's pieces again (measured: 19, and the bar
-// filled). So the count is compared with the pieces about once a second, and recounted by the game when it differs.
-// `offset` is how far the game's own count is from the sum here, if it ever is, so the two are not fought over.
-struct BudgetCheck {
-    ULONGLONG next = 0;
-    int offset = 0;
-    eng::Weak handler;
-};
-BudgetCheck gBudget;
-
-void KeepBudget() {
-    Obj handler = Handler();
-    if (GetTickCount64() < gBudget.next || input::Down(kLeftMouse)) return;
-    gBudget.next = GetTickCount64() + 1000;
-    if (eng::Get(gBudget.handler) != handler) {
-        gBudget.handler = eng::MakeWeak(handler);
-        gBudget.offset = 0;
-    }
-    int32_t allocated = 0;
-    if (!eng::ReadBytes(handler, "AllocatedBudget", &allocated, sizeof allocated)) return;
-    int sum = 0;
-    for (Obj a : AllActors()) {
-        int32_t cost = 0;
-        if (a && eng::FindProp(eng::ClassOf(a), "BudgetCost") && eng::ReadBytes(a, "BudgetCost", &cost, sizeof cost)) sum += cost;
-    }
-    if (allocated == sum + gBudget.offset) return;
-    Obj controller = game::PlayerController();
-    if (!controller) return;
-    eng::Params p(eng::FunctionOn(handler, "InitializeBudget"));
-    p.Set("WorldContextObject", controller);
-    if (!eng::Invoke(handler, p)) return;
-    const int counted = p.ReturnAs<int32_t>(-1);
-    int32_t now = 0;
-    eng::ReadBytes(handler, "AllocatedBudget", &now, sizeof now);
-    static int logged = 0;
-    if (++logged <= 20)
-        hostlog::Info("editor: the piece budget read " + std::to_string(allocated) + " with " + std::to_string(sum) +
-                      " on the map; the editor counted again: " + std::to_string(counted) + " (now " + std::to_string(now) + ")");
-    gBudget.offset = now - sum;
-}
-
 }  // namespace
 
 namespace {
@@ -426,7 +381,6 @@ void Frame() {
         gDetails = eng::MakeWeak(found);
     }
     FindPlacements();
-    KeepBudget();
     CycleTransformBoxes();
     RotateAboutCenter();
     WatchClicks();
@@ -1210,9 +1164,9 @@ void AddHotkey(int owner, const std::string& icon, const std::string& label, con
 }
 
 // --- the budget's limit ---------------------------------------------------------------------------------------------------
-// The level editor reads its limit from its developer settings (USKGMLEDeveloperSettings, whose default object holds
+// The level editor read its limit from its developer settings (USKGMLEDeveloperSettings, whose default object holds
 // the project's values: MaximumMapBudget 300, read in game), so the limit is changed there; the game's own is kept to
-// give back.
+// give back. Since the game's 2026-10-06 update the editor has no piece budget, so the limit no longer stops anything.
 int gGameBudgetLimit = -1, gBudgetOwner = -1;
 
 Obj BudgetSettings() { return eng::FindCdo("SKGMLEDeveloperSettings"); }
@@ -1223,9 +1177,16 @@ int BudgetLimit() {
     return settings && eng::ReadBytes(settings, "MaximumMapBudget", &limit, sizeof limit) ? limit : -1;
 }
 
+// The pieces' BudgetCost added up (1 each, checkpoints 0). The game counted it as AllocatedBudget until its 2026-10-06
+// update removed the budget; that now stays 0 (measured), so it is counted here.
 int BudgetUsed() {
-    int32_t used = -1;
-    return Handler() && eng::ReadBytes(Handler(), "AllocatedBudget", &used, sizeof used) ? used : -1;
+    if (!Handler()) return -1;
+    int sum = 0;
+    for (Obj a : AllActors()) {
+        int32_t cost = 0;
+        if (a && eng::FindProp(eng::ClassOf(a), "BudgetCost") && eng::ReadBytes(a, "BudgetCost", &cost, sizeof cost)) sum += cost;
+    }
+    return sum;
 }
 
 bool SetBudgetLimit(int owner, int limit) {
