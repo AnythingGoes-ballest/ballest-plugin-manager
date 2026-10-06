@@ -85,19 +85,17 @@
     {
       "id": "create-extensions",
       "name": "Create Extensions",
-      "description": "Track editor extras: drag to select, groups (G / U), rotate modes in the toolbar (center, mirrored), Shift/Ctrl+click to deselect, whole-unit placement, placement distance, rotated copies, Tab between transform boxes.",
+      "description": "Track editor extras: drag to select, rotate modes in the toolbar (center, mirrored), whole-unit placement, placement distance, rotated copies, Tab between transform boxes, last run's path.",
       "author": "AnythingGoes",
       "repo": "AnythingGoes-ballest/ballest-create-extensions",
-      "version": "0.7.0",
-      "commit": "7b97052c79ac97a6caa7c1d7a24a77991cbc31b7",
-      "min_host": "0.16.1",
+      "version": "0.8.0",
+      "commit": "f361ec7cdc728a81fff447d7ce9cec29a1567d5f",
+      "min_host": "0.23.7",
       "icon": "icon.png",
       "dependencies": [],
       "files": {
-        "info.toml": "81624bebbf39c24af89176f9493556ae0878a3cc14ef8e704a676c7b0958fb5f",
-        "main.as": "179403545d6cfa23226ceb2fad6ac3a3dbdc700ff05b842806133fe578b8000d",
-        "keyboard_g.png": "beaedfc27e44bc1748d8e8d76b7b9f2e6444a323b7a1860a7ae6e727dbe995d0",
-        "keyboard_u.png": "a9c0359e7d3764483af43e68584262ed432912e163404bdd3fff78c73b8b380d",
+        "info.toml": "69b4ad6be3471c699715fdaf699826c28fb4ea5dac3f28ef0dcfe424019f17a1",
+        "main.as": "b3ea312145f550209cf4db05247cf19019c098ff013d3a31d62226cabb650609",
         "icon.png": "673495590b04fbc8b8a75af30e0eed74dc9b34ef11584f3e66fea362e53b74fe"
       }
     },
@@ -502,17 +500,17 @@
     {
       "id": "hub-plus",
       "name": "Hub Plus",
-      "description": "The game's track hub plus search: find maps by name or author as you type, see how many players have each map, sort every way, filter by your own progress.",
+      "description": "The game's track hub plus search: find maps by name or author as you type, see how many players have each map, extra sorts (trending windows, name, most subscribed), filter by your own progress.",
       "author": "AnythingGoes",
       "repo": "AnythingGoes-ballest/ballest-hub-plus",
-      "version": "0.1.0",
-      "commit": "5d2c9b89523d5002a70d03415d724c9d96099c6d",
+      "version": "0.2.0",
+      "commit": "885c8bcd84dd0f0eef5804db6c610ba247c4900f",
       "min_host": "0.23.0",
       "icon": "icon.png",
       "dependencies": [],
       "files": {
-        "info.toml": "e5b2f43fd3698763be63f6f20908d90db8f46a840529d3631374c09010cea2db",
-        "main.as": "f467a68eb031a6f03c090fbeeaa5fcfa615507f2df501cd4b50d5852e1eb3509",
+        "info.toml": "a423276d56fb14160c54e91f580ce716095a75ba51943b17e87b6d144773cd16",
+        "main.as": "23c8de1f142f09ec32522b1bdc6829693f4e111a4b58a50da3978fb525057c09",
         "icon.png": "d44f163f6a67d8b0e9d7d46a141d735164f9cd002ab7537e650f15ecdcf022e3"
       }
     },
