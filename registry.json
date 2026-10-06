@@ -323,6 +323,48 @@
       }
     },
     {
+      "id": "fun-balls",
+      "name": "Fun-Balls",
+      "description": "Four clear balls: Checkpoint-Arrow, Speedometer, Clock, Kettle.",
+      "author": "CryT4x",
+      "repo": "Cryt4x/ballest-fun-balls",
+      "version": "1.1.36",
+      "commit": "cb5426e019898e4bd5c1529e232ba464477b3345",
+      "min_host": "0.23.4",
+      "icon": "icon.png",
+      "dependencies": [
+        "cosmetic-kit"
+      ],
+      "files": {
+        "info.toml": "ce3a5ef64cff253810d4f7c32c06bb53c4539b09affc198fa62a192a75352f12",
+        "main.as": "d257727d9f18552ae895a36b1e8d1810caef906d4763a453e6093fe67d92655e",
+        "icon.png": "ede74c9a17bac61ce249df591b77c63b1b81500ed1743ba06b02fed6d6c1b98a",
+        "preview.png": "5b9ed39fae17e97111984e8ed8d4726ab1b08e706e555ef69d5d88d02cb0eadd",
+        "preview_kettle.png": "874cc441a5c3bb8b6afe2c3de3e7629f024dffdfe1f0e2b702fd26191ca27a46",
+        "preview_speed.png": "ede74c9a17bac61ce249df591b77c63b1b81500ed1743ba06b02fed6d6c1b98a",
+        "preview_timer.png": "dddb4fe5552d9373d8d41d81c3320bd502549e400b021a2d2b3bba711af66678",
+        "models/arrow.txt": "7f2d8739cb31202e82db4027a67fd2361a1e712e5081c155860498b47c384042",
+        "models/ball.txt": "b2a8d8a45353b36a5675399c8038b4460fde48a4427c3b7a955946634a840840",
+        "models/bar_1.txt": "6d1f27955ce3640117a4335b6fe375c62582828a1c33539e1a970f35efadcc5b",
+        "models/bar_1_off.txt": "d00c7857afb4ac7aac6049152ce30088387f596f8a08bf188763c0a4c76a7ba9",
+        "models/bar_2.txt": "afbdf382bd18950a32caabadd3860faccfb32027da4e4e6d4afc315a3cb5529e",
+        "models/bar_2_off.txt": "81cf44ded7e3b35c88c6575681df43262a7e05f8b2ad325be44a6c3174b912bf",
+        "models/bar_3.txt": "d07df71cbbca1836adb0414ddfaeded22a5238e3b1235fd743e2ffe7d2278a70",
+        "models/bar_3_off.txt": "a0e513664d4e24182092be85fa2f57ca284d2e60038f730c5d99c2304deccb79",
+        "models/bar_4.txt": "11c9f598fe3d2d91688a7751a5b0da14da16c49d5dac69d7672b7b518161bc41",
+        "models/bar_4_off.txt": "5215839f9f0292fc29fc963e079a6cb293548364137624472849aca299a666c6",
+        "models/bar_5.txt": "be005054bd23800c2a1935bf65c292534175f7a92a390828fdb9a910e3a1b8aa",
+        "models/bar_5_off.txt": "a7acdd75d13d1e3bfa2a03595530afd13f830466ac6f0c3859e4d0deb84629c9",
+        "models/clock.txt": "dff3db6a6be198bf803bb5961efc8bb81757ecc543ca2e045619a85c1449f6a1",
+        "models/dot.txt": "bee132d6e7ecb158d188d7a7cc79cdd5b4577f660f6e76950a5de03b9904c0ed",
+        "models/flame.txt": "b212be0d6e6e8c8254f649efb1fca63ca174e13fbec7210d33cb8e3f031270bb",
+        "models/kettle.txt": "8ee56a475e952e768a71a16379ee0208eb5cedcaa3ef65bb227d2ada351093d6",
+        "models/seg_h.txt": "6ad6f4c36a9250cf74bc75318af215c65bfd439169532b4f3d5d70b13f0dfaf7",
+        "models/seg_v.txt": "97bff94c81ff135212e0567aaa38a3f63cdb924a43ada739f71aa397980493da",
+        "models/stand.txt": "406eb054fdd24ae2cd13a8d44b238d4fb7c754a807d8937c1f7bf0d504688f3d"
+      }
+    },
+    {
       "id": "glass-balls",
       "name": "Glass Balls",
       "description": "Real glass balls, clear or in 10 colours: see-through, bending the track behind them, with live reflections of the track around you.",
