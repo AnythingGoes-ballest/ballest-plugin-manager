@@ -102,7 +102,11 @@ def main():
     ap.add_argument("--phases", default="all", help="comma-separated phases to run (default all)")
     ap.add_argument("--editor-map", default="", help="part of a saved map's name for the editor phases (default: the first)")
     ap.add_argument("--keep", action="store_true", help="leave the game running afterwards")
-    ap.add_argument("--track", default="", help="the official track's level for the track and race phases (default: the first)")
+    # The project's rule: race tests only on its own test map (the workshop map "stasis"), never an official track or
+    # someone else's map (2026-10-03: a test teleport on an official track reached the real leaderboard).
+    ap.add_argument("--track", default="workshop:3805348161",
+                    help="the track for the track and race phases: workshop:<id> or an official level (default: the test map)")
+    ap.add_argument("--workshop", default="3805348161", help="the workshop track for the workshop phase (default: the test map)")
     ap.add_argument("--strict", action="store_true", help="exit 1 if any API is untested")
     ap.add_argument("--timeout", type=int, default=1500, help="seconds for the whole run")
     ap.add_argument("--coverage", action="store_true", help="only check (offline) that every documented API has a test")
@@ -112,6 +116,9 @@ def main():
     if args.coverage:
         coverage()
     global SLOT, DATA, SAVED, LOG, CRASHES, PLUGINS
+    wants_editor = args.phases == "all" or any(p.strip().startswith("editor") for p in args.phases.split(","))
+    if wants_editor and not args.editor_map and not args.coverage:
+        sys.exit("the editor phases need --editor-map <part of one of YOUR OWN unpublished maps' names> (never someone else's)")
     if not args.slot and not args.coverage:
         sys.exit("api_tests.py only runs in a sandboxed test copy (its race tests teleport and fling the ball): pass --slot N")
     if args.slot:
@@ -143,7 +150,7 @@ def main():
     shutil.rmtree(PLUGINS / ID, ignore_errors=True)
     shutil.copytree(SOURCE, PLUGINS / ID)
     (DATA / "storage").mkdir(exist_ok=True)
-    (DATA / "storage" / f"{ID}.txt").write_text(f"setting.Phases={args.phases}\nsetting.EditorMap={args.editor_map}\nsetting.Track={args.track}\n",
+    (DATA / "storage" / f"{ID}.txt").write_text(f"setting.Phases={args.phases}\nsetting.EditorMap={args.editor_map}\nsetting.Track={args.track}\nsetting.Workshop={args.workshop}\n",
                                                 encoding="utf-8")
     if LOG.exists():
         LOG.unlink()

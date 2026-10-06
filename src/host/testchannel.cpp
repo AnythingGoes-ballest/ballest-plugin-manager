@@ -893,6 +893,15 @@ void Run(const std::string& cmd) {
              eng::Call(eng::FindCdo("KismetSystemLibrary"), "CollectGarbage");
              Report("gc requested");
          }},
+        {"clickat", [](const Args& a, const std::string& c) {    // clickat <x> <y>: a left click posted to the game's window
+             HWND w = static_cast<HWND>(game::WindowHandle());       // (client pixels); the real mouse isn't moved
+             if (!w) return Report(c + " -> no game window");
+             const LPARAM at = MAKELPARAM(std::atoi(Arg(a, 1).c_str()), std::atoi(Arg(a, 2).c_str()));
+             PostMessageW(w, WM_MOUSEMOVE, 0, at);
+             PostMessageW(w, WM_LBUTTONDOWN, MK_LBUTTON, at);
+             PostMessageW(w, WM_LBUTTONUP, 0, at);
+             Report(c + " -> ok");
+         }},
         {"sandbox", [](const Args&, const std::string&) { Report("sandbox: " + sandbox::Status()); }},
         {"sandboxtest", [](const Args&, const std::string&) { Report("sandbox test: " + sandbox::SelfTest()); }},
         {"replaycam", [](const Args& a, const std::string&) {

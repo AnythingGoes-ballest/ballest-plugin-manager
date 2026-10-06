@@ -14,8 +14,11 @@
 [Setting name="Phases" description="The phases to run, by name, comma separated ('all' for every one)"]
 string Phases = "all";
 
-[Setting name="Track" description="The level of the official track for the track and race phases ('' for the first)"]
+[Setting name="Track" description="The track for the track and race phases: 'workshop:<published file id>', or an official track's level ('' for the first)"]
 string Track = "";
+
+[Setting name="Workshop" description="The published file id of the workshop track for the workshop phase ('' for the first search result)"]
+string Workshop = "";
 
 [Setting name="Editor map" description="Part of the name of a saved map to open in the editor (opened, never saved)"]
 string EditorMap = "";
@@ -327,7 +330,10 @@ void Register()
                 return false;
             // Leth Trial 01 has checkpoints besides the finish (so its runs have splits); else the first track.
             level = Track != "" ? Track : levels.find("Map_LethTrial_01") >= 0 ? "Map_LethTrial_01" : levels[0];
-            Tracks::Open(level);
+            if (level.findFirst("workshop:") == 0)
+                Tracks::OpenWorkshop(level.substr(9));          // a workshop track (a test map of the project's own)
+            else
+                Tracks::Open(level);
             pstep = 10;
             pt = Host::Time();
         }
@@ -349,7 +355,12 @@ void Register()
         if (pstep != 20)
         {
             pstep = 20;
-            Tracks::Search("sky");
+            if (Workshop != "")
+                s1 = Workshop;                                  // a given track, not whatever the search finds
+            else
+                Tracks::Search("sky");
+            if (Workshop != "")
+                Tracks::OpenWorkshop(s1);
             pt = Host::Time();
         }
         if (pstep == 20 && Tracks::SearchState() == "done" && Tracks::ResultCount() > 0 && s1 == "")
@@ -1605,9 +1616,14 @@ void RegisterTrack()
     Add("track", "Race track info", "Race::OnTrack,Race::TrackKey,Race::TrackName,Race::TrackAuthor,Race::AuthorTime,Race::IsCustomTrack,Race::IsActive,Race::IsComplete,Host::MapNumber", function() {
         if (Race::AuthorTime() <= 0)
             return WAIT;
-        array<string> c = {Is(Race::OnTrack(), "Race::OnTrack false"), Is(Race::TrackKey() == "map:" + level, "Race::TrackKey '" + Race::TrackKey() + "', want map:" + level),
+        // An official track's key is map:<level>; a workshop track's (the project's test map) custom:<id>:<name>.
+        bool workshop = level.findFirst("workshop:") == 0;
+        string wantKey = workshop ? "custom:" + level.substr(9) + ":" : "map:" + level;
+        array<string> c = {Is(Race::OnTrack(), "Race::OnTrack false"),
+                           Is(workshop ? Race::TrackKey().findFirst(wantKey) == 0 : Race::TrackKey() == wantKey, "Race::TrackKey '" + Race::TrackKey() + "', want " + wantKey),
                            Is(Race::TrackName() != "", "Race::TrackName empty"), Is(Race::TrackAuthor().length() < 200, "Race::TrackAuthor '" + Race::TrackAuthor() + "'"),
-                           Is(!Race::IsCustomTrack(), "Race::IsCustomTrack true on an official track"), Is(!Race::IsActive(), "Race::IsActive before the race"),
+                           Is(Race::IsCustomTrack() == workshop, "Race::IsCustomTrack " + Race::IsCustomTrack() + " on " + (workshop ? "a workshop" : "an official") + " track"),
+                           Is(!Race::IsActive(), "Race::IsActive before the race"),
                            Is(!Race::IsComplete(), "Race::IsComplete before the race"), Is(Host::MapNumber() > 0, "Host::MapNumber " + Host::MapNumber())};
         return All(c);
     }, 20);
@@ -1979,6 +1995,8 @@ void RegisterRace()
             if (!Race::IsActive())
                 return Elapsed() > 15 ? "the race isn't running after the restart" : WAIT;     // R counts only while racing
             int n = Race::CheckpointCount();
+            if (n <= 0 && Race::IsCustomTrack())        // the test map may have only a finish: nothing to check here
+                return "SKIP: no checkpoints on " + Race::TrackKey() + " (a test map with checkpoints would check these)";
             if (n <= 0)
                 return "Race::CheckpointCount " + n + " on " + Race::TrackKey();
             double x, y, z;
@@ -2227,7 +2245,8 @@ void RegisterEditor()
         int own = Editor::BudgetLimit();
         int used = Editor::BudgetUsed();
         array<string> c = {Is(own > 0, "Editor::BudgetLimit " + own),
-                           Is(used > 0 && used <= int(Editor::Pieces().length()), "Editor::BudgetUsed " + used + " with " + Editor::Pieces().length() + " pieces"),
+                           // 0 since the game's 2026-10-06 update: its budget is off and it no longer counts (pieces still cost 1)
+                           Is(used >= 0 && used <= int(Editor::Pieces().length()), "Editor::BudgetUsed " + used + " with " + Editor::Pieces().length() + " pieces"),
                            Is(Editor::SetBudgetLimit(own + 1234) && Editor::BudgetLimit() == own + 1234, "Editor::SetBudgetLimit: limit " + Editor::BudgetLimit() + " after setting " + (own + 1234))};
         Editor::SetBudgetLimit(0);
         c.insertLast(Is(Editor::BudgetLimit() == own, "Editor::SetBudgetLimit(0): limit " + Editor::BudgetLimit() + ", want the game's " + own));

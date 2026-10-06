@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <algorithm>
 #include <cstring>
 #include <deque>
@@ -579,15 +580,20 @@ namespace {
 
 using NativeFunction = void (*)(Obj context, uint8_t* frame, void* result);
 
+// The pawn's left-click events, one per modifier. Their names end in the blueprint compiler's numbers, which change
+// when the game is rebuilt (2026-10-06: plain 15 -> 19, Shift 13 -> 17, Ctrl 7 -> 11, Alt 10 -> 14), so each is found by
+// its name with any number (PressEvent). The Ctrl+Shift one is new in that update (optional).
 struct ClickEvent {
-    const char* function;
+    const char* prefix;
     int modifiers;
+    bool required;
 };
 const ClickEvent kClickEvents[] = {
-    {"InpActEvt_LeftMouseButton_K2Node_InputKeyEvent_15", 0},
-    {"InpActEvt_Shift_LeftMouseButton_K2Node_InputKeyEvent_13", kClickShift},
-    {"InpActEvt_Ctrl_LeftMouseButton_K2Node_InputKeyEvent_7", kClickCtrl},
-    {"InpActEvt_Alt_LeftMouseButton_K2Node_InputKeyEvent_10", kClickAlt},
+    {"InpActEvt_LeftMouseButton_K2Node_InputKeyEvent_", 0, true},
+    {"InpActEvt_Shift_LeftMouseButton_K2Node_InputKeyEvent_", kClickShift, true},
+    {"InpActEvt_Ctrl_LeftMouseButton_K2Node_InputKeyEvent_", kClickCtrl, true},
+    {"InpActEvt_Alt_LeftMouseButton_K2Node_InputKeyEvent_", kClickAlt, true},
+    {"InpActEvt_Ctrl+Shift_LeftMouseButton_K2Node_InputKeyEvent_", kClickCtrl | kClickShift, false},
 };
 constexpr int kClickEventCount = static_cast<int>(sizeof kClickEvents / sizeof kClickEvents[0]);
 Obj gClickFunctions[kClickEventCount] = {};
@@ -749,6 +755,23 @@ void SpawnWatched() {
     hostlog::Info("editor: watching palette placements");
 }
 
+// A key binding's press event among the class's functions named prefix + a number. Each binding compiles to a pair
+// (pressed, released) numbered in order, and the plain click has one more event of its own besides (number 0). The
+// press is the lower of the highest pair: measured, 2026-09-29 build {0, 15, 16} -> 15, and on every modifier since.
+Obj PressEvent(Obj cls, const char* prefix) {
+    std::vector<int> numbers;
+    const std::string start(prefix);
+    for (const auto& name : eng::FunctionNames(cls)) {
+        if (name.rfind(start, 0) != 0 || name.size() == start.size()) continue;
+        const std::string tail = name.substr(start.size());
+        if (tail.find_first_not_of("0123456789") == std::string::npos) numbers.push_back(std::atoi(tail.c_str()));
+    }
+    std::sort(numbers.begin(), numbers.end());
+    if (numbers.empty()) return nullptr;
+    const int number = numbers.size() >= 2 ? numbers[numbers.size() - 2] : numbers.back();
+    return eng::FindFunction(cls, (start + std::to_string(number)).c_str());
+}
+
 // Installed on the pawn class's functions whenever the editor's pawn class is (re)loaded.
 void WatchClicks() {
     if (gClickHookFailed) return;
@@ -756,20 +779,23 @@ void WatchClicks() {
     if (!pawn) return;
     Obj cls = eng::ClassOf(pawn);
     Obj fns[kClickEventCount];
+    std::string found;
     for (int i = 0; i < kClickEventCount; ++i) {
-        fns[i] = eng::FindFunction(cls, kClickEvents[i].function);
-        if (!fns[i]) {
+        fns[i] = PressEvent(cls, kClickEvents[i].prefix);
+        if (!fns[i] && kClickEvents[i].required) {
             gClickHookFailed = true;
-            hostlog::Warn(std::string("editor: the pawn has no ") + kClickEvents[i].function + "; clicks are not watched");
+            hostlog::Warn(std::string("editor: the pawn has no ") + kClickEvents[i].prefix + "<n>; clicks are not watched");
             return;
         }
+        if (fns[i]) found += (found.empty() ? "" : ", ") + eng::ObjName(fns[i]);
     }
     if (std::equal(fns, fns + kClickEventCount, gClickFunctions)) return;
-    NativeFunction entries[kClickEventCount];
-    for (int i = 0; i < kClickEventCount; ++i) std::memcpy(&entries[i], fns[i] + layout::kUFunctionNativeFunctionOffset, sizeof entries[i]);
+    NativeFunction entries[kClickEventCount] = {};
+    for (int i = 0; i < kClickEventCount; ++i)
+        if (fns[i]) std::memcpy(&entries[i], fns[i] + layout::kUFunctionNativeFunctionOffset, sizeof entries[i]);
     const NativeFunction hooked = &ClickHooked;
     for (int i = 0; i < kClickEventCount; ++i) {
-        if (entries[i] == hooked) continue;             // already ours (the same class seen again)
+        if (!fns[i] || entries[i] == hooked) continue;  // missing (optional), or already ours (the same class seen again)
         if (!eng::InImage(reinterpret_cast<void*>(entries[i])) || (gClickOriginal && entries[i] != gClickOriginal) ||
             (!gClickOriginal && i > 0 && entries[i] != entries[0])) {
             gClickHookFailed = true;
@@ -779,10 +805,10 @@ void WatchClicks() {
         gClickOriginal = entries[i];
     }
     for (int i = 0; i < kClickEventCount; ++i) {
-        std::memcpy(fns[i] + layout::kUFunctionNativeFunctionOffset, &hooked, sizeof hooked);
+        if (fns[i]) std::memcpy(fns[i] + layout::kUFunctionNativeFunctionOffset, &hooked, sizeof hooked);
         gClickFunctions[i] = fns[i];
     }
-    hostlog::Info("editor: watching clicks on pieces");
+    hostlog::Info("editor: watching clicks on pieces (" + found + ")");
 }
 
 void WatchSaving() {
