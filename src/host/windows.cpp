@@ -334,11 +334,19 @@ void Forget(Window& win) {
     }
 }
 
+Obj DockTarget(Dock dock) {
+    switch (dock) {
+        case Dock::Hub: return hub::DockPanel();
+        case Dock::EditorDetails: return editor::DetailsContainer();
+        default: return nullptr;
+    }
+}
+
 void Build(Window& win) {
     Obj host = nullptr, tree = nullptr, canvas = nullptr, dock = nullptr;
-    if (win.dock == Dock::EditorDetails || win.dock == Dock::Hub) {
+    if (win.dock != Dock::Screen) {
         // A section of the editor's details panel, or a row of the track hub: built into that panel's own widget tree.
-        dock = win.dock == Dock::Hub ? hub::DockPanel() : editor::DetailsContainer();
+        dock = DockTarget(win.dock);
         if (!dock) return;
         tree = eng::OuterOf(dock);
     } else if (!w::NewScreen(game::PlayerController(), &host, &tree, &canvas)) {
@@ -945,8 +953,7 @@ void Frame() {
         // Built in an earlier map: those widgets went with it. Forgotten without being touched.
         if (win.host.o && win.generation != game::Generation()) Forget(win);
         // Docked into a panel that has been replaced (the editor was reopened): build it again in the new one.
-        if (win.dock != Dock::Screen && eng::Get(win.host) &&
-            eng::Get(win.dockedIn) != (win.dock == Dock::Hub ? hub::DockPanel() : editor::DetailsContainer())) {
+        if (win.dock != Dock::Screen && eng::Get(win.host) && eng::Get(win.dockedIn) != DockTarget(win.dock)) {
             eng::Call(eng::Get(win.host), "RemoveFromParent");
             Forget(win);
         }

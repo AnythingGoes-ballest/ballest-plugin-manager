@@ -81,6 +81,7 @@ nav:
       - Cosmetics: reference/api/cosmetics.md
       - Leaderboard: reference/api/leaderboard.md
       - Ghosts: reference/api/ghosts.md
+      - Runs: reference/api/runs.md
       - Tracks: reference/api/tracks.md
       - Workshop: reference/api/workshop.md
       - Hub: reference/api/hub.md

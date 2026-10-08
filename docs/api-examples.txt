@@ -1975,6 +1975,45 @@ screens; `""` removes it. It goes when the plugin stops. If two plugins set one,
 --
 Leaderboard::SetOverallNote("12,583");
 
+== Leaderboard::SetExtraRows
+Rows of your own as a third view of the leaderboard inside a map: a button of the game's own kind, beside its world
+and friends buttons, switches the board to them (and those two switch it back). They're the game's own leaderboard rows,
+with a rank, a name and a time (in seconds, shown the way the game shows its own), under `title`. `ghosts` sets how each
+row's ghost toggle looks (on or off) and `pinned` marks rows with a lime bar and a lime rank. Clicks on a row don't
+start the game's ghost download: read them with `ExtraRowClicked` and `ExtraRowPinClicked` (a click on the rank). An
+empty `names` removes the button. If two plugins set rows, the last one shows. Requires host 0.24.0.
+--
+array<string> names = {"run 1", "run 2"};
+array<double> times = {41.2, 39.8};
+array<bool> ghosts = {false, true};
+Leaderboard::SetExtraRows("my runs", names, times, ghosts);
+
+== Leaderboard::SetExtraRowsIcon
+The image on the extra rows' button: a PNG or JPEG in the plugin's folder (or a full path); `""` for the game's own
+list icon. Requires host 0.24.0.
+--
+Leaderboard::SetExtraRowsIcon("runs.png");
+
+== Leaderboard::ExtraRowsShown
+Whether the leaderboard shows your extra rows now (their button was clicked). Requires host 0.24.0.
+--
+if (Leaderboard::ExtraRowsShown())
+    Log::Info("showing my rows");
+
+== Leaderboard::ExtraRowClicked
+The extra row clicked since you last asked (not on its rank), or -1. Requires host 0.24.0.
+--
+int row = Leaderboard::ExtraRowClicked();
+if (row >= 0)
+    Log::Info("row " + row + " clicked");
+
+== Leaderboard::ExtraRowPinClicked
+The extra row whose rank was clicked since you last asked (a pin), or -1. Requires host 0.24.0.
+--
+int row = Leaderboard::ExtraRowPinClicked();
+if (row >= 0)
+    pinned[row] = !pinned[row];
+
 @@ Ghosts
 The leaderboard ghosts of the track on screen: the top entries of its Steam leaderboard and your own, each with the
 path its ball took. Everything here needs host 0.14.0. Loading takes a few seconds (every replay is a download); read
@@ -2174,6 +2213,85 @@ int number;
 double x, y, z;
 if (Ghosts::Checkpoint(0, number, x, y, z))
     Log::Info("checkpoint " + number + " at " + x + ", " + y + ", " + z);
+
+@@ Runs
+Your own recent runs, finished or not: each attempt at a track from the race's start until a restart from the
+beginning, the finish, or leaving the track (checkpoint respawns and falls stay in the same run; practice runs
+aren't kept). The host records them
+about ten times a second in the game's own replay format and keeps them in its `runs` folder, the newest ten across
+every track (`SetKeep`) plus any you pin. Runs are numbered newest first (0 is the latest), so a run's number changes as
+new ones come; `Id` stays the same. Everything here needs host 0.24.0.
+
+== Runs::SetKeep
+How many runs are kept (1 to 500, 10 until set); the oldest go first. Pinned runs don't count.
+--
+Runs::SetKeep(25);
+
+== Runs::Count
+How many runs are kept now.
+--
+for (int i = 0; i < Runs::Count(); i++)
+    Log::Info(Runs::TrackName(i) + ": " + Runs::Time(i));
+
+== Runs::Id
+A run's own name, the same for as long as it's kept (its number moves as runs come and go).
+--
+string id = Runs::Id(0);
+
+== Runs::TrackKey
+The track a run was on, as `Race::TrackKey` gives it.
+--
+if (Runs::TrackKey(0) == Race::TrackKey())
+    Log::Info("the last run was on this track");
+
+== Runs::TrackName
+The name of the track a run was on.
+--
+Log::Info(Runs::TrackName(0));
+
+== Runs::Time
+How long a run lasted, in seconds: its finish time for a finished run.
+--
+double t = Runs::Time(0);
+
+== Runs::IsFinished
+Whether a run reached the finish.
+--
+if (Runs::IsFinished(0))
+    Log::Info("finished in " + Runs::Time(0));
+
+== Runs::Age
+Seconds since a run ended.
+--
+if (Runs::Age(0) < 60)
+    Log::Info("a run in the last minute");
+
+== Runs::IsPinned
+Whether a run is pinned: kept whatever comes after it.
+--
+bool keep = Runs::IsPinned(0);
+
+== Runs::SetPinned
+Pins a run (kept whatever comes after it, not counted toward `SetKeep`) or unpins it, which can let the oldest go.
+--
+Runs::SetPinned(0, true);
+
+== Runs::Elapsed
+Seconds since the start of the run going on now, by the race's own clock; -1 without one.
+--
+double now = Runs::Elapsed();
+
+== Runs::Ball
+A ball for a run, as `Ghosts::PlayerBall` makes one for a ghost: your own ball in your skin, see-through. Returns a
+`Draw` id, or 0. Move it with `PlaceBall`.
+--
+int ball = Runs::Ball(0);
+
+== Runs::PlaceBall
+Puts a ball from `Ball` where that run was at `time` seconds into it, turning the way it turned. False if the run is
+gone or the ball isn't one.
+--
+Runs::PlaceBall(ball, 0, Runs::Elapsed());
 
 @@ Tracks
 Opening tracks from a plugin: the game's own, in the circuit's order, and workshop tracks found by a search. They open

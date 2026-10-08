@@ -907,8 +907,10 @@ void* HookedFindOrCreate(int32_t user, const char* version) {
 
 }  // namespace
 
+bool Interactive() { return GetFileAttributesW((hostlog::DataDir() + L"\\interactive.txt").c_str()) != INVALID_FILE_ATTRIBUTES; }
+
 bool MuteAudio() {
-    if (!gOn) return false;
+    if (!gOn || Interactive()) return false;
     const HRESULT init = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     bool muted = false;
     IMMDeviceEnumerator* devices = nullptr;
@@ -969,6 +971,12 @@ void InstallEarly() {
                     (writes ? "blocked" : "NOT BLOCKED") + ", Steam interfaces " + (interfaces ? "watched" : "NOT WATCHED") +
                     ", Steam game servers " + (servers ? "blocked" : "NOT BLOCKED");
     // The window (not a block: a copy that could take focus is a nuisance, not a leak, so it isn't in "complete").
+    // A copy the player is using themselves (interactive.txt) keeps a normal window: it has to take focus for its keys.
+    if (Interactive()) {
+        gWindowReport = "interactive: a normal window with sound (the player is using this copy)";
+        if (!gOwnUserDir.empty()) gWindowReport += "; its own -userdir keeps its records: " + std::string(gOwnUserDir.begin(), gOwnUserDir.end());
+        return;
+    }
     const bool quiet =
         Patch(FindImport("USER32.dll", "ShowWindow"), reinterpret_cast<void*>(&QuietShowWindow), reinterpret_cast<void**>(&gShowWindow)) &&
         Patch(FindImport("USER32.dll", "SetWindowPos"), reinterpret_cast<void*>(&QuietSetWindowPos), reinterpret_cast<void**>(&gSetWindowPos)) &&

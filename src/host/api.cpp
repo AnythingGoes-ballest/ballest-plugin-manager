@@ -36,6 +36,7 @@
 #include "race.hpp"
 #include "registry.hpp"
 #include "replay.hpp"
+#include "runs.hpp"
 #include "settings.hpp"
 #include "storage.hpp"
 #include "testchannel.hpp"
@@ -1567,6 +1568,69 @@ void RegisterReplay() {
 
 }  // namespace
 
+// --- Runs: the player's own recent runs -------------------------------------------------------------------------------
+void RunsSetKeep(int count) { runs::SetKeep(count); }
+int RunsCount() { return runs::Count(); }
+std::string RunsId(int i) { return runs::Id(i); }
+std::string RunsTrackKey(int i) { return runs::TrackKey(i); }
+std::string RunsTrackName(int i) { return runs::TrackName(i); }
+double RunsTime(int i) { return runs::Time(i); }
+bool RunsFinished(int i) { return runs::Finished(i); }
+double RunsAge(int i) { return runs::Age(i); }
+bool RunsPinned(int i) { return runs::Pinned(i); }
+void RunsSetPinned(int i, bool pinned) { runs::SetPinned(i, pinned); }
+double RunsElapsed() { return runs::Elapsed(); }
+int RunsBall(int i) {
+    plugins::GameWork work;
+    return runs::Ball(plugins::Current(), i);
+}
+bool RunsPlace(int id, int i, double t) {
+    plugins::GameWork work;
+    return runs::Place(plugins::Current(), id, i, t);
+}
+
+void LeaderboardExtraRows(const std::string& title, const CScriptArray* names, const CScriptArray* times, const CScriptArray* ghostsOn,
+                          const CScriptArray* pinned) {
+    plugins::GameWork work;
+    leaderboard::SetExtraRows(plugins::Current(), title, VectorOf<std::string>(names), VectorOf<double>(times), VectorOf<bool>(ghostsOn),
+                              VectorOf<bool>(pinned));
+}
+void LeaderboardExtraRowsIcon(const std::string& file) {
+    plugins::GameWork work;
+    // a file of the plugin's own folder (or a full path)
+    std::wstring path = eng::Widen(file);
+    if (!file.empty() && file.find(':') == std::string::npos) path = plugins::CurrentDir() + L"\\" + path;
+    leaderboard::SetExtraRowsIcon(plugins::Current(), path);
+}
+bool LeaderboardExtraRowsShown() { return leaderboard::ExtraRowsShown(); }
+int LeaderboardExtraRowClicked() { return leaderboard::ExtraRowClicked(); }
+int LeaderboardExtraRowPinClicked() { return leaderboard::ExtraRowPinClicked(); }
+
+void RegisterRuns() {
+    e->SetDefaultNamespace("Leaderboard");
+    Global("void SetExtraRows(const string &in title, const array<string>@ names, const array<double>@ times, const array<bool>@ ghosts, "
+           "const array<bool>@ pinned = null)",
+           asFUNCTION(LeaderboardExtraRows));
+    Global("void SetExtraRowsIcon(const string &in file)", asFUNCTION(LeaderboardExtraRowsIcon));
+    Global("bool ExtraRowsShown()", asFUNCTION(LeaderboardExtraRowsShown));
+    Global("int ExtraRowClicked()", asFUNCTION(LeaderboardExtraRowClicked));
+    Global("int ExtraRowPinClicked()", asFUNCTION(LeaderboardExtraRowPinClicked));
+    e->SetDefaultNamespace("Runs");
+    Global("void SetKeep(int)", asFUNCTION(RunsSetKeep));
+    Global("int Count()", asFUNCTION(RunsCount));
+    Global("string Id(int)", asFUNCTION(RunsId));
+    Global("string TrackKey(int)", asFUNCTION(RunsTrackKey));
+    Global("string TrackName(int)", asFUNCTION(RunsTrackName));
+    Global("double Time(int)", asFUNCTION(RunsTime));
+    Global("bool IsFinished(int)", asFUNCTION(RunsFinished));
+    Global("double Age(int)", asFUNCTION(RunsAge));
+    Global("bool IsPinned(int)", asFUNCTION(RunsPinned));
+    Global("void SetPinned(int, bool)", asFUNCTION(RunsSetPinned));
+    Global("double Elapsed()", asFUNCTION(RunsElapsed));
+    Global("int Ball(int)", asFUNCTION(RunsBall));
+    Global("bool PlaceBall(int id, int run, double time)", asFUNCTION(RunsPlace));
+}
+
 void Register(asIScriptEngine* engine) {
     e = engine;
     RegisterCore();
@@ -1574,6 +1638,7 @@ void Register(asIScriptEngine* engine) {
     RegisterInput();
     RegisterGhosts();
     RegisterWorkshop();
+    RegisterRuns();
     RegisterRace();
     RegisterHud();
     RegisterEditor();

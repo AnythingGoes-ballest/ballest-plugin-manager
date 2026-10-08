@@ -44,6 +44,9 @@ bool View(size_t ghost, double t, double out[6]);
 int PlayerBall(int owner, size_t ghost);
 // Puts it where the ghost was at time t, turning as the ball turned (UpdateTargetTransform, as multiplayer does).
 bool PlacePlayerBall(int owner, int id, size_t ghost, double t);
+// The same for any replay (the player's own recent runs, runs.hpp).
+int PlayerBallFor(int owner, const ghostdata::Replay& replay);
+bool PlaceBallFor(int owner, int id, const ghostdata::Replay& replay, double t);
 // Its name tag shown or not (the tag's widget made see-through; the ball's own blueprint shows and hides the
 // component by the game's ghost settings every frame, so that is left alone).
 bool ShowPlayerName(int owner, int id, bool shown);

@@ -283,6 +283,9 @@ def user_dir(n):
     return slot_root(n) / "UserDir"
 
 
+MAPS = []   # --map files, copied into the slot's UserSavedMaps by start_claimed
+
+
 SEEDED = ("SaveGames", "Ghosts", "UserSavedMaps", "UserSavedPlaylists")
 
 
@@ -417,11 +420,11 @@ def set_host(n, dll):
 
 
 def start(n, args, plugins_from, shared, timeout, reseed=False, plugin_dirs=None, claimed=False, wipe=False, only_mine=False,
-          host=None):
+          host=None, interactive=False):
     if not claimed and (alive(n) or not claim(n)):
         sys.exit(f"slot {n} is in use ({', '.join(map(str, alive(n))) or 'being started'}); pick another (status, or start next)")
     try:
-        code = start_claimed(n, args, plugins_from, shared, timeout, reseed, plugin_dirs, wipe, only_mine, host)
+        code = start_claimed(n, args, plugins_from, shared, timeout, reseed, plugin_dirs, wipe, only_mine, host, interactive)
     except BaseException:
         if not alive(n):
             release(n)
@@ -431,15 +434,25 @@ def start(n, args, plugins_from, shared, timeout, reseed=False, plugin_dirs=None
     return code
 
 
-def start_claimed(n, args, plugins_from, shared, timeout, reseed, plugin_dirs, wipe, only_mine, host):
+def start_claimed(n, args, plugins_from, shared, timeout, reseed, plugin_dirs, wipe, only_mine, host, interactive):
     if not (WIN64 / "version.dll").exists():
         sys.exit("no plugin host installed (Win64\\version.dll)")
     if wipe:
         clean(n)
     prepare(n, plugins_from, shared, reseed)
+    for m in MAPS:   # --map: a create-mode map into the slot's own UserSavedMaps (the map list is read at launch)
+        if not m.name.startswith("Map_LevelEditorMain&") or m.suffix != ".balledit":
+            sys.exit(f"--map {m}: expected Map_LevelEditorMain&<name>_<creator>.balledit")
+        (user_dir(n) / "Saved" / "UserSavedMaps").mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(m, user_dir(n) / "Saved" / "UserSavedMaps" / m.name)
     if (plugin_dirs or only_mine) and shared:
         sys.exit("--plugin and --only work on the slot's own plugins folder; not with --shared-plugins")
     set_host(n, host)
+    flag = data_dir(n) / "interactive.txt"
+    if interactive:
+        flag.write_text("the user plays in this copy: normal window and sound (tools/test_instance.py --interactive)\n", encoding="utf-8")
+    else:
+        flag.unlink(missing_ok=True)
     ids = install_plugins(n, plugin_dirs)
     if only_mine:
         only(n, ids)
@@ -528,9 +541,13 @@ def main():
     s.add_argument("--only", action="store_true", help="turn every other plugin off (only --plugin ones run)")
     s.add_argument("--clean", action="store_true", help="empty the slot's data first (storage, runs, settings, shots)")
     s.add_argument("--host", help="a host build (build/version.dll) for this slot only")
+    s.add_argument("--interactive", action="store_true",
+                   help="for the user to play in: a normal window that takes focus, with sound (every block stays on)")
     s.add_argument("--shared-plugins", action="store_true", help="run the game's own plugins folder")
     s.add_argument("--timeout", type=int, default=120)
     s.add_argument("--reseed", action="store_true", help="copy the player's saves in again")
+    s.add_argument("--map", action="append", default=[],
+                   help="a create-mode map (.balledit) copied into the slot's own UserSavedMaps (never the player's)")
     s.add_argument("args", nargs="*", help="extra game arguments (after --)")
     t = sub.add_parser("stop")
     t.add_argument("slot", type=int, choices=range(1, 10))
@@ -539,16 +556,19 @@ def main():
     u.add_argument("slot", type=int, nargs="?", choices=range(1, 10))
     a = ap.parse_args()
     if a.cmd == "start":
+        MAPS.extend(Path(m).resolve() for m in a.map)
+        if missing := [m for m in MAPS if not m.is_file()]:
+            sys.exit(f"--map: no such file: {missing[0]}")
         if a.slot == "next":
             for n in range(1, 10):
                 if not alive(n) and claim(n):
                     sys.exit(start(n, a.args, a.plugins, a.shared_plugins, a.timeout, a.reseed, a.plugin, claimed=True,
-                                   wipe=a.clean, only_mine=a.only, host=a.host))
+                                   wipe=a.clean, only_mine=a.only, host=a.host, interactive=a.interactive))
             sys.exit("no free slot")
         if not a.slot.isdigit() or not 1 <= int(a.slot) <= 9:
             sys.exit("slot: 1-9 or next")
         sys.exit(start(int(a.slot), a.args, a.plugins, a.shared_plugins, a.timeout, a.reseed, a.plugin,
-                       wipe=a.clean, only_mine=a.only, host=a.host))
+                       wipe=a.clean, only_mine=a.only, host=a.host, interactive=a.interactive))
     if a.cmd == "play":
         return play()
     if a.cmd == "stop":

@@ -514,6 +514,10 @@ Obj LoadPath(const std::string& written) {
 
 int PlayerBall(int owner, size_t ghost) {
     if (ghost >= gGhosts.size()) return 0;
+    return PlayerBallFor(owner, gGhosts[ghost].replay);
+}
+
+int PlayerBallFor(int owner, const ghostdata::Replay& replay) {
     Obj controller = game::PlayerController();
     Obj cls = cosmetics::LoadAsset(L"/Game/SocketIO/BP_NonPlayerRollingBall.BP_NonPlayerRollingBall_C");
     if (!controller || !cls) {
@@ -546,12 +550,11 @@ int PlayerBall(int owner, size_t ghost) {
     eng::Invoke(statics, finish);
     // Its collision would push the player's ball about: none.
     eng::Call(ball, "SetActorEnableCollision", uint8_t{0});
-    const auto& g = gGhosts[ghost];
-    const auto& look = g.replay.look;
+    const auto& look = replay.look;
     Obj skin = LoadPath(look.ghostSkinMaterial);
     if (!skin) skin = LoadPath(look.skinMaterial);
     eng::Params dress(eng::FunctionOn(ball, "CreateNonPlayerRollingBall"));
-    const std::wstring name = eng::Widen(g.replay.name);
+    const std::wstring name = eng::Widen(replay.name);
     dress.Set("PlayerName", eng::FString{name.c_str(), static_cast<int32_t>(name.size() + 1), static_cast<int32_t>(name.size() + 1)});
     dress.Set("Skin Material", skin);
     dress.Set("AccessoryMesh", LoadPath(look.accessory));
@@ -568,9 +571,13 @@ int PlayerBall(int owner, size_t ghost) {
 }
 
 bool PlacePlayerBall(int owner, int id, size_t ghost, double t) {
+    if (ghost >= gGhosts.size()) return false;
+    return PlaceBallFor(owner, id, gGhosts[ghost].replay, t);
+}
+
+bool PlaceBallFor(int owner, int id, const ghostdata::Replay& replay, double t) {
     Obj ball = draw::ActorOf(owner, id);
-    if (!ball || ghost >= gGhosts.size()) return false;
-    const auto& replay = gGhosts[ghost].replay;
+    if (!ball) return false;
     const ghostdata::Point at = ghostdata::At(replay, t);
     const ghostdata::Sample* s = ghostdata::SampleAt(replay, t);
     struct Vec3 {

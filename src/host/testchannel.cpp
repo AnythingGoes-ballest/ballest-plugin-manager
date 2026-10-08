@@ -20,6 +20,7 @@
 #include "hud.hpp"
 #include "race.hpp"
 #include "input.hpp"
+#include "leaderboard.hpp"
 #include "log.hpp"
 #include "editor.hpp"
 #include "models.hpp"
@@ -404,6 +405,31 @@ void Run(const std::string& cmd) {
              gPostedUps.push_back({vk, GetTickCount64() + static_cast<ULONGLONG>(std::max(30, std::atoi(Arg(a, 2).c_str())))});
              Report(c + " -> ok");
          }},
+        {"rowclick", [](const Args& a, const std::string& c) {    // rowclick <i>: a click on the leaderboard's extra row i
+             leaderboard::TestClickRow(std::atoi(Arg(a, 1).c_str()));
+             Report(c + " -> ok");
+         }},
+        {"rowsscroll", [](const Args& a, const std::string& c) {  // rowsscroll <offset>: the rows' list scrolled there
+             leaderboard::TestScroll(static_cast<float>(std::atof(Arg(a, 1).c_str())));
+             Report(c + " -> ok");
+         }},
+        {"rowstab", [](const Args&, const std::string& c) {      // rowstab: as if the leaderboard's rows button were clicked
+             leaderboard::TestToggleTab();
+             Report(c + " -> ok");
+         }},
+        {"rowpin", [](const Args& a, const std::string& c) {      // rowpin <i>: a click on the extra row i's rank (pin)
+             leaderboard::TestPinRow(std::atoi(Arg(a, 1).c_str()));
+             Report(c + " -> ok");
+         }},
+        {"clickat", [](const Args& a, const std::string& c) {    // clickat <x> <y>: a left click posted to the game's window
+             HWND w = static_cast<HWND>(game::WindowHandle());       // (client pixels); the real mouse isn't moved
+             if (!w) return Report(c + " -> no game window");
+             const LPARAM at = MAKELPARAM(std::atoi(Arg(a, 1).c_str()), std::atoi(Arg(a, 2).c_str()));
+             PostMessageW(w, WM_MOUSEMOVE, 0, at);
+             PostMessageW(w, WM_LBUTTONDOWN, MK_LBUTTON, at);
+             PostMessageW(w, WM_LBUTTONUP, 0, at);
+             Report(c + " -> ok");
+         }},
         {"hold", [](const Args& a, const std::string& c) {       // hold <vk> 1|0: a key or button held, for posted clicks
              input::SimulateHeld(std::atoi(Arg(a, 1).c_str()), Arg(a, 2) != "0");
              Report(c);
@@ -713,6 +739,8 @@ void Run(const std::string& cmd) {
              }
              Report(c + " -> no such map on the Create page");
          }},
+        {"sandbox", [](const Args&, const std::string&) { Report("sandbox: " + sandbox::Status()); }},
+        {"sandboxtest", [](const Args&, const std::string&) { Report("sandbox test: " + sandbox::SelfTest()); }},
         {"hubopen", [](const Args&, const std::string& c) {        // the play page, then its hub tab (WBP_0_Play tab 2)
              for (eng::Obj manager : Instances("WBP_MainMenu_UIManager_C", "Transient")) {
                  eng::Call(manager, "DoPlay");
@@ -938,17 +966,6 @@ void Run(const std::string& cmd) {
              eng::Call(eng::FindCdo("KismetSystemLibrary"), "CollectGarbage");
              Report("gc requested");
          }},
-        {"clickat", [](const Args& a, const std::string& c) {    // clickat <x> <y>: a left click posted to the game's window
-             HWND w = static_cast<HWND>(game::WindowHandle());       // (client pixels); the real mouse isn't moved
-             if (!w) return Report(c + " -> no game window");
-             const LPARAM at = MAKELPARAM(std::atoi(Arg(a, 1).c_str()), std::atoi(Arg(a, 2).c_str()));
-             PostMessageW(w, WM_MOUSEMOVE, 0, at);
-             PostMessageW(w, WM_LBUTTONDOWN, MK_LBUTTON, at);
-             PostMessageW(w, WM_LBUTTONUP, 0, at);
-             Report(c + " -> ok");
-         }},
-        {"sandbox", [](const Args&, const std::string&) { Report("sandbox: " + sandbox::Status()); }},
-        {"sandboxtest", [](const Args&, const std::string&) { Report("sandbox test: " + sandbox::SelfTest()); }},
         {"replaycam", [](const Args& a, const std::string&) {
              replay::SetCameraDistance(std::atof(Arg(a, 1).c_str()));
              replay::SetSeeThrough(Arg(a, 2) == "1");

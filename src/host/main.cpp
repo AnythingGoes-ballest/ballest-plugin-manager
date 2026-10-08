@@ -27,6 +27,7 @@
 #include "log.hpp"
 #include "plugins.hpp"
 #include "race.hpp"
+#include "runs.hpp"
 #include "registry.hpp"
 #include "replay.hpp"
 #include "testchannel.hpp"
@@ -105,6 +106,7 @@ void HostFrame(float dt) {
     game::Frame();
     editor::Frame();
     race::Frame();
+    runs::Frame();                  // the player's own recent runs (after race: it reads the run)
     steam::Frame();
     ghosts::Frame();
     draw::Frame();
@@ -204,7 +206,7 @@ DWORD WINAPI InitThread(LPVOID) {
             for (int i = 0; i < 6000 && !sandbox::InstallSteam(); ++i) Sleep(20);
             if (!sandbox::InstallSteam())
                 hostlog::Error(sandbox::On() ? "sandbox: Steam never started; its uploads are NOT blocked" : "upload guard: Steam never started");
-            if (!sandbox::On()) return 0;
+            if (!sandbox::On() || sandbox::Interactive()) return 0;
             for (int i = 0; i < 6; ++i) {            // the game starts its audio during engine start
                 const bool muted = sandbox::MuteAudio();
                 if (i == 0 || !muted) hostlog::Info(std::string("sandbox: sound ") + (muted ? "muted" : "NOT MUTED"));

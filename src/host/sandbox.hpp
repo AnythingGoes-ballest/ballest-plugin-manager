@@ -22,6 +22,7 @@ namespace sandbox {
 
 bool On();                      // sandbox mode is on for this session
 bool Flagged();                 // the flag is there (before InstallEarly has read it)
+bool Interactive();             // a copy the player uses (interactive.txt): normal window and sound, every block kept
 std::wstring OwnHostPath();     // a test copy's own host build, run in place of the installed one when it exists
 void InstallEarly();            // from DllMain: reads the flag, hooks the imports
 bool InstallSteam();            // until true: hooks the Steam interfaces once they exist

@@ -645,6 +645,8 @@ uint64_t FocusedAuthor() {
     return FocusedDetails(&id, &owner) && id ? owner : 0;
 }
 
+bool WidgetOnScreen(Obj widget) { return widget && OnScreen(widget); }
+
 Obj DockPanel() {
     Obj hub = HubPage();
     Obj header = hub ? eng::ReadObj(hub, "WBP_HubHeader") : nullptr;

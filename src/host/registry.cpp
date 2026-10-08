@@ -17,6 +17,7 @@
 #include "log.hpp"
 #include "net.hpp"
 #include "plugins.hpp"
+#include "sandbox.hpp"
 
 namespace registry {
 namespace {
@@ -420,6 +421,7 @@ std::string HostUpdateState() { return gHostState; }
 void UpdateHost() {
     if (gHost.version.empty() || gHostState == "downloading" || gHostState == "restart") return;
     if (plugins::CompareVersions(gHost.version, plugins::kHostVersion) <= 0) return;
+    if (sandbox::On()) return hostlog::Info("registry: a sandboxed test copy doesn't update the host other copies share");
     gHostState = "downloading";
     const HostRelease h = gHost;
     const std::string rawBase = gRawBase;

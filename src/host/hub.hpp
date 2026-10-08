@@ -50,6 +50,8 @@ uint64_t FocusedAuthor();
 // Where a docked window goes: the hub's column above its pages (WBP_HubHomePage: VerticalBox_1, which holds the
 // header and the page row); null when there is no hub.
 eng::Obj DockPanel();
+// A widget on screen: visible itself and up its parents, the active child of any switcher on the way, in the viewport.
+bool WidgetOnScreen(eng::Obj widget);
 // The docked window's height, so the hub's pages are made that much shorter and the hub keeps its size on screen.
 void SetDockedHeight(double height);
 

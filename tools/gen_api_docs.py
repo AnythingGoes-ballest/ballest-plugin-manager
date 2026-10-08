@@ -23,7 +23,7 @@ PAGES = [
     ("log", "Log"), ("host", "Host"), ("plugins", "Plugins"), ("settings", "Settings"), ("registry", "Registry"),
     ("console", "Console"), ("storage", "Storage"), ("ui", "UI"), ("input", "Input"), ("race", "Race"),
     ("editor", "Editor"), ("hud", "Hud"), ("replay", "Replay"), ("cosmetics", "Cosmetics"),
-    ("leaderboard", "Leaderboard"), ("ghosts", "Ghosts"), ("tracks", "Tracks"), ("workshop", "Workshop"), ("hub", "Hub"), ("draw", "Draw"), ("camera", "Camera"),
+    ("leaderboard", "Leaderboard"), ("ghosts", "Ghosts"), ("runs", "Runs"), ("tracks", "Tracks"), ("workshop", "Workshop"), ("hub", "Hub"), ("draw", "Draw"), ("camera", "Camera"),
     ("math", "Math"),
 ]
 

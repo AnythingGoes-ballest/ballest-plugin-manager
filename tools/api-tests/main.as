@@ -99,6 +99,25 @@ void AddPhase(const string &in name, PhaseFn@ enter, double timeout = 90)
 }
 
 // --- helpers ------------------------------------------------------------------------------------------------------------
+// The track phase's track: opened, and whether it's the one on screen.
+void OpenLevel()
+{
+    if (level.findFirst("workshop:") == 0)
+        Tracks::OpenWorkshop(level.substr(9));          // a workshop track (a test map of the project's own)
+    else
+        Tracks::Open(level);
+}
+
+bool OnLevel()
+{
+    if (!Race::OnTrack() || level == "")
+        return false;
+    string key = Race::TrackKey();
+    if (level.findFirst("workshop:") == 0)
+        return key.findFirst("custom:" + level.substr(9) + ":") == 0;
+    return key == "map:" + level;
+}
+
 double Elapsed() { return Host::Time() - t0; }
 
 bool LogSince(const string &in fragment)
@@ -330,26 +349,28 @@ void Register()
                 return false;
             // Leth Trial 01 has checkpoints besides the finish (so its runs have splits); else the first track.
             level = Track != "" ? Track : levels.find("Map_LethTrial_01") >= 0 ? "Map_LethTrial_01" : levels[0];
-            if (level.findFirst("workshop:") == 0)
-                Tracks::OpenWorkshop(level.substr(9));          // a workshop track (a test map of the project's own)
-            else
-                Tracks::Open(level);
+            OpenLevel();
             pstep = 10;
             pt = Host::Time();
         }
         return Race::OnTrack() && Race::TrackKey() != "" && Host::Time() - pt > 8;
     });
-    // The race: started as the player's Enter on "play" does (a key posted to the game's window).
+    // The race: started with the track's own play button, and only on the phase's track. (2026-10-08: an Enter posted
+    // here took the test map back to the main menu, and the next ones started the menu's first official track, which
+    // the sandbox then forced into practice.) Anywhere else the track is opened again instead.
     AddPhase("race", function() {
         if (Race::IsActive())
-            return true;
+            return OnLevel();
         if (Host::Time() - pt > 3)
         {
-            Console::Run("post 13");
             pt = Host::Time();
+            if (OnLevel())
+                Console::Run("callx WBP_RaceUIManager_C ButtonActionRouter_Play Transient | u8:0");
+            else if (Tracks::OpenState() != "opening")
+                OpenLevel();
         }
         return false;
-    }, 40);
+    }, 60);
     // A workshop track, found by search and opened with OpenWorkshop.
     AddPhase("workshop", function() {
         if (pstep != 20)
@@ -1986,6 +2007,96 @@ void RegisterRace()
             return PASS;
         return Elapsed() > 5 ? "Race::Restarts " + Race::Restarts() + " after a restart, want " + (id1 + 1) : WAIT;
     }, 8);
+    Add("race", "Runs: a run is recorded and kept", "Runs::Count,Runs::Id,Runs::TrackKey,Runs::TrackName,Runs::Time,Runs::IsFinished,Runs::Age,Runs::Elapsed,Runs::IsPinned,Runs::SetPinned,Runs::SetKeep", function() {
+        // A run is kept when it ends (here: a restart from the beginning) if the ball left the start.
+        if (step == 0)
+        {
+            s1 = Runs::Count() > 0 ? Runs::Id(0) : "";
+            d1 = Runs::Elapsed();
+            Console::Run("post 87 1200");
+            step = 1;
+            return WAIT;
+        }
+        if (step == 1)
+        {
+            if (Elapsed() < 2.5)
+                return WAIT;
+            Console::Run("call BP_MyPlayerController_C ManuallyRestartBall");
+            step = 2;
+            return WAIT;
+        }
+        if (Runs::Count() == 0 || Runs::Id(0) == s1)
+            return Elapsed() > 8 ? "no new run kept after a restart (Runs::Count " + Runs::Count() + ")" : WAIT;
+        Runs::SetKeep(10);
+        Runs::SetPinned(0, true);
+        bool pinned = Runs::IsPinned(0);
+        Runs::SetPinned(0, false);
+        array<string> c = {Is(d1 >= 0, "Runs::Elapsed " + d1 + " while racing"),
+                           Is(Runs::TrackKey(0) == Race::TrackKey(), "Runs::TrackKey " + Runs::TrackKey(0) + ", the race's " + Race::TrackKey()),
+                           Is(Runs::TrackName(0) != "", "Runs::TrackName empty"),
+                           Is(Runs::Time(0) > 1, "Runs::Time " + Runs::Time(0)),
+                           Is(!Runs::IsFinished(0), "Runs::IsFinished true for a restarted run"),
+                           Is(Runs::Age(0) >= 0 && Runs::Age(0) < 60, "Runs::Age " + Runs::Age(0)),
+                           Is(pinned && !Runs::IsPinned(0), "Runs::SetPinned / IsPinned")};
+        return All(c);
+    }, 15);
+    Add("race", "Runs: a run's ball", "Runs::Ball,Runs::PlaceBall", function() {
+        if (Runs::Count() == 0)
+            return "no run kept";
+        int id = Runs::Ball(0);
+        if (id <= 0)
+            return "Runs::Ball(0) " + id;
+        bool placed = Runs::PlaceBall(id, 0, Runs::Time(0) / 2);
+        Draw::Remove(id);
+        return Is(placed, "Runs::PlaceBall false");
+    });
+    Add("race", "Leaderboard extra rows", "Leaderboard::SetExtraRows,Leaderboard::SetExtraRowsIcon,Leaderboard::ExtraRowsShown,Leaderboard::ExtraRowClicked,Leaderboard::ExtraRowPinClicked", function() {
+        // The rows' button and clicks through the host's test hooks (rowstab, rowclick, rowpin): what a click does.
+        if (step == 0)
+        {
+            array<string> names = {"api row 1", "api row 2"};
+            array<double> times = {12.5, 14.25};
+            array<bool> ghosts = {false, true};
+            array<bool> pinned = {true, false};
+            Leaderboard::SetExtraRows("api tests", names, times, ghosts, pinned);
+            Leaderboard::SetExtraRowsIcon("");
+            Console::Run("rowstab");
+            step = 1;
+            return WAIT;
+        }
+        if (step == 1)
+        {
+            if (!Leaderboard::ExtraRowsShown())
+                return Elapsed() > 5 ? "Leaderboard::ExtraRowsShown false after the rows' button" : WAIT;
+            Console::Run("rowclick 1");
+            Console::Run("rowpin 0");
+            step = 2;
+            return WAIT;
+        }
+        if (step == 2)
+        {
+            if (Elapsed() < 1)
+                return WAIT;
+            id1 = Leaderboard::ExtraRowClicked();
+            id2 = Leaderboard::ExtraRowPinClicked();
+            id3 = Leaderboard::ExtraRowClicked();       // asked again: nothing new
+            Console::Run("rowstab");
+            step = 3;
+            return WAIT;
+        }
+        if (Leaderboard::ExtraRowsShown() && Elapsed() < 6)
+            return WAIT;
+        bool closed = !Leaderboard::ExtraRowsShown();
+        array<string> none;
+        array<double> noTimes;
+        array<bool> noGhosts;
+        Leaderboard::SetExtraRows("", none, noTimes, noGhosts);
+        array<string> c = {Is(id1 == 1, "Leaderboard::ExtraRowClicked " + id1 + ", want 1"),
+                           Is(id2 == 0, "Leaderboard::ExtraRowPinClicked " + id2 + ", want 0"),
+                           Is(id3 == -1, "Leaderboard::ExtraRowClicked asked again " + id3 + ", want -1"),
+                           Is(closed, "the board stayed on the rows after world was picked")};
+        return All(c);
+    }, 15);
     Add("race", "Race checkpoints, respawns and falls", "Race::CheckpointCount,Race::CheckpointPosition,Race::CurrentCheckpoint,Race::Respawns,Race::Falls", function() {
         // Measured on Leth Trial 01 (9 checkpoint strips): the ball put in checkpoint 0's trigger (the host's
         // "checkpoints" test command logs where it is) makes it current, R respawns there, and a fall 300 m off to
