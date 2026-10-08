@@ -25,6 +25,11 @@ without the maintainer asking.
 Also read every plugin script in a registry submission for anything aimed at cheating (changing physics, timers,
 leaderboard submissions or other players' data) and point it out.
 
+## Testing in the game
+
+Drive sandboxed test copies and the player's game with `python tools/sandbox.py` (run bare first); see "Testing and debugging" in
+`docs/host.md`.
+
 ## Commits
 
 No `Co-Authored-By: Claude` or "Generated with Claude Code" lines in commits, pull requests or releases.
