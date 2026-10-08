@@ -20,6 +20,13 @@ void RemoveOwner(int owner);            // a plugin stopped: its shapes go, and 
 // A shape; 0 if it could not be made. Colours are linear, 0..1.
 // opacity below 1: see-through (the game's tinted glass), glow then ignored.
 int Tube(int owner, const std::vector<std::array<double, 3>>& path, double radius, float r, float g, float b, bool glow, float opacity = 1);
+// Separate straight tubes in one mesh (one object to draw): points in pairs, start then end of each.
+int Segments(int owner, const std::vector<std::array<double, 3>>& pairs, double radius, float r, float g, float b, bool glow, float opacity = 1);
+// A tube (Tube) given a new path in place: the same actor and material, its mesh emptied (UDynamicMesh.Reset) and swept
+// again, for a line that changes every frame (a trail's growing end) without spawning anything. A path too short to
+// sweep leaves it empty. False (nothing changed or the mesh left empty) if it isn't a tube of the owner's or the mesh
+// didn't empty.
+bool Retube(int owner, int id, const std::vector<std::array<double, 3>>& path, double radius);
 int Ball(int owner, double radius, float r, float g, float b, bool glow);
 bool Move(int owner, int id, double x, double y, double z);
 // A glowing shape's colour and brightness (0 dark), changed in place.

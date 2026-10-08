@@ -92,14 +92,19 @@ struct Widget {
     bool visible = true;                // hidden widgets take no space
     std::string text;                   // text, button label, icon name ("play" / "pause"), text input hint, or image file
     float size = 16;                    // text size
+    std::string font, typeface;         // a game font asset and typeface ("": the window's, else the engine's)
     float width = 200;                  // slider, dropdown, space, text area, text input and image width; 0 = fill
     float height = 0;                   // text area and image height; 0 = fill
     float textWidth = 0;                // text: a fixed width (0 = as wide as the text)
     uint8_t justify = 0;                // text: 0 left, 1 centre, 2 right (ETextJustify)
-    std::string font;                   // text: a font asset of the game's ("/Game/UI/Fonts/..."), "" the default
     bool fill = false;                  // text: takes the row's leftover width, pushing what follows to the right
     float gapBefore = -1;               // pixels between it and the widget before it in its row; -1 the default
     Color background{0.15f, 0.15f, 0.15f, 1};                               // buttons
+    float buttonRadius = 0;
+    float iconW = 0, iconH = 0;                                             // icon button: SetSize
+    bool backgroundSet = false;                                                 // button: rounded (SetCornerRadius)
+    bool styled = false;                                                    // dropdown: SetStyle given
+    Color hoverBackground{0.2f, 0.2f, 0.2f, 1}, selectedColor{1, 1, 1, 1};  // dropdown
     bool backgroundDirty = false;
     Color color{1, 1, 1, 1};
     bool colorDirty = false;
@@ -140,6 +145,7 @@ struct Window {
     float cornerRadius = 0;                     // rounded corners (widget units), 0 square
     bool blocksClicks = false;                  // clicks on the window never reach what is underneath it
     int zOrder = 100;                           // windows with a higher z-order are drawn in front
+    std::string font, typeface;                 // the texts' and buttons' font (SetFont), "" the engine's default
     Dock dock = Dock::Screen;
     eng::Weak dockedIn;                         // the container a docked window was built into
     // Movable: while the cursor is on screen the window can be dragged; its position is saved per plugin

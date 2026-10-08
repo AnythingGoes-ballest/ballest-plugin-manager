@@ -546,7 +546,7 @@ void Frame() {
     // unreleased maps, the rule's other half) keep their timer and checkpoints.
     static const char kTestMap[] = "custom:3805348161:";
     if (sandbox::On() && gActive && runId >= 0 && !gPractice && gTrack.key.rfind(kTestMap, 0) != 0 &&
-        gTrack.key.find("LevelEditor") == std::string::npos) {
+        !(gTrack.key.rfind("map:", 0) == 0 && gTrack.key.find("LevelEditor") != std::string::npos)) {
         hostlog::Info("sandbox: not the test map (" + (gTrack.key.empty() ? std::string("not read yet") : gTrack.key) +
                       "): this run is practice");
         StartPractice();
@@ -687,7 +687,9 @@ bool EditorTesting() {
     // The track editor's map with the camera on a ball: a test run (while editing it's on P_LevelEditorPawn_C, and the
     // editor's ball sits unused, measured).
     static bool was = false;
-    const bool now = CurrentTrack().key.find("LevelEditor") != std::string::npos && PlayedBall() != nullptr;
+    // (the editor's own world, "map:...LevelEditor...": a workshop track's key is "custom:...", whatever it's called)
+    const std::string& key = CurrentTrack().key;
+    const bool now = key.rfind("map:", 0) == 0 && key.find("LevelEditor") != std::string::npos && PlayedBall() != nullptr;
     if (now != was) {
         was = now;
         hostlog::Info(std::string("race: editor test run ") + (now ? "started" : "ended"));

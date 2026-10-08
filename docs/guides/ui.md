@@ -65,6 +65,20 @@ label.SetFill(true);
 window.AddText("1:42:17", 15).SetGapBefore(18);
 ```
 
+From host 0.25.0, `window.SetFont(font, typeface)` gives the whole window a font (each widget's own `SetFont` still
+wins), `SetFont` takes a typeface such as `"Regular"` or `"Semilight"`, and buttons and dropdowns can take the game's
+look: `button.SetTextColor`, `button.SetCornerRadius` (a pill or, with an icon button's `SetSize`, a round button) and
+`dropdown.SetStyle` for the box, the list and the hover colours.
+
+```cpp
+window.SetFont("/Game/UI/Fonts/CocogoosePro.CocogoosePro", "Regular");
+UI::Button@ play = window.AddIconButton("play");
+play.SetSize(40, 40);
+play.SetCornerRadius(20);
+play.SetBackground(0.434f, 0.839f, 0, 1);
+play.SetTextColor(0, 0, 0, 1);
+```
+
 ## Placed items
 
 Rows suit forms. For anything drawn to measure (bars, charts, a timeline), place rectangles and text at positions

@@ -21,6 +21,10 @@ A glowing shape's colour and brightness change in place with `Draw::Glow`, a see
 `Draw::Fade`, so things can pulse and fade without being made again. Tinted glass is drawn in front of the stadium's
 water like everything else.
 
+For many short lines at once, `Draw::Segments` puts every start-and-end pair into one shape, so a thousand ticks cost
+about as much as one tube. `Draw::Retube` gives an existing tube a new path in place, for the end of a trail that moves
+every frame without making shapes. Both need host 0.25.0.
+
 ## A camera of your own
 
 `Camera::Take` looks through a camera of the plugin's; `Camera::Set` places it (position, pitch, yaw, field of view)
@@ -35,7 +39,9 @@ if (Camera::Project(0, 0, 100, sx, sy))
     label.SetPosition(sx, sy);
 ```
 
-`Race::HideBall(true)` hides the player's own ball while you show the track.
+`Race::HideBall(true)` hides the player's own ball while you show the track. In a track editor test run,
+`Race::FreezeBall(true)` also holds it still where it is (never in a run that can reach a leaderboard), and
+`Camera::Sweep` tells a plugin camera how far it can go before it hits a wall. These two need host 0.25.0.
 
 `Race::BallPosition` says where the ball being played is, in a race or a track editor test run (`Editor::IsTesting`
 says when one is on), for drawing its path as it goes. Both need host 0.15.2.
@@ -61,5 +67,10 @@ for (int i = 0; i < Ghosts::Count(); i++)
 `Ghosts::PlayerBall` makes a run's own ball, in its player's skin and accessory, placed with `Ghosts::PlaceBall`.
 For thousands of runs at once, a crowd (`Ghosts::CrowdCreate`, `CrowdMembers`, `CrowdSkins`, `CrowdTrails`,
 `CrowdPlace`) draws them together, placed by the host in one call a frame.
+
+Runs can also come from a file the plugin ships or makes itself (`Ghosts::LoadFile`, in the plugin's own folder; the
+format is on the Ghosts page), and `Ghosts::PlayerBall(i, true)` shows a run's ball in its player's real skin instead
+of the rival-ghost look. Crowd trails can glow or fade with age (`CrowdTrailStyle`), and a colour group can be dimmed to
+glass (`CrowdGroupGlass`). These need host 0.25.0.
 
 `Tracks::` lists the game's tracks and searches the workshop, and opens a track by its key or workshop id.

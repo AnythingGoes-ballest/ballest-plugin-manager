@@ -46,8 +46,11 @@ void ResetPartColor(const std::string& key, const std::string& part);
 // plugin asks, for a view of the track with nothing over it: render opacity 0 and no clicks (so its buttons, such as
 // "play", can't be pressed unseen). Re-applied while it lasts; put back when the last plugin lets go or stops.
 void HideGame(int owner, bool hidden);
+// Hides the track editor's own screens around a test run (header, menus, footer), keeping its race clock.
+void HideEditor(int owner, bool hidden);
 // The player's own ball and what's attached to it hidden (true) or given back (false), while any plugin wants it hidden.
 void HideBall(int owner, bool hidden);
+void FreezeBall(int owner, bool frozen);         // the player's ball: no input, no physics (given back as it was)
 void RemoveOwner(int owner);
 
 }  // namespace hud

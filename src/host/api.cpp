@@ -2,6 +2,7 @@
 // adapter onto the module that owns the behaviour (ui, input, replay, game, plugins). Handle types are
 // registered as asOBJ_NOCOUNT: the host owns them for the plugin's lifetime and scripts cannot delete them.
 #include "api.hpp"
+#include "widgets.hpp"
 
 #include <cmath>
 #include <cstdlib>
@@ -229,6 +230,47 @@ void WinOffset(ui::Window* w, float x, float y) {
     w->offsetY = y;
     w->layoutDirty = true;
 }
+void DropdownStyle(ui::Widget* w, float br, float bg, float bb, float ba, float hr, float hg, float hb, float tr, float tg, float tb,
+                   float sr, float sg, float sb) {
+    w->styled = true;
+    w->background = {br, bg, bb, ba};
+    w->hoverBackground = {hr, hg, hb, ba};
+    w->color = {tr, tg, tb, 1};
+    w->colorSet = true;
+    w->selectedColor = {sr, sg, sb, 1};
+    if (w->window) w->window->layoutDirty = true;          // (a dropdown's styles are read when it is built)
+}
+void ButtonSize(ui::Widget* w, float width, float height) {
+    w->iconW = width;
+    w->iconH = height;
+    if (w->window) w->window->layoutDirty = true;
+}
+void ButtonCornerRadius(ui::Widget* w, float radius) {
+    w->buttonRadius = radius < 0 ? 0 : radius;
+    if (w->window) w->window->layoutDirty = true;          // (its style brushes are set when it is built)
+}
+void ButtonTextColor(ui::Widget* w, float r, float g, float b, float a) {
+    w->color = {r, g, b, a};
+    w->colorSet = true;
+    w->colorDirty = true;
+}
+void WinFont(ui::Window* w, const std::string& font, const std::string& typeface) {
+    w->font = font;
+    w->typeface = typeface;
+    w->layoutDirty = true;                                  // (fonts are given when the widgets are built)
+}
+// Text/Button.SetFont: applied in place; "" (back to the window's or the default font) rebuilds the window. A path
+// that isn't a font of the game's (/Game/..., a UFont) is ignored with one warning (widgets::GameFont).
+void TextFont(ui::Widget* w, const std::string& font, const std::string& typeface) {
+    w->font = font;
+    w->typeface = typeface;
+    if (font.empty()) {
+        if (w->window) w->window->layoutDirty = true;
+        return;
+    }
+    plugins::GameWork work;
+    if (eng::Obj text = eng::Get(w->kind == ui::Kind::Button ? w->label : w->main)) ui::widgets::SetFontFace(text, font, typeface);
+}
 void WinCornerRadius(ui::Window* w, float radius) {
     w->cornerRadius = radius < 0 ? 0 : radius;
     w->layoutDirty = true;
@@ -289,6 +331,7 @@ void WinScreenSize(ui::Window* w, float width, float height) {
     w->layoutDirty = true;
 }
 void ButtonBackground(ui::Widget* w, float r, float g, float b, float a) {
+    w->backgroundSet = true;
     w->background = {r, g, b, a};
     w->backgroundDirty = true;
 }
@@ -331,10 +374,6 @@ void SetTextSize(ui::Widget* w, float size) {
 float GetTextSize(ui::Widget* w) { return w->size; }
 void SetTextWidth(ui::Widget* w, float width) {
     w->textWidth = width;
-    w->window->layoutDirty = true;
-}
-void SetTextFont(ui::Widget* w, const std::string& font) {
-    w->font = font;
     w->window->layoutDirty = true;
 }
 void SetTextFill(ui::Widget* w, bool fill) {
@@ -496,6 +535,8 @@ bool EditorTyping() {
     return ui::Typing() || editor::Typing();
 }
 std::wstring PluginFile(const std::string& path, bool* ok);
+std::string PluginReadFile(const std::string& file);
+CScriptArray* Base64Ints(const std::string& b64, int bytes);
 // A game texture ("/Game/...") as it is, or a PNG inside the plugins folder; "" if it is neither.
 std::string IconPath(const std::string& icon) {
     if (icon.rfind("/Game/", 0) == 0) return icon;
@@ -576,6 +617,8 @@ void RegisterCore() {
     Global("string DefaultIcon()", asFUNCTION(registry::DefaultIcon));
     Global("void OpenFolder()", asFUNCTION(plugins::OpenFolder));
     Global("string Folder()", asFUNCTION(PluginFolder));
+    Global("string ReadFile(const string &in file)", asFUNCTION(PluginReadFile));
+    Global("array<int>@ Base64Ints(const string &in b64, int bytes)", asFUNCTION(Base64Ints));
     Global("void UpdateHost()", asFUNCTION(UpdateHost));
     Global("string HostUpdateState()", asFUNCTION(registry::HostUpdateState));
 
@@ -648,6 +691,14 @@ void RegisterUi() {
     Method("Window", "void SetCornerRadius(float)", asFUNCTION(WinCornerRadius));
     Method("Window", "void SetPadding(float x, float y)", asFUNCTION(WinPadding));
     Method("Window", "void SetRowGap(float)", asFUNCTION(WinRowGap));
+    Method("Window", "void SetFont(const string &in font, const string &in typeface = \"\")", asFUNCTION(WinFont));
+    Method("Text", "void SetFont(const string &in font, const string &in typeface = \"\")", asFUNCTION(TextFont));
+    Method("Button", "void SetTextColor(float, float, float, float)", asFUNCTION(ButtonTextColor));
+    Method("Button", "void SetCornerRadius(float)", asFUNCTION(ButtonCornerRadius));
+    Method("Button", "void SetSize(float width, float height)", asFUNCTION(ButtonSize));
+    Method("Dropdown", "void SetStyle(float r, float g, float b, float a, float hoverR, float hoverG, float hoverB, float textR, float textG, float textB, float selectedR, float selectedG, float selectedB)", asFUNCTION(DropdownStyle));
+    Method("Dropdown", "bool get_hovered() property", asFUNCTION(Hovered));
+    Method("Button", "void SetFont(const string &in font, const string &in typeface = \"\")", asFUNCTION(TextFont));
     Method("Window", "bool get_visible() property", asFUNCTION(WinGetVisible));
     Method("Window", "void set_visible(bool) property", asFUNCTION(WinSetVisible));
     Method("Window", "Text@ AddText(const string &in, float size = 16)", asFUNCTION(WinText));
@@ -697,7 +748,6 @@ void RegisterUi() {
     Method("Text", "float get_size() property", asFUNCTION(GetTextSize));
     Method("Text", "void SetWidth(float)", asFUNCTION(SetTextWidth));
     Method("Text", "void SetAlign(int)", asFUNCTION(SetTextAlign));
-    Method("Text", "void SetFont(const string &in)", asFUNCTION(SetTextFont));
     Method("Text", "void SetFill(bool)", asFUNCTION(SetTextFill));
     Method("Button", "bool Clicked()", asFUNCTION(Clicked));
     Method("Button", "bool get_hovered() property", asFUNCTION(Hovered));
@@ -802,6 +852,7 @@ bool RaceSetPaused(bool paused) {
 }
 bool RacePaused() { return race::Paused(); }
 void RaceHideBall(bool hidden) { hud::HideBall(plugins::Current(), hidden); }
+void RaceFreezeBall(bool frozen) { hud::FreezeBall(plugins::Current(), frozen); }
 std::string RaceSaveBall() {
     plugins::GameWork work;
     return race::SaveBall();
@@ -870,12 +921,14 @@ void RegisterRace() {
     Global("void StartPractice()", asFUNCTION(RaceStartPractice));
     Global("bool IsPractice()", asFUNCTION(race::Practice));
     Global("void HideBall(bool)", asFUNCTION(RaceHideBall));
+    Global("void FreezeBall(bool)", asFUNCTION(RaceFreezeBall));
     Global("bool BallPosition(double &out, double &out, double &out)", asFUNCTION(RaceBallPosition));
     Global("bool NextBounce(double &out strength, double &out x, double &out y, double &out z, double &out nx, double &out ny, "
            "double &out nz, bool &out ground)", asFUNCTION(RaceNextBounce));
 }
 
 void HudHideGame(bool hidden) { hud::HideGame(plugins::Current(), hidden); }
+void HudHideEditor(bool hidden) { hud::HideEditor(plugins::Current(), hidden); }
 
 void RegisterHud() {
     e->SetDefaultNamespace("Hud");
@@ -895,6 +948,7 @@ void RegisterHud() {
     Global("bool SetPartColor(const string &in, const string &in, float, float, float, float)", asFUNCTION(HudSetPartColor));
     Global("void ResetPartColor(const string &in, const string &in)", asFUNCTION(HudResetPartColor));
     Global("void HideGame(bool)", asFUNCTION(HudHideGame));
+    Global("void HideEditor(bool)", asFUNCTION(HudHideEditor));
 }
 
 void RegisterEditor() {
@@ -1093,9 +1147,63 @@ const ghosts::Ghost* GhostAt(int i) {
     return i >= 0 && static_cast<size_t>(i) < all.size() ? &all[static_cast<size_t>(i)] : nullptr;
 }
 bool GhostsLoad(const std::string& leaderboard, int count) { return ghosts::Load(leaderboard, count); }
-int GhostsPlayerBall(int i) {
+// A file of the calling plugin's own folder ("" if the name leaves it or the file can't be read).
+// Refused: "..", a drive or stream (":"), a leading slash, a NUL, and Windows device names (CON, NUL, COM1...) in any part.
+bool DeviceName(std::string part) {
+    part = part.substr(0, part.find('.'));
+    while (!part.empty() && (part.back() == ' ')) part.pop_back();
+    for (char& ch : part) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    if (part == "CON" || part == "PRN" || part == "AUX" || part == "NUL" || part == "CONIN$" || part == "CONOUT$") return true;
+    return part.size() == 4 && (part.rfind("COM", 0) == 0 || part.rfind("LPT", 0) == 0) && part[3] >= '0' && part[3] <= '9';
+}
+std::wstring OwnFile(const std::string& file) {
+    if (file.empty() || file.find("..") != std::string::npos || file.find(':') != std::string::npos || file[0] == 92 || file[0] == 47 ||
+        file.find('\0') != std::string::npos)
+        return L"";
+    for (size_t a = 0; a <= file.size();) {
+        const size_t b = file.find_first_of("/\\", a);
+        if (DeviceName(file.substr(a, b == std::string::npos ? std::string::npos : b - a))) return L"";
+        if (b == std::string::npos) break;
+        a = b + 1;
+    }
+    const std::wstring dir = plugins::CurrentDir();
+    return dir.empty() ? L"" : dir + L"\\" + eng::Widen(file);
+}
+bool GhostsCrowdTrailStyle(int id, bool glow, float brightness, double fadeSeconds, float fadeMin) {
+    return ghosts::CrowdTrailStyle(plugins::Current(), id, glow, brightness, fadeSeconds, fadeMin);
+}
+bool GhostsCrowdGroupGlass(int id, int group, float opacity) { return ghosts::CrowdGroupGlass(plugins::Current(), id, group, opacity); }
+bool GhostsCrowdTrailsPending() { return ghosts::CrowdTrailsPending(plugins::Current()); }
+bool GhostsCrowdBallScale(int id, double scale) { return ghosts::CrowdBallScale(plugins::Current(), id, scale); }
+void GhostsPrefetchFile(const std::string& file) {
+    const std::wstring path = OwnFile(file);
+    if (!path.empty()) ghosts::PrefetchLocal(path);
+}
+bool GhostsPrefetchReady(const std::string& file) {
+    const std::wstring path = OwnFile(file);
+    return !path.empty() && ghosts::PrefetchReady(path);
+}
+int GhostsLoadFile(const std::string& file) {
+    const std::wstring path = OwnFile(file);
+    if (path.empty()) return -1;
     plugins::GameWork work;
-    return i < 0 ? 0 : ghosts::PlayerBall(plugins::Current(), static_cast<size_t>(i));
+    return ghosts::LoadLocal(path);
+}
+std::string PluginReadFile(const std::string& file) {
+    const std::wstring path = OwnFile(file);
+    if (path.empty()) return "";
+    FILE* f = _wfopen(path.c_str(), L"rb");
+    if (!f) return "";
+    std::string text;
+    char buf[65536];
+    for (size_t n; (n = fread(buf, 1, sizeof buf, f)) > 0;) text.append(buf, n);
+    fclose(f);
+    std::erase(text, '\r');                     // (Windows line ends: scripts split on "\n" only)
+    return text;
+}
+int GhostsPlayerBall(int i, bool realSkin) {
+    plugins::GameWork work;
+    return i < 0 ? 0 : ghosts::PlayerBall(plugins::Current(), static_cast<size_t>(i), realSkin);
 }
 bool GhostsBallName(int id, bool shown) { return ghosts::ShowPlayerName(plugins::Current(), id, shown); }
 template <typename T>
@@ -1198,6 +1306,44 @@ int DrawTube(const CScriptArray* xyz, double radius, float r, float g, float b, 
     plugins::GameWork work;
     return draw::Tube(plugins::Current(), PathOf(xyz), radius, r, g, b, glow, opacity < 0 ? 0 : opacity);
 }
+int DrawSegments(const CScriptArray* xyz, double radius, float r, float g, float b, bool glow, float opacity) {
+    plugins::GameWork work;
+    return draw::Segments(plugins::Current(), PathOf(xyz), radius, r, g, b, glow, opacity);
+}
+bool DrawRetube(int id, const CScriptArray* xyz, double radius) {
+    plugins::GameWork work;
+    return draw::Retube(plugins::Current(), id, PathOf(xyz), radius);
+}
+// base64 of little-endian signed integers (bytes 1, 2 or 4 each; 1 = unsigned bytes) as numbers: compact data files
+CScriptArray* Base64Ints(const std::string& b64, int bytes) {
+    static const std::string kAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::vector<uint8_t> raw;
+    raw.reserve(b64.size() * 3 / 4);
+    uint32_t acc = 0;
+    int bits = 0;
+    for (char ch : b64) {
+        const size_t v = kAlphabet.find(ch);
+        if (v == std::string::npos) continue;
+        acc = (acc << 6) | static_cast<uint32_t>(v);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            raw.push_back(static_cast<uint8_t>((acc >> bits) & 0xff));
+        }
+    }
+    if (bytes != 1 && bytes != 2 && bytes != 4) bytes = 1;
+    const size_t n = raw.size() / static_cast<size_t>(bytes);
+    asITypeInfo* type = asGetActiveContext()->GetEngine()->GetTypeInfoByDecl("array<int>");
+    CScriptArray* out = CScriptArray::Create(type, static_cast<asUINT>(n));
+    for (size_t k = 0; k < n; ++k) {
+        int v = 0;
+        if (bytes == 1) v = raw[k];
+        else if (bytes == 2) { int16_t x; std::memcpy(&x, raw.data() + k * 2, 2); v = x; }
+        else { int32_t x; std::memcpy(&x, raw.data() + k * 4, 4); v = x; }
+        *static_cast<int*>(out->At(static_cast<asUINT>(k))) = v;
+    }
+    return out;
+}
 int DrawBall(double radius, float r, float g, float b, bool glow) {
     plugins::GameWork work;
     return draw::Ball(plugins::Current(), radius, r, g, b, glow);
@@ -1253,6 +1399,60 @@ bool CameraSet(double x, double y, double z, double pitch, double yaw, double fo
 }
 void CameraRelease() { draw::ReleaseCamera(plugins::Current()); }
 bool CameraHas() { return draw::HasCamera(plugins::Current()); }
+// Camera::Sweep: a sphere swept from (sx,sy,sz) to (ex,ey,ez) on the Camera trace channel, the player's ball ignored.
+// fraction = how far along it got before the first blocking hit (1 = clear). For plugin cameras: pull in when blocked.
+bool CameraSweep(double sx, double sy, double sz, double ex, double ey, double ez, double radius, double& fraction) {
+    fraction = 1;
+    plugins::GameWork work;
+    eng::Obj controller = game::PlayerController();
+    eng::Obj library = eng::FindCdo("KismetSystemLibrary");
+    if (!controller || !library) return false;
+    eng::Obj pawn = eng::Call(controller, "K2_GetPawn").ReturnObj();
+    // every ball is ignored (the player's, other balls on the track and their skin actors): a plugin camera
+    // follows balls, so a ball between it and its target must not pull the shot in; the list is refreshed twice a second
+    static std::vector<eng::Weak> balls;
+    static double ballsAt = -1;
+    const double now = game::Seconds();
+    if (now - ballsAt > 0.5 || now < ballsAt) {
+        ballsAt = now;
+        balls.clear();
+        static eng::Obj actorCls = nullptr;
+        if (!actorCls) actorCls = eng::FindClass("Actor");
+        eng::ForEachObject([&](eng::Obj o) {
+            if (!eng::IsA(o, actorCls) || eng::IsDefaultObject(o)) return true;
+            const std::string n = eng::ObjName(o);
+            if (n.find("RollingBall") != std::string::npos || n.find("BP_LBall") != std::string::npos) balls.push_back(eng::MakeWeak(o));
+            return true;
+        });
+    }
+    std::vector<eng::Obj> ignore;
+    if (pawn) ignore.push_back(pawn);
+    for (auto& w : balls)
+        if (eng::Obj o = eng::Get(w)) ignore.push_back(o);
+    struct {
+        eng::Obj* data;
+        int32_t num, max;
+    } actors{ignore.data(), static_cast<int32_t>(ignore.size()), static_cast<int32_t>(ignore.size())};
+    eng::Params trace(eng::FunctionOn(library, "SphereTraceSingle"));
+    const editor::Vec3 a{sx, sy, sz}, b{ex, ey, ez};
+    trace.Set("WorldContextObject", controller);
+    trace.Set("Start", a);
+    trace.Set("End", b);
+    trace.Set("Radius", static_cast<float>(radius));
+    trace.Set("TraceChannel", uint8_t{1});              // TraceTypeQuery2 = ECC_Camera
+    trace.Set("ActorsToIgnore", actors);
+    trace.Set("bIgnoreSelf", uint8_t{1});
+    if (!eng::Invoke(library, trace)) return false;
+    if (!trace.ReturnBool()) return true;
+    static eng::Prop timeProp;
+    if (!timeProp) timeProp = eng::FindProp(eng::StructOf(eng::FindProp(trace.Fn(), "OutHit")), "Time");
+    const uint8_t* hit = trace.Get("OutHit");
+    if (!hit || !timeProp) return true;
+    float t = 1;
+    std::memcpy(&t, hit + timeProp.offset, sizeof t);
+    fraction = t < 0 ? 0 : t > 1 ? 1 : t;
+    return true;
+}
 
 CScriptArray* StringArrayOf(const std::vector<std::string>& values) {
     CScriptArray* array = CScriptArray::Create(e->GetTypeInfoByDecl("array<string>"), static_cast<asUINT>(values.size()));
@@ -1476,6 +1676,14 @@ void RegisterWorkshop() {
 void RegisterGhosts() {
     e->SetDefaultNamespace("Ghosts");
     Global("bool Load(const string &in leaderboard = \"\", int count = 25)", asFUNCTION(GhostsLoad));
+    Global("int LoadFile(const string &in file)", asFUNCTION(GhostsLoadFile));
+    Global("void PrefetchFile(const string &in file)", asFUNCTION(GhostsPrefetchFile));
+    Global("bool PrefetchReady(const string &in file)", asFUNCTION(GhostsPrefetchReady));
+    Global("void CrowdTrailDetail(int points, double budgetMs)", asFUNCTION(ghosts::CrowdTrailDetail));
+    Global("bool CrowdTrailsPending()", asFUNCTION(GhostsCrowdTrailsPending));
+    Global("bool CrowdTrailStyle(int id, bool glow, float brightness, double fadeSeconds = 0, float fadeMin = 0)", asFUNCTION(GhostsCrowdTrailStyle));
+    Global("bool CrowdBallScale(int id, double scale)", asFUNCTION(GhostsCrowdBallScale));
+    Global("bool CrowdGroupGlass(int id, int group, float opacity)", asFUNCTION(GhostsCrowdGroupGlass));
     Global("string State()", asFUNCTION(GhostsState));
     Global("string Leaderboard()", asFUNCTION(GhostsLeaderboard));
     Global("int Entries()", asFUNCTION(GhostsEntries));
@@ -1491,7 +1699,7 @@ void RegisterGhosts() {
     Global("array<double>@ Splits(int)", asFUNCTION(GhostSplits));
     Global("array<int>@ CheckpointOrder(int)", asFUNCTION(GhostOrder));
     Global("int CheckpointCount()", asFUNCTION(GhostsCheckpointCount));
-    Global("int PlayerBall(int)", asFUNCTION(GhostsPlayerBall));
+    Global("int PlayerBall(int ghost, bool realSkin = false)", asFUNCTION(GhostsPlayerBall));
     Global("bool PlaceBall(int id, int ghost, double time)", asFUNCTION(GhostsPlaceBall));
     Global("bool ShowBallName(int id, bool shown)", asFUNCTION(GhostsBallName));
     Global("int CrowdCreate(double radius, const array<float>@ palette)", asFUNCTION(GhostsCrowdCreate));
@@ -1524,6 +1732,8 @@ void RegisterGhosts() {
     Global("bool Glow(int id, float r, float g, float b, float brightness)", asFUNCTION(DrawGlow));
     Global("bool Fade(int id, float opacity)", asFUNCTION(DrawFade));
     Global("int Ball(double radius, float r, float g, float b, bool glow = false)", asFUNCTION(DrawBall));
+    Global("int Segments(const array<double>@ pairs, double radius, float r, float g, float b, bool glow = false, float opacity = 1)", asFUNCTION(DrawSegments));
+    Global("bool Retube(int id, const array<double>@ path, double radius)", asFUNCTION(DrawRetube));
     Global("bool Move(int, double, double, double)", asFUNCTION(DrawMove));
     Global("bool Show(int, bool)", asFUNCTION(DrawShow));
     Global("void Remove(int)", asFUNCTION(DrawRemove));
@@ -1545,6 +1755,8 @@ void RegisterGhosts() {
     Global("bool Set(double x, double y, double z, double pitch, double yaw, double fov = 90)", asFUNCTION(CameraSet));
     Global("void Release()", asFUNCTION(CameraRelease));
     Global("bool IsTaken()", asFUNCTION(CameraHas));
+    Global("bool Sweep(double sx, double sy, double sz, double ex, double ey, double ez, double radius, double &out fraction)",
+           asFUNCTION(CameraSweep));
 }
 
 void RegisterReplay() {

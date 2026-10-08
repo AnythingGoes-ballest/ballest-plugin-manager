@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <deque>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <unordered_set>
@@ -348,6 +349,157 @@ bool Load(const std::string& leaderboard, int count) {
     return true;
 }
 
+
+namespace {
+int Base64Value(unsigned char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+std::vector<uint8_t> Base64(const std::string& s) {
+    std::vector<uint8_t> out;
+    out.reserve(s.size() * 3 / 4);
+    uint32_t acc = 0;
+    int bits = 0;
+    for (unsigned char c : s) {
+        const int v = Base64Value(c);
+        if (v < 0) continue;
+        acc = (acc << 6) | static_cast<uint32_t>(v);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out.push_back(static_cast<uint8_t>((acc >> bits) & 0xff));
+        }
+    }
+    return out;
+}
+std::vector<std::string> Fields(const std::string& line) {
+    std::vector<std::string> f;
+    size_t a = 0;
+    for (;;) {
+        const size_t b = line.find('\t', a);
+        f.push_back(line.substr(a, b == std::string::npos ? std::string::npos : b - a));
+        if (b == std::string::npos) break;
+        a = b + 1;
+    }
+    return f;
+}
+}  // namespace
+
+bool ParseLocal(const std::wstring& path, std::vector<Ghost>* out) {
+    FILE* f = _wfopen(path.c_str(), L"rb");
+    if (!f) return false;
+    std::string text;
+    char buf[65536];
+    for (size_t n; (n = fread(buf, 1, sizeof buf, f)) > 0;) text.append(buf, n);
+    fclose(f);
+    size_t at = 0;
+    auto nextLine = [&](std::string* line) {
+        if (at >= text.size()) return false;
+        size_t e = text.find('\n', at);
+        if (e == std::string::npos) e = text.size();
+        *line = text.substr(at, e - at);
+        if (!line->empty() && line->back() == '\r') line->pop_back();
+        at = e + 1;
+        return true;
+    };
+    std::string line;
+    if (!nextLine(&line)) return false;
+    const auto head = Fields(line);
+    // RUN1; AIV1 is an older name of the same format
+    if (head.size() < 5 || (head[0] != "RUN1" && head[0] != "AIV1")) return false;
+    const double ox = std::atof(head[1].c_str()), oy = std::atof(head[2].c_str()), oz = std::atof(head[3].c_str());
+    const double unit = std::atof(head[4].c_str());
+    std::vector<Ghost> loaded;
+    while (nextLine(&line)) {
+        const auto c = Fields(line);
+        if (c.size() < 6) continue;
+        Ghost g;
+        auto& r = g.replay;
+        r.name = c[0];
+        r.time = std::atof(c[1].c_str());
+        if (c[2] != "-") r.look.skinMaterial = c[2];
+        const double t0 = std::atof(c[3].c_str()), dt = std::atof(c[4].c_str());
+        const std::vector<uint8_t> raw = Base64(c[5]);
+        const size_t n = raw.size() / 6;
+        r.samples.resize(n);
+        for (size_t k = 0; k < n; ++k) {
+            int16_t q[3];
+            std::memcpy(q, raw.data() + k * 6, sizeof q);
+            auto& s = r.samples[k];
+            s.t = t0 + static_cast<double>(k) * dt;
+            s.at = {ox + q[0] * unit, oy + q[1] * unit, oz + q[2] * unit};
+        }
+        for (size_t k = 0; k < n; ++k) {
+            const auto& a = r.samples[k > 0 ? k - 1 : 0].at;
+            const auto& b = r.samples[k + 1 < n ? k + 1 : n - 1].at;
+            const double span = dt * static_cast<double>((k + 1 < n ? k + 1 : n - 1) - (k > 0 ? k - 1 : 0));
+            auto& s = r.samples[k];
+            if (span > 0) s.velocity = {(b.x - a.x) / span, (b.y - a.y) / span, (b.z - a.z) / span};
+            if (std::abs(s.velocity.x) + std::abs(s.velocity.y) > 1) s.yaw = std::atan2(s.velocity.y, s.velocity.x) * 57.29577951308232;
+            else if (k > 0) s.yaw = r.samples[k - 1].yaw;
+            s.pitch = -15;
+        }
+        r.hasView = true;
+        g.rank = static_cast<int>(loaded.size()) + 1;
+        loaded.push_back(std::move(g));
+    }
+    *out = std::move(loaded);
+    return true;
+}
+
+// PrefetchLocal: the file read and parsed on a worker thread (a plugin stepping through files loads the next while one
+// shows); LoadLocal takes it from here when it is ready, else parses on the game thread as before.
+std::mutex gPrefetchLock;
+std::map<std::wstring, std::shared_ptr<std::vector<Ghost>>> gPrefetched;      // null while being parsed
+void PrefetchLocal(const std::wstring& path) {
+    {
+        std::lock_guard<std::mutex> lock(gPrefetchLock);
+        if (gPrefetched.count(path)) return;
+        if (gPrefetched.size() > 6) gPrefetched.clear();
+        gPrefetched[path] = nullptr;
+    }
+    std::thread([path] {
+        auto v = std::make_shared<std::vector<Ghost>>();
+        if (!ParseLocal(path, v.get())) v->clear();
+        std::lock_guard<std::mutex> lock(gPrefetchLock);
+        gPrefetched[path] = v;
+    }).detach();
+}
+bool PrefetchReady(const std::wstring& path) {
+    std::lock_guard<std::mutex> lock(gPrefetchLock);
+    auto it = gPrefetched.find(path);
+    return it != gPrefetched.end() && it->second != nullptr;
+}
+
+int LoadLocal(const std::wstring& path) {
+    std::vector<Ghost> loaded;
+    bool have = false;
+    {
+        std::lock_guard<std::mutex> lock(gPrefetchLock);
+        auto it = gPrefetched.find(path);
+        if (it != gPrefetched.end() && it->second) {
+            loaded = std::move(*it->second);
+            gPrefetched.erase(it);
+            have = !loaded.empty();
+        }
+    }
+    if (!have && !ParseLocal(path, &loaded)) return -1;
+    ++gSerial;                          // anything still downloading is dropped
+    gQueue.clear();
+    gDownloading = gWaiting = 0;
+    gGhosts.swap(loaded);
+    gEntries = static_cast<int>(gGhosts.size());
+    gLoadedGeneration = game::Generation();
+    gGeneration = game::Generation();
+    gLeaderboard = "local";
+    gState = "ready";
+    return static_cast<int>(gGhosts.size());
+}
+
 std::string State() { return gState; }
 std::string Leaderboard() { return gLeaderboard; }
 int Entries() { return gEntries; }
@@ -512,12 +664,12 @@ Obj LoadPath(const std::string& written) {
 }
 }  // namespace
 
-int PlayerBall(int owner, size_t ghost) {
+int PlayerBall(int owner, size_t ghost, bool realSkin) {
     if (ghost >= gGhosts.size()) return 0;
-    return PlayerBallFor(owner, gGhosts[ghost].replay);
+    return PlayerBallFor(owner, gGhosts[ghost].replay, realSkin);
 }
 
-int PlayerBallFor(int owner, const ghostdata::Replay& replay) {
+int PlayerBallFor(int owner, const ghostdata::Replay& replay, bool realSkin) {
     Obj controller = game::PlayerController();
     Obj cls = cosmetics::LoadAsset(L"/Game/SocketIO/BP_NonPlayerRollingBall.BP_NonPlayerRollingBall_C");
     if (!controller || !cls) {
@@ -551,14 +703,21 @@ int PlayerBallFor(int owner, const ghostdata::Replay& replay) {
     // Its collision would push the player's ball about: none.
     eng::Call(ball, "SetActorEnableCollision", uint8_t{0});
     const auto& look = replay.look;
-    Obj skin = LoadPath(look.ghostSkinMaterial);
-    if (!skin) skin = LoadPath(look.skinMaterial);
+    Obj skin = realSkin ? LoadPath(look.skinMaterial) : LoadPath(look.ghostSkinMaterial);
+    if (!skin) skin = realSkin ? LoadPath(look.ghostSkinMaterial) : LoadPath(look.skinMaterial);
+    if (realSkin) {
+        // BP_NonPlayerRollingBall's tick sets GhostOpacity = clamp(distance to your ball / MaxOpacityDistance, MinOpacity,
+        // MaxOpacity) on the skin, the accessory and a special skin's child (read from its blueprint): pinned at 1
+        const double full = 1.0;
+        eng::WriteBytes(ball, "MinOpacity", &full, sizeof full);
+        eng::WriteBytes(ball, "MaxOpacity", &full, sizeof full);
+    }
     eng::Params dress(eng::FunctionOn(ball, "CreateNonPlayerRollingBall"));
     const std::wstring name = eng::Widen(replay.name);
     dress.Set("PlayerName", eng::FString{name.c_str(), static_cast<int32_t>(name.size() + 1), static_cast<int32_t>(name.size() + 1)});
     dress.Set("Skin Material", skin);
     dress.Set("AccessoryMesh", LoadPath(look.accessory));
-    dress.Set("?AccessoryMaterial", LoadPath(look.accessoryGhostMaterial));
+    dress.Set("?AccessoryMaterial", realSkin ? Obj{} : LoadPath(look.accessoryGhostMaterial));   // (none: the mesh's own)
     dress.Set("?SpecialSkinClass", LoadPath(look.specialSkinClass));
     dress.Set("bPersonalBest", uint8_t{0});
     uint8_t prefs[16] = {};                     // SBallerSkinPreferences: texture @0, gloss @1, slider (double) @8
@@ -567,6 +726,10 @@ int PlayerBallFor(int owner, const ghostdata::Replay& replay) {
     std::memcpy(prefs + 8, &look.textureSlider, sizeof look.textureSlider);
     dress.Set("BasicBallPrefs", prefs, sizeof prefs);
     eng::Invoke(ball, dress);
+    if (realSkin)
+        hostlog::Info("ghosts: " + replay.name + "'s ball in its real skin " + (skin ? ghostdata::ObjectPath(look.skinMaterial) : std::string("(none loaded)")) +
+                      (look.specialSkinClass.empty() || look.specialSkinClass == "None" ? "" : ", special " + ghostdata::ObjectPath(look.specialSkinClass)) +
+                      (ghostdata::ObjectPath(look.accessory).empty() ? "" : ", accessory " + ghostdata::ObjectPath(look.accessory)));
     return draw::Adopt(owner, ball);
 }
 
@@ -614,6 +777,8 @@ struct CrowdGroup {
     std::vector<int> ghosts;            // its members, in instance order
     std::vector<uint8_t> transforms;    // their FTransforms, kTransformSize bytes each
     bool skinned = false;               // the game's ball in one skin, full size and rolling as the replay did
+    std::string skin;                   // a skinned group's material path
+    bool keepColour = false;            // CrowdGroupGlass: never moved to a skin group
 };
 // Skinned groups past this many would each be another draw: the rest keep their colour.
 constexpr size_t kMaxSkinGroups = 400;
@@ -638,17 +803,24 @@ struct Crowd {
         int chunk = -1;                 // -1: whole trails
         int pieces = 0;
         bool visible = true;
+        int fadeLevel = -1;             // the opacity step last given (CrowdTrailStyle fading)
     };
     std::vector<TrailMesh> trailMeshes;
     std::map<std::pair<int, int>, size_t> trailOpen;    // (colour, chunk): the mesh being filled, in trailMeshes
     bool trailsShown = true;
+    // CrowdTrailStyle: glowing trails (brightness), and chunk pieces fading with age to fadeMin over fadeSeconds
+    bool trailGlow = false;
+    float trailBright = 5;
+    double fadeSeconds = 0;
+    float fadeMin = 0;
+    double skinScale = 1;               // CrowdBallScale: skinned balls' size (1 = the game's ball)
 };
 // Trails per mesh: each mesh is one object to draw, and a tube added rebuilds only its own mesh. In chunks, the pieces
 // are short, so a mesh takes more of them.
 constexpr int kTrailsPerMesh = 5, kPiecesPerChunkMesh = 50;
 // A crowd trail's points at most (evenly through the run), and the time spent adding trails a frame.
-constexpr size_t kTrailPoints = 160;
-constexpr double kTrailBudgetMs = 3;
+size_t kTrailPoints = 160;
+double kTrailBudgetMs = 3;
 constexpr double kTrailSpacing = 25;   // cm
 std::map<int, Crowd> gCrowds;
 // FTransform as this build lays it out, measured once from KismetMathLibrary.MakeTransform: its size and where
@@ -711,7 +883,7 @@ void Place(Crowd& c, CrowdGroup& g, double t) {
             // turned to the replay's rotation drew as an egg, even paused (measured, the balls round without it), and
             // not from the rotation written (the engine's own MakeTransform drew the same), motion blur (off: the same),
             // the teleport or render-state flags, or the mesh (SM_PlayerBall and the sphere alike).
-            size[0] = size[1] = size[2] = g.skinned ? 1.0 : c.scale;
+            size[0] = size[1] = size[2] = g.skinned ? c.skinScale : c.scale;
         }
         std::memcpy(at + gTranslationAt, where, sizeof where);
         std::memcpy(at + gScaleAt, size, sizeof size);
@@ -768,6 +940,48 @@ void Refill(CrowdGroup& g) {
 }  // namespace
 
 void ForgetCrowds() { gCrowds.clear(); }
+
+void CrowdTrailDetail(int points, double budgetMs) {
+    kTrailPoints = static_cast<size_t>(std::clamp(points, 8, 2000));
+    kTrailBudgetMs = std::clamp(budgetMs, 0.5, 40.0);
+}
+bool CrowdTrailStyle(int owner, int id, bool glow, float brightness, double fadeSeconds, float fadeMin) {
+    auto it = gCrowds.find(id);
+    if (it == gCrowds.end() || it->second.owner != owner) return false;
+    it->second.trailGlow = glow;
+    it->second.trailBright = brightness;
+    it->second.fadeSeconds = fadeSeconds;
+    it->second.fadeMin = fadeMin;
+    for (auto& m : it->second.trailMeshes) m.fadeLevel = -1;
+    return true;
+}
+bool CrowdGroupGlass(int owner, int id, int group, float opacity) {
+    auto it = gCrowds.find(id);
+    if (it == gCrowds.end() || it->second.owner != owner || group < 0) return false;
+    Crowd& c = it->second;
+    if (static_cast<size_t>(group) >= c.groups.size() || static_cast<size_t>(group) * 3 + 2 >= c.palette.size()) return false;
+    CrowdGroup& g = c.groups[static_cast<size_t>(group)];
+    Obj component = Component(g);
+    if (!component) return false;
+    const size_t k = static_cast<size_t>(group) * 3;
+    Obj material = opacity < 1 ? models::NewGlassMaterial(c.palette[k], c.palette[k + 1], c.palette[k + 2], opacity)
+                               : models::NewGlowMaterial(c.palette[k], c.palette[k + 1], c.palette[k + 2], 8);
+    if (material) eng::Call(component, "SetMaterial", int32_t{0}, material);
+    if (opacity < 1) eng::Call(component, "SetTranslucentSortPriority", int32_t{10});
+    g.keepColour = opacity < 1;
+    return material != nullptr;
+}
+bool CrowdBallScale(int owner, int id, double scale) {
+    auto it = gCrowds.find(id);
+    if (it == gCrowds.end() || it->second.owner != owner) return false;
+    it->second.skinScale = scale;
+    return true;
+}
+bool CrowdTrailsPending(int owner) {
+    for (const auto& [id, c] : gCrowds)       // (a crowd removed with Draw::Remove builds nothing more)
+        if (c.owner == owner && !c.trailQueue.empty() && draw::ActorOf(c.owner, id)) return true;
+    return false;
+}
 
 int CrowdCreate(int owner, double radius, const std::vector<float>& palette) {
     Obj controller = game::PlayerController();
@@ -839,10 +1053,16 @@ bool CrowdSkins(int owner, int id) {
     // skin is met; a skin that doesn't load, or one past kMaxSkinGroups, keeps the member in its colour.
     std::map<std::string, size_t> byPath;
     constexpr size_t kNone = static_cast<size_t>(-1);
-    const size_t coloured = c.groups.size();
+    size_t coloured = c.groups.size();
+    // Skinned groups made by an earlier call are used again (members change with CrowdMembers; their components stay).
+    for (size_t gi = 0; gi < c.groups.size(); ++gi)
+        if (c.groups[gi].skinned) {
+            byPath.emplace(c.groups[gi].skin, gi);
+            coloured = std::min(coloured, gi);
+        }
     int moved = 0;
     for (size_t gi = 0; gi < coloured; ++gi) {
-        if (c.groups[gi].skinned) continue;
+        if (c.groups[gi].skinned || c.groups[gi].keepColour) continue;
         std::vector<int> keep;
         const std::vector<int> members = c.groups[gi].ghosts;
         for (int ghost : members) {
@@ -860,6 +1080,7 @@ bool CrowdSkins(int owner, int id) {
                             CrowdGroup g;
                             g.component = eng::MakeWeak(component);
                             g.skinned = true;
+                            g.skin = path;
                             c.groups.push_back(std::move(g));
                             made = c.groups.size() - 1;
                         }
@@ -920,8 +1141,22 @@ bool CrowdTrails(int owner, int id, double radius, float opacity, double chunkSe
 bool CrowdTrailsUpTo(int owner, int id, double t) {
     auto it = gCrowds.find(id);
     if (it == gCrowds.end() || it->second.owner != owner) return false;
-    it->second.trailsUpTo = t;
-    ShowTrailMeshes(it->second);
+    Crowd& c = it->second;
+    c.trailsUpTo = t;
+    ShowTrailMeshes(c);
+    if (c.fadeSeconds > 0 && c.trailChunk > 0 && c.trailOpacity < 1) {
+        constexpr int kLevels = 12;
+        for (auto& m : c.trailMeshes) {
+            if (!m.visible || m.chunk < 0) continue;
+            const double age = t - (m.chunk + 1) * c.trailChunk;
+            const double f = std::clamp(1 - age / c.fadeSeconds, 0.0, 1.0);
+            const int level = static_cast<int>(std::lround(f * kLevels));
+            if (level == m.fadeLevel) continue;
+            m.fadeLevel = level;
+            const float op = c.fadeMin + (c.trailOpacity - c.fadeMin) * static_cast<float>(level) / kLevels;
+            draw::Fade(owner, m.id, op);
+        }
+    }
     return true;
 }
 
@@ -930,7 +1165,11 @@ void BuildCrowdTrails() {
     const auto started = std::chrono::steady_clock::now();
     auto spent = [&] { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(); };
     for (auto& [id, c] : gCrowds) {
-        if (c.trailQueue.empty() || !draw::ActorOf(c.owner, id)) continue;
+        if (c.trailQueue.empty()) continue;
+        if (!draw::ActorOf(c.owner, id)) {      // removed (Draw::Remove): nothing left to build for
+            c.trailQueue.clear();
+            continue;
+        }
         while (!c.trailQueue.empty() && spent() < kTrailBudgetMs) {
             const int ghost = c.trailQueue.front();
             c.trailQueue.pop_front();
@@ -989,6 +1228,8 @@ void BuildCrowdTrails() {
                     look.g = c.palette[ci * 3 + 1];
                     look.b = c.palette[ci * 3 + 2];
                     look.opacity = c.trailOpacity;
+                    look.glow = c.trailGlow && c.trailOpacity >= 1;
+                    look.bright = c.trailBright;
                     mesh = models::SpawnMesh(look);
                     if (!mesh) continue;
                     Crowd::TrailMesh m;

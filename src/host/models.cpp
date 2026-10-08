@@ -1250,6 +1250,18 @@ Obj NewGlowMaterial(float r, float g, float b, float bright) {
     return MakeMaterial(m, game::PlayerController());
 }
 
+Obj NewGlassMaterial(float r, float g, float b, float opacity) {
+    Material m;
+    m.finish = Finish::Glass;
+    m.tinted = true;
+    m.opacity = opacity;
+    m.r = r;
+    m.g = g;
+    m.b = b;
+    m.rough = 0.4f;
+    return MakeMaterial(m, game::PlayerController());
+}
+
 Obj GlowMaterial(Obj actor) {
     Obj component = actor ? eng::ReadObj(actor, "DynamicMeshComponent") : nullptr;
     return component ? eng::Call(component, "GetMaterial", int32_t{0}).ReturnObj() : nullptr;

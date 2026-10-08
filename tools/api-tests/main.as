@@ -537,6 +537,42 @@ void RegisterCore()
     Add("core", "Plugins::OpenFolder", "Plugins::OpenFolder", function() {
         return "SKIP: opens a File Explorer window on the player's screen";
     });
+    Add("core", "Plugins read own files", "Plugins::ReadFile,Plugins::Base64Ints", function() {
+        string info = Plugins::ReadFile("info.toml");
+        array<int>@ bytes = Plugins::Base64Ints("AQID", 1);
+        array<int>@ shorts = Plugins::Base64Ints("//8CAA==", 2);
+        array<int>@ ints = Plugins::Base64Ints("AQAAAP////8=", 4);
+        array<string> c = {Is(info.findFirst("API tests") >= 0 && info.findFirst("\r") < 0, "Plugins::ReadFile(info.toml) " + info.length() + " characters"),
+                           Is(Plugins::ReadFile("../plugin-manager/info.toml") == "", "Plugins::ReadFile read outside its folder (..)"),
+                           Is(Plugins::ReadFile(Plugins::Folder() + "info.toml") == "", "Plugins::ReadFile took an absolute path"),
+                           Is(Plugins::ReadFile("\\info.toml") == "" && Plugins::ReadFile("CON") == "" && Plugins::ReadFile("x/nul.txt") == "",
+                              "Plugins::ReadFile took a leading slash or a device name"),
+                           Is(Plugins::ReadFile("missing.txt") == "", "Plugins::ReadFile of a missing file not empty"),
+                           Is(bytes.length() == 3 && bytes[0] == 1 && bytes[2] == 3, "Plugins::Base64Ints bytes " + bytes.length()),
+                           Is(shorts.length() == 2 && shorts[0] == -1 && shorts[1] == 2, "Plugins::Base64Ints int16 " + shorts.length()),
+                           Is(ints.length() == 2 && ints[0] == 1 && ints[1] == -1, "Plugins::Base64Ints int32 " + ints.length())};
+        return All(c);
+    });
+    Add("core", "Ghosts from a file of the plugin's", "Ghosts::LoadFile,Ghosts::PrefetchFile,Ghosts::PrefetchReady", function() {
+        if (step == 0)
+        {
+            Ghosts::PrefetchFile("ghosts_test.txt");
+            step = 1;
+            return WAIT;
+        }
+        if (!Ghosts::PrefetchReady("ghosts_test.txt"))
+            return Elapsed() > 5 ? "Ghosts::PrefetchReady still false after 5 s" : WAIT;
+        int n = Ghosts::LoadFile("ghosts_test.txt");
+        double x = 0, y = 0, z = 0;
+        bool at = Ghosts::Position(0, 1.0, x, y, z);
+        array<string> c = {Is(n == 2 && Ghosts::Count() == 2, "Ghosts::LoadFile " + n + ", Count " + Ghosts::Count()),
+                           Is(Ghosts::State() == "ready" && Ghosts::Leaderboard() == "local", "Ghosts::LoadFile: state '" + Ghosts::State() + "', leaderboard '" + Ghosts::Leaderboard() + "'"),
+                           Is(Ghosts::Name(1) == "second" && Abs(Ghosts::Time(1) - 1.5) < 1e-9, "Ghosts::LoadFile: run 1 '" + Ghosts::Name(1) + "' " + Ghosts::Time(1)),
+                           Is(at && Abs(x - 300) < 0.01 && Abs(y - 200) < 0.01 && Abs(z - 300) < 0.01, "Ghosts::LoadFile: run 0 at 1 s " + x + " " + y + " " + z),
+                           Is(Ghosts::LoadFile("../plugin-manager/info.toml") == -1 && Ghosts::LoadFile("info.toml") == -1 && Ghosts::LoadFile("missing.txt") == -1,
+                              "Ghosts::LoadFile took a path outside its folder or a file of another format")};
+        return All(c);
+    });
 
     Add("core", "Settings lists this plugin's", "Settings::Count,Settings::Plugin,Settings::Name,Settings::Description,Settings::Kind,Settings::Hidden,Settings::HasRange,Settings::Min,Settings::Max,Settings::Get,Settings::IsDefault", function() {
         int b = MySetting("Test switch"), n = MySetting("Test number"), t = MySetting("Test text");
@@ -766,6 +802,7 @@ void RegisterUi()
             return "no window (the widget test failed)";
         if (step == 0)
         {
+            mark = Log::LineCount();        // (SetFont applies at once since host 0.25.0: its warning comes now)
             uText.visible = true;
             uText.text = "api font text";
             uText.SetFont("/Game/UI/Fonts/CocogoosePro.CocogoosePro");
@@ -781,7 +818,6 @@ void RegisterUi()
             uInput.SetGapBefore(10);
             uImage.SetGapBefore(10);
             uCheck.SetGapBefore(-1);                                  // negative: the host's default back
-            mark = Log::LineCount();
             t0 = Host::Time();
             step = 1;
             return WAIT;
@@ -802,6 +838,43 @@ void RegisterUi()
         win.SetPadding(-1, -1);
         win.SetRowGap(-1);
         uText.SetFill(false);
+        return All(c);
+    });
+    Add("ui", "UI window font, button and dropdown styles", "Window.SetFont,Button.SetFont,Button.SetTextColor,Button.SetCornerRadius,Button.SetSize,Dropdown.SetStyle,Dropdown.hovered", function() {
+        if (win is null)
+            return "no window (the widget test failed)";
+        if (step == 0)
+        {
+            mark = Log::LineCount();
+            win.SetFont("/Game/UI/Fonts/CocogoosePro.CocogoosePro", "Regular");
+            uText.SetFont("/Game/UI/Fonts/CocogoosePro.CocogoosePro", "Semilight");
+            uButton.SetFont("/Game/UI/Fonts/NoSuchFont.NoSuchFont", "Bold");   // not a font of the game's: refused
+            uButton.SetTextColor(0.434f, 0.839f, 0, 1);
+            uButton.SetCornerRadius(12);
+            uIcon.SetCornerRadius(20);
+            uIcon.SetSize(40, 40);
+            uDrop.SetStyle(0, 0, 0, 0.9f, 0.2f, 0.2f, 0.2f, 1, 1, 1, 0.434f, 0.839f, 0);
+            t0 = Host::Time();
+            step = 1;
+            return WAIT;
+        }
+        if (step == 1)
+        {
+            if (Elapsed() < 1)
+                return WAIT;
+            Console::Run("state");
+            step = 2;
+            return WAIT;
+        }
+        string line = ScreenState();
+        if (line == "")
+            return WAIT;
+        array<string> c = {Is(line.findFirst("window=shown") >= 0 && line.findFirst("text[api") >= 0, "Window.SetFont/Button styles: the window is not on screen after the rebuild"),
+                           Is(LogSince("not a font of the game's: /Game/UI/Fonts/NoSuchFont.NoSuchFont"), "Button.SetFont: a path that isn't a font was not refused"),
+                           Is(!uDrop.hovered, "Dropdown.hovered true with the mouse away from it")};
+        win.SetFont("");
+        uText.SetFont("");
+        uButton.SetFont("");
         return All(c);
     });
     Add("ui", "UI text", "Text.text,Text.SetColor,Text.size,Text.SetWidth,Text.SetAlign,Text.visible,Text.SetPosition,Rect.SetRect,Rect.SetColor,Rect.visible", function() {
@@ -1824,6 +1897,45 @@ void RegisterTrack()
         Draw::Remove(id);
         return All(c);
     });
+    Add("track", "Ghosts real skins and crowd styles", "Ghosts::PlayerBall,Ghosts::CrowdTrailDetail,Ghosts::CrowdTrailsPending,Ghosts::CrowdTrailStyle,Ghosts::CrowdBallScale,Ghosts::CrowdGroupGlass", function() {
+        if (step == 0)
+        {
+            if (Ghosts::Count() == 0)
+                return "no ghosts loaded";
+            id1 = Ghosts::PlayerBall(0, true);
+            array<float> palette = {1, 0, 0, 0, 0, 1};
+            id2 = Ghosts::CrowdCreate(40, palette);
+            if (id1 <= 0 || id2 <= 0)
+                return "Ghosts::PlayerBall(0, true) " + id1 + ", CrowdCreate " + id2;
+            array<int> members;
+            array<int> groups;
+            for (int i = 0; i < Ghosts::Count(); i++)
+            {
+                members.insertLast(i);
+                groups.insertLast(i % 2);
+            }
+            Ghosts::CrowdTrailDetail(40, 2);
+            array<string> c = {Is(Ghosts::CrowdMembers(id2, members, groups), "Ghosts::CrowdMembers false"),
+                               Is(Ghosts::CrowdGroupGlass(id2, 1, 0.3f), "Ghosts::CrowdGroupGlass(group 1, 0.3) false"),
+                               Is(!Ghosts::CrowdGroupGlass(id2, 7, 0.3f), "Ghosts::CrowdGroupGlass of a missing group true"),
+                               Is(Ghosts::CrowdBallScale(id2, 0.8), "Ghosts::CrowdBallScale false"),
+                               Is(Ghosts::CrowdTrailStyle(id2, false, 1, 2.0, 0.05f), "Ghosts::CrowdTrailStyle false"),
+                               Is(!Ghosts::CrowdTrailStyle(999999, true, 5), "Ghosts::CrowdTrailStyle of a missing crowd true"),
+                               Is(Ghosts::CrowdTrails(id2, 4, 0.25f, 1.0), "Ghosts::CrowdTrails false")};
+            s1 = All(c);
+            if (s1 != PASS)
+                return s1;
+            step = 1;
+            return WAIT;
+        }
+        if (Ghosts::CrowdTrailsPending())
+            return Elapsed() > 15 ? "Ghosts::CrowdTrailsPending still true after 15 s" : WAIT;
+        bool upTo = Ghosts::CrowdTrailsUpTo(id2, 3);
+        Ghosts::CrowdTrailDetail(160, 3);
+        Draw::Remove(id1);
+        Draw::Remove(id2);
+        return Is(upTo, "Ghosts::CrowdTrailsUpTo with fading trails false");
+    }, 25);
     Add("race", "Draw shapes", "Draw::Tube,Draw::Glow,Draw::Fade,Draw::Ball,Draw::Move,Draw::Show,Draw::Remove,Draw::Clear", function() {
         double x, y, z;
         if (!Race::BallPosition(x, y, z))
@@ -1965,6 +2077,51 @@ void RegisterTrack()
 // --- race: the race running -------------------------------------------------------------------------------------------------
 void RegisterRace()
 {
+    Add("race", "Draw segments and a tube made again", "Draw::Segments,Draw::Retube", function() {
+        double x, y, z;
+        if (!Race::BallPosition(x, y, z))
+            return "no ball position to draw near";
+        array<double> pairs = {x, y, z + 300, x + 200, y, z + 300, x, y + 100, z + 300, x, y + 300, z + 300};
+        array<double> path = {x, y, z + 400, x + 300, y, z + 400};
+        array<double> longer = {x, y, z + 400, x + 300, y, z + 400, x + 300, y + 300, z + 450};
+        array<double> one = {x, y, z};
+        int segs = Draw::Segments(pairs, 4, 0.9f, 0.9f, 0.2f, true);
+        int tube = Draw::Tube(path, 5, 0.2f, 0.8f, 0.4f, true);
+        int ball = Draw::Ball(20, 1, 0, 0);
+        array<string> c = {Is(segs > 0, "Draw::Segments " + segs), Is(Draw::Segments(one, 4, 1, 1, 1) == 0, "Draw::Segments of one point not 0"),
+                           Is(Draw::Retube(tube, longer, 6), "Draw::Retube of a tube false"), Is(Draw::Retube(tube, one, 6), "Draw::Retube to one point (left empty) false"),
+                           Is(!Draw::Retube(ball, longer, 6), "Draw::Retube of a ball true"), Is(!Draw::Retube(999999, longer, 6), "Draw::Retube of a missing shape true")};
+        Draw::Remove(segs);
+        Draw::Remove(tube);
+        Draw::Remove(ball);
+        return All(c);
+    });
+    Add("race", "Camera::Sweep", "Camera::Sweep", function() {
+        double x, y, z;
+        if (!Race::BallPosition(x, y, z))
+            return "no ball position";
+        double down = -1, up = -1;
+        bool a = Camera::Sweep(x, y, z + 2000, x, y, z - 2000, 20, down);      // through the ball (ignored) to the track
+        bool b = Camera::Sweep(x, y, z + 20000, x + 100, y, z + 20000, 20, up); // open sky
+        array<string> c = {Is(a && down > 0 && down < 1, "Camera::Sweep down through the ball: " + a + " fraction " + down),
+                           Is(b && up == 1, "Camera::Sweep in open air: " + b + " fraction " + up)};
+        return All(c);
+    });
+    Add("race", "Race::FreezeBall refused in a run that counts", "Race::FreezeBall", function() {
+        if (Race::IsPractice())
+            return "SKIP: this run is practice (only a run that counts refuses)";
+        if (step == 0)
+        {
+            Race::FreezeBall(true);
+            step = 1;
+            return WAIT;
+        }
+        if (!LogSince("not freezing the ball in a run that counts"))
+            return Elapsed() > 3 ? "Race::FreezeBall: no refusal in a run that counts" : WAIT;
+        bool frozen = LogSince("froze the player's ball");
+        Race::FreezeBall(false);
+        return Is(!frozen, "Race::FreezeBall froze the ball in a run that counts");
+    }, 8);
     Add("race", "Race running", "Race::IsActive,Race::RunId,Race::GetInput,Race::BallPosition", function() {
         double x, y, jumpX;
         bool jump;
@@ -2369,6 +2526,59 @@ void RegisterEditor()
         while (Editor::NextClick(p, flags, was)) {}
         return "SKIP: a click on the world needs the real mouse (the pick traces from the cursor)";
     });
+    Add("editortest", "Race::FreezeBall in a test run", "Race::FreezeBall", function() {
+        double x, y, z;
+        if (!Race::BallPosition(x, y, z))
+            return "no ball position";
+        if (step == 0)
+        {
+            Race::FreezeBall(true);
+            step = 1;
+            return WAIT;
+        }
+        if (step == 1)
+        {
+            if (!LogSince("froze the player's ball"))
+                return Elapsed() > 3 ? "Race::FreezeBall(true): the ball was not frozen in a test run" : WAIT;
+            d1 = x;
+            d2 = y;
+            d3 = z;
+            Console::Run("post 87 1000");
+            t0 = Host::Time();
+            step = 2;
+            return WAIT;
+        }
+        if (step == 2)
+        {
+            if (Elapsed() < 2)
+                return WAIT;
+            double moved = Math::sqrt((x - d1) * (x - d1) + (y - d2) * (y - d2) + (z - d3) * (z - d3));
+            if (moved > 1)
+                return "Race::FreezeBall: the frozen ball moved " + moved + " cm with W held";
+            Race::FreezeBall(false);
+            step = 3;
+            return WAIT;
+        }
+        return LogSince("given back (input, physics)") ? PASS : (Elapsed() > 5 ? "Race::FreezeBall(false): the ball was not given back" : WAIT);
+    }, 12);
+    Add("editortest", "Hud::HideEditor", "Hud::HideEditor", function() {
+        if (step == 0)
+        {
+            Hud::HideEditor(true);
+            step = 1;
+            return WAIT;
+        }
+        if (step == 1)
+        {
+            if (Elapsed() < 1)
+                return WAIT;
+            Hud::HideEditor(false);
+            step = 2;
+            return WAIT;
+        }
+        double x, y, z;
+        return Elapsed() < 2 ? WAIT : Is(Editor::IsTesting() && Race::BallPosition(x, y, z), "Hud::HideEditor: the test run ended");
+    }, 8);
     Add("editortest", "Editor test run", "Editor::IsTesting,Race::BallPosition", function() {
         double x, y, z;
         array<string> c = {Is(Editor::IsTesting(), "Editor::IsTesting false in a test run"), Is(Race::BallPosition(x, y, z), "Race::BallPosition false in a test run")};

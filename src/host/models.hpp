@@ -157,6 +157,7 @@ bool AppendTube(eng::Obj actor, const std::vector<std::array<double, 3>>& path, 
 // shape) or opacity (a see-through one), in place.
 eng::Obj GlowMaterial(eng::Obj actor);
 eng::Obj NewGlowMaterial(float r, float g, float b, float bright);     // a new dynamic glow material of that colour
+eng::Obj NewGlassMaterial(float r, float g, float b, float opacity);   // a new tinted see-through one
 bool SetGlow(eng::Obj material, float r, float g, float b, float bright);
 bool SetOpacity(eng::Obj material, float opacity);
 // Tests only: sets a parameter (one value: scalar; 3-4: a colour) on every refracting glass material made so far, to

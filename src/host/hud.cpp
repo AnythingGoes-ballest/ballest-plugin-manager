@@ -488,7 +488,7 @@ struct HiddenActor {
     bool wasHidden = false;
 };
 std::vector<HiddenActor> gHiddenActors;
-double gNextBallHide = 0, gNextBallScan = 0;
+double gNextBallHide = 0, gNextBallScan = 0, gNextAttachScan = 0;
 eng::Weak gBall;                        // the player's ball, once found
 
 void RestoreBall() {
@@ -518,7 +518,9 @@ void HideBallFrame() {
     // The player's ball is the map's BP_RollingBall_C, not the controller's pawn: that can be the fly-over camera
     // (measured: BP_CameraFlyOver_C in the ghost viewer). Found by a scan of every object, so kept and looked for
     // again only when it's gone, at most every 2 s.
-    Obj pawn = eng::Get(gBall);
+    Obj pawn = race::PlayedBallActor();     // the controlled ball first (the editor's own unused ball is one too)
+    if (pawn && pawn != eng::Get(gBall)) gBall = eng::MakeWeak(pawn);
+    if (!pawn) pawn = eng::Get(gBall);
     if (!pawn && now >= gNextBallScan) {
         gNextBallScan = now + 2;
         if (Obj cls = eng::FindClass("BP_RollingBall_C"))
@@ -534,8 +536,107 @@ void HideBallFrame() {
     HideActor(pawn);
     if (Obj skin = eng::ReadObj(pawn, "CustomSkinChild")) HideActor(skin);
     for (Obj a : cosmetics::ModelActorsOn(pawn)) HideActor(a);
+    if (now >= gNextAttachScan) {           // actors the game attached to it (its skin actor, BP_LBall05_C)
+        gNextAttachScan = now + 2;
+        static Obj actorCls = eng::FindClass("Actor");
+        std::vector<Obj> attached;
+        if (actorCls)
+            eng::ForEachObject([&](Obj o) {
+                if (eng::IsDefaultObject(o) || !eng::IsLive(o) || !eng::IsA(o, actorCls)) return true;
+                if (eng::Call(o, "GetAttachParentActor").ReturnObj() == pawn) attached.push_back(o);
+                return true;
+            });
+        for (Obj a : attached) HideActor(a);
+    }
+}
+
+// The player's ball frozen for plugins that asked (Race::FreezeBall): its input off (APawn::DisableInput) and its body
+// out of the physics (SetSimulatePhysics false), so it can't roll, jump, fall or respawn. Given back as it was: input,
+// physics and both velocities.
+struct V3 {
+    double x = 0, y = 0, z = 0;
+};
+std::set<int> gBallFreezers;
+struct FrozenBall {
+    eng::Weak ball, root, controller;
+    bool wasSimulating = false, inputOff = false;
+    V3 lin, ang;
+};
+std::optional<FrozenBall> gFrozen;
+double gNextFreeze = 0;
+const uint8_t kNoBoneName[8] = {};
+
+void Thaw() {
+    if (!gFrozen) return;
+    Obj ball = eng::Get(gFrozen->ball);
+    Obj root = eng::Get(gFrozen->root);
+    if (ball && gFrozen->inputOff) eng::Call(ball, "EnableInput", eng::Get(gFrozen->controller));
+    if (root && gFrozen->wasSimulating) {
+        eng::Call(root, "SetSimulatePhysics", uint8_t{1});
+        eng::Call(root, "SetPhysicsLinearVelocity", gFrozen->lin, uint8_t{0}, kNoBoneName);
+        eng::Call(root, "SetPhysicsAngularVelocityInRadians", gFrozen->ang, uint8_t{0}, kNoBoneName);
+    }
+    if (ball) hostlog::Info("hud: player's ball " + eng::ObjName(ball) + " given back (input, physics)");
+    gFrozen.reset();
+}
+
+// A run that can reach a leaderboard: racing, not practice, not the track editor's test run. The ball is never frozen
+// in one (as Race::SetPaused refuses to pause one).
+bool CountingRun() { return race::Active() && !race::Practice() && !race::EditorTesting(); }
+bool gFreezeRefused = false;
+
+void FreezeBallFrame() {
+    if (gBallFreezers.empty()) return Thaw();
+    const double now = game::Seconds();
+    if (now < gNextFreeze) return;
+    gNextFreeze = now + 0.1;
+    if (CountingRun()) {
+        if (gFrozen) {
+            // frozen before this run started counting: given back, and the run kept off the leaderboards
+            race::TaintRun("the ball was frozen by a plugin");
+            Thaw();
+        }
+        if (!gFreezeRefused) hostlog::Warn("hud: not freezing the ball in a run that counts");
+        gFreezeRefused = true;
+        return;
+    }
+    gFreezeRefused = false;
+    Obj ball = race::PlayedBallActor();
+    if (!ball) return;
+    if (race::Active()) race::TaintRun("the ball was frozen by a plugin");     // (practice or a test run: never uploads anyway)
+    if (gFrozen && eng::Get(gFrozen->ball) != ball) Thaw();      // another ball (a new map or run): the old one back first
+    Obj root = eng::Call(ball, "K2_GetRootComponent").ReturnObj();
+    if (!root) return;
+    const bool simulating = eng::Call(root, "IsSimulatingPhysics", kNoBoneName).ReturnBool();
+    Obj controller = game::PlayerController();
+    if (!gFrozen) {
+        FrozenBall f;
+        f.ball = eng::MakeWeak(ball);
+        f.root = eng::MakeWeak(root);
+        f.controller = eng::MakeWeak(controller);
+        gFrozen = f;
+        hostlog::Info("hud: froze the player's ball " + eng::ObjName(ball));
+    }
+    if (simulating) {                       // (again after a test-play restart turns its physics back on)
+        gFrozen->wasSimulating = true;
+        gFrozen->lin = eng::Call(root, "GetPhysicsLinearVelocity", kNoBoneName).ReturnAs<V3>();
+        gFrozen->ang = eng::Call(root, "GetPhysicsAngularVelocityInRadians", kNoBoneName).ReturnAs<V3>();
+        eng::Call(root, "SetSimulatePhysics", uint8_t{0});
+    }
+    if (controller && !gFrozen->inputOff) {
+        eng::Call(ball, "DisableInput", controller);
+        gFrozen->inputOff = true;
+        gFrozen->controller = eng::MakeWeak(controller);
+    }
 }
 }  // namespace
+
+void FreezeBall(int owner, bool frozen) {
+    if (frozen) gBallFreezers.insert(owner);
+    else gBallFreezers.erase(owner);
+    if (gBallFreezers.empty()) Thaw();
+    gNextFreeze = 0;
+}
 
 void HideBall(int owner, bool hidden) {
     if (hidden) gBallHiders.insert(owner);
@@ -544,14 +645,40 @@ void HideBall(int owner, bool hidden) {
     gNextBallHide = 0;
 }
 
+eng::Weak gEditorPlayerUi;
+double gNextPlayerUiScan = 0;
+
+void HideEditorFrame();
 void HideGameFrame() {
     HideBallFrame();
+    FreezeBallFrame();
+    HideEditorFrame();
     if (gHiders.empty()) return RestoreGame();
     const double now = game::Seconds();
     Obj raceUi = RaceUi();
     if (eng::Get(gHiddenIn) != raceUi) {                // another map, another UI
         gHiddenParts.clear();
         gHiddenIn = eng::MakeWeak(raceUi);
+    }
+    if (now >= gNextHide && (!raceUi || race::EditorTesting())) {
+        // Editor test-play has no race UI manager: its HUD is a WBP_PlayerUI of its own (measured 2026-10-06).
+        gNextHide = now + 0.25;
+        Obj ui = eng::Get(gEditorPlayerUi);
+        if (!ui && now >= gNextPlayerUiScan) {
+            gNextPlayerUiScan = now + 2;
+            Obj cls = eng::FindClass("WBP_PlayerUI_C");
+            if (cls) eng::ForEachObject([&](Obj o) {
+                if (!eng::IsA(o, cls) || eng::IsDefaultObject(o)) return true;
+                // (the blueprints' own templates are instances too: only a live one, in the transient package)
+                if (eng::PathOf(o).rfind("/Engine/Transient.", 0) != 0) return true;
+                ui = o;
+                return false;
+            });
+            gEditorPlayerUi = eng::MakeWeak(ui);
+        }
+        if (ui) HidePart(ui);
+        if (!raceUi) return;
+        gNextHide = 0;
     }
     if (!raceUi || now < gNextHide) return;
     gNextHide = now + 0.25;
@@ -571,6 +698,93 @@ void HideGameFrame() {
     }
 }
 
+
+// --- the track editor's own screens around a test run (HideEditor): everything in the editor's widget except the
+// line down to its player UI (the race clock), so a test run's finish shows only the world and the clock.
+std::set<int> gEditorHiders;
+struct EditorPart {
+    eng::Weak widget;
+    uint8_t visibility = 0;
+};
+std::vector<EditorPart> gEditorParts;
+double gNextEditorHide = 0;
+
+Obj LiveOf(const char* className) {
+    Obj cls = eng::FindClass(className), found = nullptr;
+    if (cls) eng::ForEachObject([&](Obj o) {
+        if (!eng::IsA(o, cls) || eng::IsDefaultObject(o)) return true;
+        if (eng::PathOf(o).rfind("/Engine/Transient.", 0) != 0) return true;
+        found = o;
+        return false;
+    });
+    return found;
+}
+
+void RestoreEditor() {
+    for (const auto& part : gEditorParts)
+        if (Obj widget = eng::Get(part.widget)) w::SetVisibility(widget, part.visibility);
+    gEditorParts.clear();
+}
+
+void HideEditorPart(Obj widget) {
+    for (const auto& part : gEditorParts)
+        if (eng::Get(part.widget) == widget) {
+            w::SetVisibility(widget, kHidden);
+            return;
+        }
+    gEditorParts.push_back({eng::MakeWeak(widget), eng::Call(widget, "GetVisibility").ReturnAs<uint8_t>(0)});
+    w::SetVisibility(widget, kHidden);
+}
+
+eng::Weak gEditorWidget, gEditorUi;
+void HideEditorFrame() {
+    if (gEditorHiders.empty()) {
+        if (!gEditorParts.empty()) RestoreEditor();
+        return;
+    }
+    const double now = game::Seconds();
+    if (now < gNextEditorHide) return;
+    gNextEditorHide = now + 0.2;
+    Obj editor = eng::Get(gEditorWidget);
+    if (!editor || !eng::IsLive(editor)) {
+        editor = LiveOf("W_MapEditor_C");
+        gEditorWidget = eng::MakeWeak(editor);
+        gEditorUi = {};
+    }
+    if (!editor) return;
+    Obj ui = eng::Get(gEditorUi);
+    if (!ui) {
+        ui = w::FindFirst(editor, eng::FindClass("WBP_PlayerUI_C"));
+        gEditorUi = eng::MakeWeak(ui);
+    }
+    std::vector<Obj> line;
+    for (Obj x = ui; x && x != editor && line.size() < 64;) {
+        line.push_back(x);
+        x = eng::Call(x, "GetParent").ReturnObj();
+    }
+    if (line.empty()) {
+        if (Obj root = RootOf(editor)) HideEditorPart(root);
+        return;
+    }
+    for (size_t k = 1; k < line.size(); ++k) {
+        Obj panel = line[k];
+        const int32_t n = eng::Call(panel, "GetChildrenCount").ReturnAs<int32_t>(0);
+        for (int32_t i = 0; i < n; ++i) {
+            Obj child = eng::Call(panel, "GetChildAt", i).ReturnObj();
+            if (child && child != line[k - 1]) HideEditorPart(child);
+        }
+    }
+    // the editor's own widgets added to the viewport outside its tree (the pause / finish menu, the header)
+    for (const char* cls : {"WBP_Editor_Header_C"})
+        if (Obj other = LiveOf(cls)) HideEditorPart(other);
+}
+
+void HideEditor(int owner, bool hidden) {
+    if (hidden) gEditorHiders.insert(owner);
+    else gEditorHiders.erase(owner);
+    if (gEditorHiders.empty()) RestoreEditor();
+}
+
 void HideGame(int owner, bool hidden) {
     if (hidden) gHiders.insert(owner);
     else gHiders.erase(owner);
@@ -579,7 +793,9 @@ void HideGame(int owner, bool hidden) {
 
 void RemoveOwner(int owner) {
     HideGame(owner, false);
+    HideEditor(owner, false);
     HideBall(owner, false);
+    FreezeBall(owner, false);
 }
 
 }  // namespace hud

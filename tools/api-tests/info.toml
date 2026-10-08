@@ -7,4 +7,4 @@ min_host = "0.16.0"
 
 [script]
 files = ["main.as"]
-assets = ["test.png", "cube.obj", "shapes.txt", "beep.wav"]
+assets = ["test.png", "cube.obj", "shapes.txt", "beep.wav", "ghosts_test.txt"]

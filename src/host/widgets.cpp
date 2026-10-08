@@ -1,9 +1,14 @@
 #include "widgets.hpp"
 
 #include <cstring>
+#include <map>
+#include <set>
+#include <string>
 #include <vector>
 
 #include "log.hpp"
+#include "cosmetics.hpp"
+#include "engine.hpp"
 
 namespace ui::widgets {
 
@@ -135,6 +140,46 @@ void SetFontSize(Obj widget, float size, std::vector<const char*> fontPath) {
     if (off >= 0 && last.size == sizeof size) std::memcpy(widget + off, &size, sizeof size);
 }
 
+// A font asset of the game's ("/Game/UI/Fonts/CocogoosePro.CocogoosePro"), loaded once while it lives. Only fonts:
+// anything else at that path is refused, so a text block never holds some other kind of object as its font. A path
+// that fails is remembered, so it is warned about once and not loaded again on every rebuild.
+Obj GameFont(const std::string& path) {
+    static std::map<std::string, eng::Weak> fonts;
+    static std::set<std::string> refused;
+    if (path.empty() || refused.count(path)) return nullptr;
+    if (auto it = fonts.find(path); it != fonts.end())
+        if (Obj cached = eng::Get(it->second)) return cached;
+    Obj asset = path.rfind("/Game/", 0) == 0 ? cosmetics::LoadAsset(eng::Widen(path)) : nullptr;
+    if (asset && !eng::IsA(asset, eng::FindClass("Font"))) asset = nullptr;
+    if (!asset) {
+        hostlog::Warn("not a font of the game's: " + path);
+        refused.insert(path);
+        return nullptr;
+    }
+    fonts[path] = eng::MakeWeak(asset);
+    return asset;
+}
+
+void SetFontFace(Obj widget, const std::string& font, const std::string& typeface, std::vector<const char*> fontPath) {
+    if (!widget || font.empty()) return;
+    Obj asset = GameFont(font);
+    if (!asset) return;
+    std::vector<const char*> objectPath = fontPath, facePath = fontPath;
+    objectPath.push_back("FontObject");
+    facePath.push_back("TypefaceFontName");
+    eng::Prop last;
+    const int off = eng::NestedOffset(eng::ClassOf(widget), objectPath, &last);
+    if (off >= 0 && last.size == sizeof asset) std::memcpy(widget + off, &asset, sizeof asset);
+    if (typeface.empty()) return;
+    const int faceOff = eng::NestedOffset(eng::ClassOf(widget), facePath, &last);
+    const std::wstring w = eng::Widen(typeface);
+    const eng::FString fs{w.c_str(), static_cast<int32_t>(w.size() + 1), static_cast<int32_t>(w.size() + 1)};
+    const eng::Params name = eng::Call(eng::FindCdo("KismetStringLibrary"), "Conv_StringToName", fs);
+    size_t size = 0;
+    const uint8_t* fname = name.Return(&size);
+    if (faceOff >= 0 && fname && size == static_cast<size_t>(last.size)) std::memcpy(widget + faceOff, fname, size);
+}
+
 // Plain members only (object pointers, names, numbers): nothing reference-counted is copied.
 void CopyFont(Obj from, Obj to, float sizeScale) {
     if (!from || !to) return;
@@ -223,6 +268,35 @@ void RoundCorners(Obj border, double radius) {
         std::memcpy(border + radiiAt, r, sizeof r);
     }
     if (roundingAt >= 0 && rounding.size == 1) border[roundingAt] = 0;
+}
+
+// A button's state brushes (WidgetStyle.Normal / Hovered / Pressed / Disabled) as plain rounded boxes, so its
+// background colour fills a rounded shape (a pill when the radius is half its height); hovered a little brighter.
+void RoundButton(Obj button, double radius) {
+    if (!button) return;
+    Obj cls = eng::ClassOf(button);
+    const char* states[] = {"Normal", "Hovered", "Pressed", "Disabled"};
+    const float tints[] = {1.0f, 1.45f, 0.75f, 0.5f};
+    for (int k = 0; k < 4; ++k) {
+        eng::Prop drawAs, radii, rounding, resource;
+        const int drawAt = eng::NestedOffset(cls, {"WidgetStyle", states[k], "DrawAs"}, &drawAs);
+        const int radiiAt = eng::NestedOffset(cls, {"WidgetStyle", states[k], "OutlineSettings", "CornerRadii"}, &radii);
+        const int roundingAt = eng::NestedOffset(cls, {"WidgetStyle", states[k], "OutlineSettings", "RoundingType"}, &rounding);
+        const int resourceAt = eng::NestedOffset(cls, {"WidgetStyle", states[k], "ResourceObject"}, &resource);
+        if (drawAt < 0 || radiiAt < 0 || drawAs.size != 1 || (radii.size != 32 && radii.size != 16)) return;
+        button[drawAt] = 4;
+        if (radii.size == 32) {
+            const double r[4] = {radius, radius, radius, radius};
+            std::memcpy(button + radiiAt, r, sizeof r);
+        } else {
+            const float r[4] = {float(radius), float(radius), float(radius), float(radius)};
+            std::memcpy(button + radiiAt, r, sizeof r);
+        }
+        if (roundingAt >= 0 && rounding.size == 1) button[roundingAt] = 0;
+        if (resourceAt >= 0 && resource.size == sizeof(void*)) std::memset(button + resourceAt, 0, sizeof(void*));
+        const Color tint{tints[k], tints[k], tints[k], 1};
+        WriteSlateColor(button, {"WidgetStyle", states[k], "TintColor"}, tint);
+    }
 }
 
 bool NewScreen(Obj controller, Obj* host, Obj* tree, Obj* canvas) {

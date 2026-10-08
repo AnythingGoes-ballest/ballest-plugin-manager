@@ -46,6 +46,9 @@ void SetTextColor(Obj textBlock, Color c);
 Color TextColor(Obj textBlock);
 // The Size of an FSlateFontInfo member; by default a TextBlock's Font.
 void SetFontSize(Obj widget, float size, std::vector<const char*> fontPath = {"Font"});
+Obj GameFont(const std::string& path);   // a font asset of the game's (/Game/..., a UFont), or null (warned once)
+// A font asset ("/Game/UI/Fonts/CocogoosePro.CocogoosePro") and typeface ("Regular") on a text widget's Font.
+void SetFontFace(Obj widget, const std::string& font, const std::string& typeface, std::vector<const char*> fontPath = {"Font"});
 void CopyFont(Obj from, Obj to, float sizeScale = 1.0f);            // font and colour of another text block
 void SetFontObject(Obj textBlock, Obj font);                        // the font face (a UFont); size and colour stay
 void WriteSlateColor(Obj widget, std::vector<const char*> path, Color c);   // an FSlateColor member
@@ -56,6 +59,7 @@ Obj Block(Obj outer, float width, float height, Color c);          // a solid re
 // A Border's background drawn as a rounded box. Set before the border is on screen (its Slate widget reads the brush
 // when it is built).
 void RoundCorners(Obj border, double radius);
+void RoundButton(Obj button, double radius);
 
 // A new, empty on-screen widget of its own (a UserWidget owned by the player controller) whose root is a
 // CanvasPanel. Fill it, then AddToViewport with a z-order: higher is drawn in front. False if it could not be made.

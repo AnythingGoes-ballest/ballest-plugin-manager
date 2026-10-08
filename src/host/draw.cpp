@@ -24,6 +24,7 @@ struct Shape {
     eng::Weak material;                 // its dynamic material, once Glow has found it
     std::shared_ptr<models::Model> model;   // a model's (Model): what it is, and its parts built on the actor
     std::shared_ptr<models::Built> built;
+    bool tube = false;                  // made by Tube (Retube sweeps only these again)
 };
 std::map<int, Shape> gShapes;
 int gNextId = 1;
@@ -55,7 +56,7 @@ Obj Actor(int owner, int id) {
 int Keep(int owner, Obj actor) {
     if (!actor) return 0;
     const int id = gNextId++;
-    gShapes[id] = {owner, eng::MakeWeak(actor), {}, nullptr, nullptr};
+    gShapes[id] = {owner, eng::MakeWeak(actor), {}, nullptr, nullptr, false};
     return id;
 }
 
@@ -118,7 +119,37 @@ Obj NoCollision(Obj actor) {
 }
 
 int Tube(int owner, const std::vector<std::array<double, 3>>& path, double radius, float r, float g, float b, bool glow, float opacity) {
-    return Keep(owner, NoCollision(models::SpawnTube(path, radius, {r, g, b, glow, 8, opacity})));
+    const int id = Keep(owner, NoCollision(models::SpawnTube(path, radius, {r, g, b, glow, 8, opacity})));
+    if (id) gShapes[id].tube = true;
+    return id;
+}
+
+int Segments(int owner, const std::vector<std::array<double, 3>>& pairs, double radius, float r, float g, float b, bool glow, float opacity) {
+    if (pairs.size() < 2) return 0;
+    Obj mesh = models::SpawnMesh({r, g, b, glow && opacity >= 1, 8, opacity});
+    if (!mesh) return 0;
+    for (size_t k = 0; k + 1 < pairs.size(); k += 2) {
+        const auto& a = pairs[k];
+        const auto& c = pairs[k + 1];
+        const double dx = c[0] - a[0], dy = c[1] - a[1], dz = c[2] - a[2];
+        if (dx * dx + dy * dy + dz * dz < 4) continue;          // (a tube needs some length)
+        models::AppendTube(mesh, {a, c}, radius, 6);
+    }
+    return Keep(owner, NoCollision(mesh));
+}
+
+bool Retube(int owner, int id, const std::vector<std::array<double, 3>>& path, double radius) {
+    auto it = gShapes.find(id);
+    if (it == gShapes.end() || it->second.owner != owner || !it->second.tube) return false;
+    Obj actor = eng::Get(it->second.actor);
+    Obj component = actor ? eng::ReadObj(actor, "DynamicMeshComponent") : nullptr;
+    Obj mesh = component ? eng::Call(component, "GetDynamicMesh").ReturnObj() : nullptr;
+    if (!mesh) return false;
+    if (!eng::Call(mesh, "Reset").Invoked()) return false;
+    // (an empty mesh, or the old tube would stay under the new one, growing every call)
+    if (eng::Call(mesh, "GetTriangleCount").ReturnAs<int32_t>(-1) != 0) return false;
+    if (path.size() >= 2) models::AppendTube(actor, path, radius, 6);   // (false: too short to sweep, left empty)
+    return true;
 }
 
 int Ball(int owner, double radius, float r, float g, float b, bool glow) {

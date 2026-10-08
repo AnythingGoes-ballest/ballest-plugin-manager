@@ -244,6 +244,21 @@ The running plugin's own folder, ending in a backslash. Use it to name files the
 --
 string ball = Plugins::Folder() + "ball.png";
 
+== Plugins::ReadFile
+A text file from the plugin's own folder, all of it (Windows line ends become `\n`). `file` is relative to the
+folder and may name a subfolder (`"data/routes.txt"`). Only reads: a name with `..`, a drive, a leading slash or a
+Windows device name (`CON`, `NUL`, ...) reads nothing, and so does a missing file. Requires host 0.25.0.
+--
+string text = Plugins::ReadFile("data/routes.txt");
+array<string>@ lines = text.split("\n");
+
+== Plugins::Base64Ints
+Numbers packed as base64, for compact data files: little-endian integers of `bytes` each, `1` (0 to 255), `2`
+(signed 16-bit) or `4` (signed 32-bit); any other `bytes` reads as 1. Characters that aren't base64 are skipped.
+Requires host 0.25.0.
+--
+array<int>@ heights = Plugins::Base64Ints(line, 2);     // int16 samples
+
 == Plugins::OpenFolder
 Opens the plugins folder in File Explorer.
 --
@@ -647,6 +662,14 @@ and the 12 under a header stay as they are. Requires host 0.23.6.
 --
 window.SetRowGap(0);
 
+== UI::Window.SetFont
+The font for the window's texts, buttons and dropdowns: one of the game's fonts by asset path, and a typeface of it
+(`""` for its default). A widget's own `SetFont` wins over it. `""` goes back to the default font. A path that isn't
+a font of the game's is ignored, with one warning in the host log. The game's menu font is
+`/Game/UI/Fonts/CocogoosePro.CocogoosePro`, with the typefaces `Regular` and `Semilight`. Requires host 0.25.0.
+--
+window.SetFont("/Game/UI/Fonts/CocogoosePro.CocogoosePro", "Regular");
+
 == UI::Window.SetBackground
 The window's background colour, red, green, blue and opacity from 0 to 1. Opacity `0` removes the background.
 --
@@ -947,12 +970,15 @@ value.SetWidth(70);
 value.SetAlign(2);          // numbers line up on the right
 
 == UI::Text.SetFont
-Draws the text in one of the game's fonts, by its asset path; size and colour stay as they are. `""` goes back to
-the default font. A path that isn't a font of the game's is ignored, with one warning in the host log. The game's own
-menu font is `/Game/UI/Fonts/CocogoosePro.CocogoosePro`. Requires host 0.23.6.
+Draws the text in one of the game's fonts, by its asset path, and optionally one of its typefaces (`""` for the
+font's default); size and colour stay as they are. `""` goes back to the window's font (`Window.SetFont`) or the
+default. A path that isn't a font of the game's is ignored, with one warning in the host log. The game's own menu font
+is `/Game/UI/Fonts/CocogoosePro.CocogoosePro`, with the typefaces `Regular` and `Semilight`. Requires host 0.23.6; the
+typeface needs 0.25.0.
 --
 UI::Text@ label = window.AddText("TOTAL", 12);
 label.SetFont("/Game/UI/Fonts/CocogoosePro.CocogoosePro");
+label.SetFont("/Game/UI/Fonts/CocogoosePro.CocogoosePro", "Semilight");     // the lighter typeface
 
 == UI::Text.SetFill
 `true` makes the text take whatever width its row has left, so everything after it in the row is pushed to the
@@ -1007,6 +1033,32 @@ pauseButton.label = paused ? "start timer" : "pause timer";
 --
 playButton.icon = paused ? "play" : "pause";
 
+== UI::Button.SetFont
+The button's label in one of the game's fonts and a typeface of it, as `Text.SetFont`. Requires host 0.25.0.
+--
+playAgain.SetFont("/Game/UI/Fonts/CocogoosePro.CocogoosePro", "Regular");
+
+== UI::Button.SetTextColor
+The colour of the button's label, or of an icon button's icon: red, green, blue and opacity from 0 to 1 (white
+without it). Requires host 0.25.0.
+--
+tab.SetTextColor(0.434f, 0.839f, 0, 1);     // the game's lime
+
+== UI::Button.SetCornerRadius
+Rounds the button's corners (text and icon buttons), `radius` in pixels; half its height makes a pill or, with
+`SetSize` square, a round button. Its background colour (`SetBackground`) fills the shape; hovered it's a little
+brighter and pressed a little darker. `0` (the default) keeps the plain button. Requires host 0.25.0.
+--
+playButton.SetSize(40, 40);
+playButton.SetCornerRadius(20);             // round
+
+== UI::Button.SetSize
+An icon button's size in pixels (the icon is scaled to its height). Text buttons are as large as their label.
+Requires host 0.25.0.
+--
+UI::Button@ play = window.AddIconButton("play");
+play.SetSize(40, 40);
+
 @@ UI::Slider
 A slider in a window (from `Window.AddSlider`). Its value runs from 0 to 1.
 
@@ -1052,6 +1104,18 @@ True once after the player picks an option. Reading it clears it.
 --
 if (cameraBox.Changed())
     Replay::SetCameraMode(cameraBox.selected);
+
+== UI::Dropdown.SetStyle
+The dropdown's colours: its box and open list (`r`, `g`, `b`, `a`), a hovered or pressed option or box (`hoverR`,
+`hoverG`, `hoverB`), the text, and the selected option's text in the list. Colours are linear, 0 to 1. Requires host
+0.25.0.
+--
+speedBox.SetStyle(0, 0, 0, 0.85f,  0.15f, 0.15f, 0.15f,  1, 1, 1,  0.434f, 0.839f, 0);
+
+== UI::Dropdown.hovered
+**Read only.** Whether the mouse is over the dropdown. Requires host 0.25.0.
+--
+tooltip.visible = speedBox.hovered;
 
 @@ UI::TextArea
 A scrolling box of text (from `Window.AddTextArea`).
@@ -1407,10 +1471,22 @@ while (Race::NextBounce(s, x, y, z, nx, ny, nz, ground))
         Camera::Shake(s);
 
 == Race::HideBall
-Hides the player's own ball while `true` (with the game's special skin actor and the host's cosmetic models on it), and
-gives it back with `false` or when the plugin stops. For a view of the track without it, such as a ghost viewer.
+Hides the player's own ball while `true` (with the game's special skin actor, the actors the game attached to it and
+the host's cosmetic models on it), and gives it back with `false` or when the plugin stops. It's the ball being played,
+in the track editor's test runs as well. Only how it looks: it still rolls, collides and finishes. For a view of the
+track without it, such as a ghost viewer.
 --
 Race::HideBall(true);
+
+== Race::FreezeBall
+Holds the player's ball still while `true`: its input off and its body out of the physics, so it doesn't roll, fall
+or respawn. `false` (or the plugin stopping) gives it back as it was: input, physics, speed and spin. For a viewer
+that shows something else while the ball waits. Only where nothing counts: in the track editor's test runs, in practice
+or off a race. In a run that can reach a leaderboard it is refused, with a warning in the host log; a ball frozen
+before such a run starts is given back, and that run doesn't go to a leaderboard. Requires host 0.25.0.
+--
+Race::HideBall(true);
+Race::FreezeBall(true);       // in an editor test run: the ball waits, hidden, where it is
 
 == Race::IsPractice
 Whether this run is a practice run.
@@ -1492,9 +1568,19 @@ Hud::ResetPartColor("PlayerUI/WBP_InputVisualizer", "Key_Jump");
 Hides the game's race UI (the HUD, the header, the leaderboard and the race's menus) while `true`, and puts it back
 with `false` or when the plugin stops. The footer bar stays, with the plugin buttons in it (`UI::FooterHeight` says how
 tall it is). What's hidden can't be clicked, so its buttons can't be pressed unseen.
-For a clear view of the track, such as a replay or ghost viewer. Requires host 0.14.0.
+In a track editor test run it hides the run's own HUD (host 0.25.0). For a clear view of the track, such as a replay
+or ghost viewer. Requires host 0.14.0.
 --
 Hud::HideGame(true);     // nothing of the game's over the track
+
+== Hud::HideEditor
+Hides the track editor's own screens around a test run (its header, menus and footer) while `true`, keeping the race
+clock, and puts them back with `false` or when the plugin stops. Only the editor's: it does nothing on a track. Hiding
+them during a test run can take the clock with it; it's meant for after a test run's finish, to show the world and the
+time only. Requires host 0.25.0.
+--
+if (Race::IsComplete())
+    Hud::HideEditor(true);
 
 @@ Editor
 The track editor. Pieces are identified by `int` ids. An id stops working once its piece is deleted: the functions
@@ -2031,6 +2117,35 @@ Ghosts::Load("", 25);    // the top 25 of the track on screen
 Ghosts::Load("", 100);   // then 75 more
 Ghosts::Load("", 0);     // then everyone
 
+== Ghosts::LoadFile
+Runs from a text file in the plugin's own folder instead of a leaderboard, replacing the runs loaded (anything still
+downloading is dropped; `Leaderboard()` reads `"local"`). Every other Ghosts function works on them. Returns how many
+runs it read, or -1 if the file can't be read, isn't this format, or isn't the plugin's own (the same rule as
+`Plugins::ReadFile`). The format, tab-separated:
+
+    RUN1  ox  oy  oz  unit
+    name  time  skin  t0  dt  samples
+
+The first line gives an origin and a unit (game units, cm); each next line is a run: its name, its time in seconds,
+a ball skin material path (`-` for none), the first sample's time and the time between samples, then the samples:
+base64 of signed 16-bit x, y, z per sample, a position of origin + value x unit. Speed and the camera's view are
+worked out from the path. Requires host 0.25.0.
+--
+int runs = Ghosts::LoadFile("runs/best.txt");
+
+== Ghosts::PrefetchFile
+Starts reading and parsing a `LoadFile` file in the background, so a later `LoadFile` of it is quick (for stepping
+through many files). Requires host 0.25.0.
+--
+Ghosts::PrefetchFile("runs/" + (shown + 1) + ".txt");
+
+== Ghosts::PrefetchReady
+Whether a `PrefetchFile` is done. `LoadFile` works either way; before this is true it reads the file itself.
+Requires host 0.25.0.
+--
+if (Ghosts::PrefetchReady(next))
+    Ghosts::LoadFile(next);
+
 == Ghosts::State
 How the load is going: `"idle"`, `"loading ..."` (with what it's doing), `"ready"`, or `"error: ..."`.
 --
@@ -2138,10 +2253,12 @@ if (Ghosts::View(0, time, x, y, z, pitch, yaw, fov))
 
 == Ghosts::PlayerBall
 The player's own ball for a ghost, as the game shows other players' balls: their skin (or special ball), their
-accessory, see-through like the game's ghosts, with their name over it. Returns a `Draw` id (show, hide and remove
-it like a shape), or 0 if it couldn't be made. Move it with `PlaceBall`.
+accessory, see-through like the game's ghosts, with their name over it. With `realSkin` `true`, it wears the player's
+real skin and accessory, fully opaque, instead of the game's rival-ghost look (needs host 0.25.0). Returns a `Draw` id
+(show, hide and remove it like a shape), or 0 if it couldn't be made. Move it with `PlaceBall`.
 --
 int ball = Ghosts::PlayerBall(0);
+int real = Ghosts::PlayerBall(0, true);     // as the player sees their own ball
 
 == Ghosts::PlaceBall
 Puts a ball from `PlayerBall` where that ghost was at `time`, turning the way their ball turned.
@@ -2192,6 +2309,38 @@ Ghosts::CrowdTrailsUpTo(crowd, playTime);       // every frame
 Shows or hides the crowd's trails; ones still being built follow.
 --
 Ghosts::CrowdShowTrails(crowd, false);
+
+== Ghosts::CrowdTrailStyle
+How the crowd's trails look: glowing at a `brightness` (opaque trails only; set before `CrowdTrails`), and, for
+see-through trails built in chunks, each chunk fading with age, from the trails' opacity down to `fadeMin` over
+`fadeSeconds` of the clock given to `CrowdTrailsUpTo` (0: no fading). False if it isn't your crowd. Requires host
+0.25.0.
+--
+Ghosts::CrowdTrailStyle(crowd, false, 1, 3.0, 0.05f);     // the last 3 s of each trail, fading out
+Ghosts::CrowdTrails(crowd, 4, 0.5f, 0.5);
+
+== Ghosts::CrowdTrailDetail
+How detailed crowd trails are: points per trail at most (8 to 2000, default 160) and the time spent building them each
+frame (0.5 to 40 ms, default 3). For every crowd. Requires host 0.25.0.
+--
+Ghosts::CrowdTrailDetail(60, 2);          // lighter trails for many runs
+
+== Ghosts::CrowdTrailsPending
+Whether any of your crowds' trails are still waiting to be built. Requires host 0.25.0.
+--
+loading.visible = Ghosts::CrowdTrailsPending();
+
+== Ghosts::CrowdBallScale
+The size of the crowd's balls that wear skins (`CrowdSkins`), `1` the game's ball. Requires host 0.25.0.
+--
+Ghosts::CrowdBallScale(crowd, 0.8);
+
+== Ghosts::CrowdGroupGlass
+One colour group's balls as tinted glass of its colour at `opacity` (below 1), for dimming some balls; they then keep
+their colour when the crowd wears skins. `1` makes them glow again. False if the crowd or group isn't there. Requires
+host 0.25.0.
+--
+Ghosts::CrowdGroupGlass(crowd, 1, 0.3f);     // group 1 dimmed
 
 == Ghosts::CrowdTimes
 Per ghost (indexed by ghost, for every ghost loaded): its time offset (added to the time `CrowdPlace` is given), and
@@ -2661,6 +2810,21 @@ For fading glass in and out without making it again. Requires host 0.14.0.
 --
 Draw::Fade(segment, 0.25f + 0.65f * (1 - age));
 
+== Draw::Segments
+Many separate straight tubes in one shape (one object to draw, so thousands cost little): the points come in pairs,
+the start then the end of each (x, y, z of each point, one after another). Pairs shorter than 2 cm are skipped.
+Colours and `opacity` as `Tube`'s. Returns its id, or 0 (fewer than two points). Requires host 0.25.0.
+--
+array<double> ticks = {x, y, z, x, y, z + 50,   x2, y2, z2, x2, y2, z2 + 50};
+int marks = Draw::Segments(ticks, 2, 1, 1, 1, true);
+
+== Draw::Retube
+Gives a tube from `Tube` a new path in place: the same shape and colour, its mesh emptied and swept again, for a line
+that changes every frame (a trail's growing end) without making a new shape. A path too short to sweep leaves it
+empty. False (nothing changed) if `id` isn't one of your tubes. Requires host 0.25.0.
+--
+Draw::Retube(head, lastPoints, 5);      // every frame
+
 == Draw::Ball
 A ball of that radius, at the world's origin until it's moved. Returns its id, or 0.
 --
@@ -2786,6 +2950,19 @@ Whether you have the camera.
 --
 if (Camera::IsTaken())
     Camera::Set(x, y, z, pitch, yaw);
+
+== Camera::Sweep
+Sweeps a sphere of `radius` from one point to another on the camera's collision channel, with every ball ignored, and
+gives how far along it got before it hit something (`fraction`, 0 to 1; 1 is clear). For a plugin camera that pulls in
+instead of going through walls. False if it couldn't be traced. Requires host 0.25.0.
+--
+double clear;
+if (Camera::Sweep(bx, by, bz, cx, cy, cz, 20, clear) && clear < 1)
+{
+    cx = bx + (cx - bx) * clear;      // pulled in to the wall
+    cy = by + (cy - by) * clear;
+    cz = bz + (cz - bz) * clear;
+}
 
 @@ Math
 Math functions, in doubles, with the usual names. Angles are in radians.

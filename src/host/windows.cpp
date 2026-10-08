@@ -61,26 +61,6 @@ Obj LoadTexture(const std::string& path) {
     return texture;
 }
 
-// A font asset of the game's ("/Game/UI/Fonts/CocogoosePro.CocogoosePro"), loaded once while it lives. Only fonts:
-// anything else at that path is refused, so a text block never holds some other kind of object as its font. A path
-// that fails is remembered, so it is warned about once and not loaded again on every rebuild.
-Obj LoadFont(const std::string& path) {
-    static std::map<std::string, eng::Weak> fonts;
-    static std::set<std::string> refused;
-    if (refused.count(path)) return nullptr;
-    if (auto it = fonts.find(path); it != fonts.end())
-        if (Obj cached = eng::Get(it->second)) return cached;
-    Obj asset = path.rfind("/Game/", 0) == 0 ? cosmetics::LoadAsset(eng::Widen(path)) : nullptr;
-    if (asset && !eng::IsA(asset, eng::FindClass("Font"))) asset = nullptr;
-    if (!asset) {
-        hostlog::Warn("not a font of the game's: " + path);
-        refused.insert(path);
-        return nullptr;
-    }
-    fonts[path] = eng::MakeWeak(asset);
-    return asset;
-}
-
 void ShowImage(Obj image, const std::string& path) {
     Obj texture = LoadTexture(path);
     if (image && texture) eng::Call(image, "SetBrushFromTexture", texture, uint8_t{0});
@@ -96,15 +76,27 @@ Obj BuildIconButton(Obj tree, Widget& item) {
     Obj down = w::Spawn("VerticalBox", tree), up = w::Spawn("VerticalBox", tree);
     if (!button || !frame || !overlay || !pause || !play || !down || !up) return nullptr;
     w::Unfocusable(button);
-    eng::Call(button, "SetBackgroundColor", kButtonColor);
+    // Button.SetSize / SetCornerRadius / SetBackground / SetTextColor: a round button of any size
+    // with the icon in the text colour, scaled to the button
+    if (item.buttonRadius > 0) w::RoundButton(button, item.buttonRadius);
+    eng::Call(button, "SetBackgroundColor", item.backgroundSet ? item.background : kButtonColor);
+    const Color ink = item.colorSet ? item.color : kWhite;
     const bool arrow = item.text == "down" || item.text == "up";
-    eng::Call(frame, "SetWidthOverride", arrow ? 30.0f : 56.0f);
-    eng::Call(frame, "SetHeightOverride", 22.0f);
-    for (int i = 0; i < 2; ++i) w::AddToRow(pause, w::Block(tree, 5, 18, kWhite), i == 0 ? 0.0f : 5.0f);
-    constexpr int kRows = 9;
+    const bool sized = item.iconW > 0 && item.iconH > 0;
+    eng::Call(frame, "SetWidthOverride", sized ? item.iconW : (arrow ? 30.0f : 56.0f));
+    eng::Call(frame, "SetHeightOverride", sized ? item.iconH : 22.0f);
+    const float scale = sized ? item.iconH / 40.0f : 18.0f / 18.0f;   // icons drawn for a 40 px tall button when sized
+    const float barW = sized ? 6.0f * scale : 5.0f, barH = sized ? 18.0f * scale : 18.0f, gap = sized ? 6.0f * scale : 5.0f;
+    for (int i = 0; i < 2; ++i) w::AddToRow(pause, w::Block(tree, barW, barH, ink), i == 0 ? 0.0f : gap);
+    // the triangle from 1 px rows (sized) or 2 px rows: a right-pointing triangle, its point at the middle row
+    const int kRows = sized ? static_cast<int>(barH) : 9;
+    const float rowH = sized ? 1.0f : 2.0f, maxW = sized ? barH * 0.9f : 17.5f;
+    // optically centred: the triangle's mass sits left, so it is nudged right by a sixth of its width
+    if (sized) eng::Call(play, "SetRenderTranslation", w::Vec2{maxW / 6.0f, 0.0f});
     for (int r = 0; r < kRows; ++r) {
-        const float width = static_cast<float>(std::min(r, kRows - 1 - r) + 1) * 3.5f;
-        if (Obj slot = eng::Call(play, "AddChildToVerticalBox", w::Block(tree, width, 2, kWhite)).ReturnObj())
+        const float half = static_cast<float>(kRows - 1) / 2.0f;
+        const float width = sized ? maxW * (1.0f - std::abs(static_cast<float>(r) - half) / (half + 0.5f)) : static_cast<float>(std::min(r, kRows - 1 - r) + 1) * 3.5f;
+        if (Obj slot = eng::Call(play, "AddChildToVerticalBox", w::Block(tree, width < 1 ? 1 : width, rowH, ink)).ReturnObj())
             eng::Call(slot, "SetHorizontalAlignment", w::kAlignLeft);
     }
     // Arrows: rows of shrinking (down) or growing (up) width, centred.
@@ -112,7 +104,7 @@ Obj BuildIconButton(Obj tree, Widget& item) {
     for (int r = 0; r < kArrowRows; ++r)
         for (Obj box : {down, up}) {
             const int step = box == down ? kArrowRows - 1 - r : r;
-            if (Obj slot = eng::Call(box, "AddChildToVerticalBox", w::Block(tree, 2.0f + 2.5f * static_cast<float>(step), 2, kWhite)).ReturnObj())
+            if (Obj slot = eng::Call(box, "AddChildToVerticalBox", w::Block(tree, 2.0f + 2.5f * static_cast<float>(step), 2, ink)).ReturnObj())
                 eng::Call(slot, "SetHorizontalAlignment", w::kAlignCenter);
         }
     for (Obj icon : {pause, play, down, up}) w::AddToOverlay(overlay, icon, w::kAlignCenter, w::kAlignCenter, {0, 0, 0, 0});
@@ -127,13 +119,19 @@ Obj BuildIconButton(Obj tree, Widget& item) {
     return button;
 }
 
+void FontOf(Obj text, const Widget& item) {
+    const std::string& font = !item.font.empty() ? item.font : (item.window ? item.window->font : item.font);
+    const std::string& face = !item.font.empty() ? item.typeface : (item.window ? item.window->typeface : item.typeface);
+    if (!font.empty()) w::SetFontFace(text, font, face);
+}
+
 Obj BuildWidget(Obj tree, Widget& item) {
     switch (item.kind) {
         case Kind::Text: {
             Obj text = w::Spawn("TextBlock", tree);
             w::SetVisibility(text, w::kHitTestInvisible);     // clicks go to what is under it (a drag surface)
             w::SetFontSize(text, item.size);
-            if (!item.font.empty()) w::SetFontObject(text, LoadFont(item.font));
+            FontOf(text, item);
             w::SetText(text, item.text);
             w::SetTextColor(text, item.color);
             if (item.justify) eng::Call(text, "SetJustification", item.justify);
@@ -151,11 +149,14 @@ Obj BuildWidget(Obj tree, Widget& item) {
             Obj button = w::Spawn("Button", tree), text = w::Spawn("TextBlock", tree);
             if (!button || !text) return nullptr;
             w::Unfocusable(button);
+            if (item.buttonRadius > 0) w::RoundButton(button, item.buttonRadius);
             eng::Call(button, "SetBackgroundColor", item.background);
             item.backgroundDirty = false;
-            w::SetFontSize(text, 15);
+            w::SetFontSize(text, item.size > 0 && item.size != 16 ? item.size : 15);
+            FontOf(text, item);
             w::SetText(text, item.text);
-            w::SetTextColor(text, kWhite);
+            w::SetTextColor(text, item.colorSet ? item.color : kWhite);
+            item.colorDirty = false;
             w::AddChild(button, text);
             item.main = eng::MakeWeak(button);
             item.label = eng::MakeWeak(text);
@@ -184,9 +185,33 @@ Obj BuildWidget(Obj tree, Widget& item) {
             w::Unfocusable(combo);
             // Left alone, the open list's text is black on the dark panel. The styles are read when the dropdown's
             // Slate widget is built, so they are set before it is on screen.
-            w::WriteSlateColor(combo, {"ForegroundColor"}, kWhite);
-            w::WriteSlateColor(combo, {"ItemStyle", "TextColor"}, kWhite);
-            w::WriteSlateColor(combo, {"ItemStyle", "SelectedTextColor"}, kWhite);
+            {
+                const Color text = item.colorSet ? item.color : kWhite;
+                w::WriteSlateColor(combo, {"ForegroundColor"}, text);
+                w::WriteSlateColor(combo, {"ItemStyle", "TextColor"}, text);
+                w::WriteSlateColor(combo, {"ItemStyle", "SelectedTextColor"}, text);
+            }
+            if (item.styled) {
+                // Dropdown.SetStyle: the box, its open list and their hover / press states in the plugin's colours
+                const Color bg = item.background, hover = item.hoverBackground;
+                for (const char* state : {"Normal", "Disabled"})
+                    w::WriteSlateColor(combo, {"WidgetStyle", "ComboButtonStyle", "ButtonStyle", state, "TintColor"}, bg);
+                for (const char* state : {"Hovered", "Pressed"})
+                    w::WriteSlateColor(combo, {"WidgetStyle", "ComboButtonStyle", "ButtonStyle", state, "TintColor"}, hover);
+                w::WriteSlateColor(combo, {"WidgetStyle", "ComboButtonStyle", "MenuBorderBrush", "TintColor"}, bg);
+                for (const char* brush : {"EvenRowBackgroundBrush", "OddRowBackgroundBrush", "InactiveBrush"})
+                    w::WriteSlateColor(combo, {"ItemStyle", brush, "TintColor"}, bg);
+                for (const char* brush : {"EvenRowBackgroundHoveredBrush", "OddRowBackgroundHoveredBrush", "ActiveHoveredBrush",
+                                          "InactiveHoveredBrush", "ActiveBrush", "SelectorFocusedBrush"})
+                    w::WriteSlateColor(combo, {"ItemStyle", brush, "TintColor"}, hover);
+                w::WriteSlateColor(combo, {"ItemStyle", "SelectedTextColor"}, item.selectedColor);
+            }
+            w::SetFontSize(combo, item.size > 0 && item.size != 16 ? item.size : 14, {"Font"});
+            {
+                const std::string& font = !item.font.empty() ? item.font : (item.window ? item.window->font : item.font);
+                const std::string& face = !item.font.empty() ? item.typeface : (item.window ? item.window->typeface : item.typeface);
+                if (!font.empty()) w::SetFontFace(combo, font, face, {"Font"});
+            }
             eng::Call(box, "SetWidthOverride", item.width);
             w::AddChild(box, combo);
             for (const auto& option : item.options) {
@@ -630,6 +655,10 @@ void Sync(Widget& item) {
                 eng::Call(main, "SetBackgroundColor", item.background);
                 item.backgroundDirty = false;
             }
+            if (item.colorDirty && item.kind == Kind::Button) {
+                w::SetTextColor(eng::Get(item.label), item.color);
+                item.colorDirty = false;
+            }
             if (item.text != item.shownText) {
                 if (item.kind == Kind::Button) {
                     w::SetText(eng::Get(item.label), item.text);
@@ -661,6 +690,7 @@ void Sync(Widget& item) {
             item.shownValue = item.value;
             break;
         case Kind::Dropdown:
+            item.hovered = eng::Call(main, "IsHovered").ReturnBool();
             if (item.selected != item.shownSelected) {
                 eng::Call(main, "SetSelectedIndex", static_cast<int32_t>(item.selected));
                 item.shownSelected = item.selected;
