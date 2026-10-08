@@ -1,6 +1,7 @@
 """Measurement session: launches the game, optionally opens a map, then sends host test-channel commands.
 
-    python tools/dev_session.py commands.txt [--slot N] [--map Map_LethTrial_01] [--keep] [--force | --attach]
+    python tools/dev_session.py commands.txt [--slot N] [--map Map_LethTrial_01] [--keep] [--force | --attach] [--quiet]
+    python tools/dev_session.py -c "state; press 34; waitstate E2; shot e2" --slot 1 --attach
 
 --slot N runs the commands on sandboxed test copy N (tools/test_instance.py), started for the session (or left
 running by an earlier --keep, with --attach) and stopped after it: any number of sessions at once, each on its own
@@ -13,10 +14,13 @@ setup: medal times and the leaderboard stay unloaded in that map.
 commands.txt lines:
     sleep <seconds>
     wait <regex>          wait (up to 60 s) for a host.log line matching the regex (prints WAIT TIMED OUT if none)
+    waitstate <regex>     ask `state` until its reply (every window's texts) matches, up to 30 s: e.g. that a key
+                          press landed before a screenshot (prints WAITSTATE TIMED OUT if it never does)
     shot <name>           screenshot to the host's data folder: <name>.png beside host.log (with --slot, the slot's)
     quick <command>       a command without the 1.5 s wait after it (to time a screenshot)
     anything else         written to the host's test_command.txt (see src/host/main.cpp)
-Prints every host.log line produced. Never touches a game the user is running (unless --force, which ends the user's
+-c "a; b; c" gives the commands inline (separated by ;) instead of a file. Prints every host.log line produced, or
+with --quiet only the commands' replies ("test:" lines), warnings and errors. Never touches a game the user is running (unless --force, which ends the user's
 game and never a test copy). --attach sends the commands to a game a previous --keep run left open, without restarting
 it.
 """
@@ -60,6 +64,15 @@ def end_game():
             subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
 
 
+QUIET = False
+
+
+def show(line):
+    """A host.log line, printed unless --quiet leaves it out (only replies, warnings and errors then)."""
+    if not QUIET or "test: " in line or "[warn]" in line or "[error]" in line:
+        print("  " + line)
+
+
 def log_lines():
     try:
         return LOG.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -69,7 +82,9 @@ def log_lines():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("commands")
+    ap.add_argument("commands", nargs="?", help="a file of commands, one a line")
+    ap.add_argument("-c", dest="inline", help="the commands inline, separated by ;")
+    ap.add_argument("--quiet", action="store_true", help="print only replies, warnings and errors")
     ap.add_argument("--map", default="")
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--force", action="store_true")
@@ -78,6 +93,10 @@ def main():
     ap.add_argument("--slot", type=int, default=0, choices=range(0, 10), help="sandboxed test copy N (1-9)")
     ap.add_argument("--plugin", action="append", help="with --slot: a plugin folder you're working on, installed into the copy")
     args = ap.parse_args()
+    if bool(args.commands) == bool(args.inline):
+        sys.exit("give a commands file or -c, one of them")
+    global QUIET
+    QUIET = args.quiet
     # Only ever a sandboxed slot (2026-10-03: test commands can teleport the ball, and one reached the real leaderboard
     # from a slot whose sandbox missed Steam's interfaces). The player's own game is never driven by a tool.
     if not args.slot:
@@ -138,7 +157,8 @@ def main():
         sys.exit(f"slot {SLOT} isn't completely sandboxed, refusing to drive it: {verdict.strip()[:300] or 'no answer'}")
 
     seen = len(log_lines()) if args.attach else 0
-    for raw in Path(args.commands).read_text(encoding="utf-8").splitlines():
+    commands = args.inline.split(";") if args.inline else Path(args.commands).read_text(encoding="utf-8").splitlines()
+    for raw in commands:
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -154,6 +174,23 @@ def main():
                 time.sleep(0.5)
             if not any(re.search(pattern, l) for l in log_lines()[seen:]):
                 print(f"  WAIT TIMED OUT: nothing matched {pattern!r} in 60 s")
+        elif line.startswith("waitstate "):
+            pattern = line[10:]
+            end = time.time() + 30
+            matched = False
+            while time.time() < end and not matched:
+                before = len(log_lines())
+                (DATA / "test_command.txt").write_text("state", encoding="utf-8")
+                for _ in range(20):
+                    reply = next((l for l in log_lines()[before:] if "test: state " in l), "")
+                    if reply:
+                        break
+                    time.sleep(0.25)
+                matched = bool(re.search(pattern, reply))
+                if not matched:
+                    time.sleep(0.5)
+            if not matched:
+                print(f"  WAITSTATE TIMED OUT: no state matched {pattern!r} in 30 s")
         elif line.startswith("shot "):
             out = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SHOT),
                                   str(DATA / f"{line.split()[1]}.png")] + (["-GamePid", str(own_games()[0])] if own_games() else []),
@@ -167,12 +204,12 @@ def main():
             time.sleep(1.5)
         lines = log_lines()
         for l in lines[seen:]:
-            print("  " + l)
+            show(l)
         seen = len(lines)
 
     time.sleep(1)
     for l in log_lines()[seen:]:
-        print("  " + l)
+        show(l)
     print("game still running:", running())
     if not args.keep and running():
         end_game()
