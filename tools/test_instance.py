@@ -5,11 +5,21 @@ r"""Sandboxed test copies of Ballest, any number at once, next to the player's o
     python tools/test_instance.py stop N
     python tools/test_instance.py status [N]
     python tools/test_instance.py play
+    python tools/test_instance.py reload N DIR
+    python tools/test_instance.py install-player DIR
 
 `play` starts the player's own game, as normal (not sandboxed, their own saves, online), for when test copies are
 running: Steam counts each copy as Ballest running, so Steam's Play button waits for them and then does nothing
 (measured: Steam's log goes WaitingPrevProcess -> Completed). Started this way it's the same game, Steam overlay
 included.
+
+`reload N DIR` puts a plugin you're working on into running slot N again: copies the folder in and turns the plugin
+off and on (the test command `enable`), which reads its scripts from disk again. It waits for the plugin's "loaded"
+line or its errors in the slot's log. The plugin must already be in the slot (started with --plugin DIR).
+
+`install-player DIR` copies a plugin folder into the player's own game's plugins folder (nothing else changes). The
+game reads plugins only when it starts, and a tool never closes the player's game: it takes effect the next time the
+player starts it.
 
 Slot N (1-9) gets:
   * its own data folder, %LOCALAPPDATA%\BallestTest<N> (the copy's LOCALAPPDATA, so the host's
@@ -331,14 +341,8 @@ def only(n, ids):
 def install_plugins(n, folders):
     ids = []
     for folder in folders or []:
-        src = Path(folder).resolve()
-        if not (src / "info.toml").exists():
-            sys.exit(f"--plugin {folder}: no info.toml there")
-        pid = src.name[len("ballest-"):] if src.name.startswith("ballest-") else src.name
-        dest = data_dir(n) / "plugins" / pid
-        if dest.exists():
-            shutil.rmtree(dest)
-        shutil.copytree(src, dest, ignore=shutil.ignore_patterns(".git", ".github", "*.md"))
+        src, pid = plugin_id(folder)
+        copy_plugin(src, data_dir(n) / "plugins" / pid)
         print(f"slot {n}: plugin {pid} from {src}")
         ids.append(pid)
     return ids
@@ -521,6 +525,91 @@ def start_claimed(n, args, plugins_from, shared, timeout, reseed, plugin_dirs, w
     return 0
 
 
+PLAYER_LOG = PLAYER_SAVED / "PluginManager" / "host.log"
+
+
+def plugin_id(folder):
+    """The id a plugin folder installs as: its name, a repo folder's "ballest-" left off."""
+    src = Path(folder).resolve()
+    if not (src / "info.toml").exists():
+        sys.exit(f"{folder}: no info.toml there")
+    return src, src.name[len("ballest-"):] if src.name.startswith("ballest-") else src.name
+
+
+def copy_plugin(src, dest):
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(src, dest, ignore=shutil.ignore_patterns(".git", ".github", "*.md"))
+
+
+def player_pids():
+    """The player's own game: {pid: image name} of the Ballest processes that aren't any slot's."""
+    slots = {pid for n in range(1, 10) for pid in alive(n)}
+    return {pid: name for pid, (_, name) in processes().items() if pid not in slots}
+
+
+def plugin_lines(text, pid):
+    """The log's lines about the plugin: its own, and its compiler errors."""
+    return [l for l in text.splitlines() if f"[{pid}]" in l or ("[compiler]" in l and pid in l)]
+
+
+def wait_plugin(log, pid, since_line, timeout):
+    """Waits for the plugin's "loaded" line or an error of its after line since_line of the log; prints its lines.
+    Returns whether it loaded without errors."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            lines = plugin_lines("\n".join(log.read_text(encoding="utf-8", errors="replace").splitlines()[since_line:]), pid)
+        except OSError:
+            lines = []
+        errors = [l for l in lines if "[error]" in l]
+        if errors or any(f"[{pid}] loaded" in l for l in lines):
+            time.sleep(2)                   # its errors right after loading, too
+            lines = plugin_lines("\n".join(log.read_text(encoding="utf-8", errors="replace").splitlines()[since_line:]), pid)
+            for l in lines:
+                print("  " + l)
+            return not any("[error]" in l for l in lines)
+        time.sleep(0.5)
+    print(f"  nothing from {pid} in {log} in {timeout} s")
+    return False
+
+
+def reload(n, folder):
+    if not alive(n):
+        sys.exit(f"slot {n} isn't running")
+    src, pid = plugin_id(folder)
+    dest = data_dir(n) / "plugins" / pid
+    if not dest.exists():
+        sys.exit(f"slot {n} doesn't have {pid}: start it with --plugin {folder}")
+    copy_plugin(src, dest)
+    log = data_dir(n) / "host.log"
+    before = len(log.read_text(encoding="utf-8", errors="replace").splitlines())
+    for on in ("0", "1"):
+        (data_dir(n) / "test_command.txt").write_text(f"enable {pid} {on}", encoding="utf-8")
+        deadline = time.time() + 15
+        reply = ""
+        while time.time() < deadline and not reply:
+            time.sleep(0.25)
+            text = log.read_text(encoding="utf-8", errors="replace")
+            reply = next((l for l in text.splitlines()[before:] if f"enable {pid} {on}" in l), "")
+        if not reply:
+            sys.exit(f"slot {n}: no answer to enable {pid} {on}")
+        if "refused" in reply:
+            sys.exit(f"slot {n}: {reply.strip()}")
+    ok = wait_plugin(log, pid, before, 30)
+    print(f"slot {n}: {pid} reloaded from {src}" + ("" if ok else " (see its errors above)"))
+    return 0 if ok else 1
+
+
+def install_player(folder):
+    """Copies a plugin folder into the player's own game. Never closes the game: it loads the plugin when next started."""
+    src, pid = plugin_id(folder)
+    dest = WIN64 / "plugins" / pid
+    copy_plugin(src, dest)
+    print(f"installed {pid} from {src} into {dest}; it takes effect the next time the player starts the game")
+    return 0
+
+
 def play():
     now = processes()
     slots = {pid for n in range(1, 10) for pid in alive(n)}
@@ -552,6 +641,11 @@ def main():
     t = sub.add_parser("stop")
     t.add_argument("slot", type=int, choices=range(1, 10))
     sub.add_parser("play")
+    r = sub.add_parser("reload")
+    r.add_argument("slot", type=int, choices=range(1, 10))
+    r.add_argument("plugin", help="the plugin folder")
+    i = sub.add_parser("install-player")
+    i.add_argument("plugin", help="the plugin folder")
     u = sub.add_parser("status")
     u.add_argument("slot", type=int, nargs="?", choices=range(1, 10))
     a = ap.parse_args()
@@ -571,6 +665,10 @@ def main():
                        wipe=a.clean, only_mine=a.only, host=a.host, interactive=a.interactive))
     if a.cmd == "play":
         return play()
+    if a.cmd == "reload":
+        sys.exit(reload(a.slot, a.plugin))
+    if a.cmd == "install-player":
+        sys.exit(install_player(a.plugin))
     if a.cmd == "stop":
         sys.exit(0 if stop(a.slot) else 1)
     for n in ([a.slot] if a.slot else range(1, 10)):
