@@ -159,12 +159,14 @@ the saved map, `--keep` leaves the game open.
 - Log: `%LOCALAPPDATA%\Ballest\Saved\PluginManager\host.log` (host and plugins; screenshots from the suite land here too)
 - `python tools/symbolize.py` names the host's frames in the newest crash report
 - Start here: `python tools/sandbox.py`, run bare, shows the sandboxed test copies (slots 1-9) and the player's own
-  game, each with its host version, plugins and log errors; `<command> --help` gives each command's flags and examples.
-  `start next --plugin <dir> --map <map>` starts a slot, `run <slot> -c "cmd; cmd"` sends test-channel commands and
-  prints only their replies (plus `wait`, `waitstate <regex>` and `shot <name>`), `reload <slot> <dir>` reloads an
-  edited plugin in a running slot, `install-player <dir>` puts a plugin into the player's game and restarts it,
-  `front`, `log` and `stop` do what they say. `sandbox.py setup-hook` (opt-in, the user runs it) makes each Claude Code
-  session start with that overview. It wraps `tools/test_instance.py` and `dev_session.py`, which still work alone.
+  game, each with its host version, plugins, log errors and log rate; `<command> --help` gives each command's flags and
+  examples. `start next --plugin <dir> --open 3805348161` starts a slot on the test map (race tests only there or on
+  your own create-mode maps, `--map <file>.balledit`), `run <slot> -c "cmd; cmd"` sends test-channel commands and prints
+  only their replies (plus `wait`, `waitstate <regex>` and `shot <name>`), `reload <slot> <dir>` reloads an edited
+  plugin in a running slot, `install-player <dir>` copies a plugin into the player's game for its next start (the game
+  is never closed), and `log` and `stop` do what they say. `sandbox.py setup-hook` (opt-in, the user runs it) makes each
+  Claude Code session start with that overview. It wraps `tools/test_instance.py` and `dev_session.py`, which still
+  work alone.
 - `python tools/dev_session.py commands.txt [--map Map_Track13] [--attach]` runs test-channel commands against a fresh
   game, or with `--attach` against the one a previous `--keep` run left open
 - `python tools/memread.py` (as a library) reads a running game's memory, read-only, to measure layouts

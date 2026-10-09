@@ -21,6 +21,7 @@ import test_instance as ti  # noqa: E402
 
 VERSION = "1.0.0"
 DESCRIPTION = "Sandboxed Ballest test copies (slots 1-9) and the player's own game: start, drive, screenshot, reload plugins"
+TEST_MAP = "3805348161"          # the Workshop map "stasis": race tests run only there or on your own create-mode maps
 REPLY_LINES = 60                 # replies shown before --full
 REPLY_CHARS = 300
 
@@ -105,11 +106,58 @@ CLI = "python tools/sandbox.py"
 # ---------------------------------------------------------------------------------------------------- state
 
 
+_LOGS = {}                       # path -> [bytes read, lines, unfinished last line]
+
+
 def read_log(log):
+    """The log's lines, reading only what was added since the last call (slot logs grow to hundreds of thousands of
+    lines). A log that got shorter was started again, so it's read from the top."""
     try:
-        return log.read_text(encoding="utf-8", errors="replace").splitlines()
+        size = log.stat().st_size
+        cached = _LOGS.get(log)
+        if not cached or size < cached[0]:
+            cached = _LOGS[log] = [0, [], ""]
+        if size > cached[0]:
+            with open(log, "rb") as f:
+                f.seek(cached[0])
+                chunk = f.read(size - cached[0])
+            cached[0] = size
+            text = cached[2] + chunk.decode("utf-8", errors="replace")
+            parts = text.split("\n")
+            cached[2] = parts.pop()
+            cached[1].extend(p.rstrip("\r") for p in parts)
+        return cached[1] + ([cached[2]] if cached[2] else [])
     except OSError:
         return []
+
+
+def log_rate(lines):
+    """(lines a second over the log's last 10 s, its most repeated line there), from the lines' own timestamps."""
+    stamps = []
+    for l in reversed(lines[-20000:]):
+        m = re.match(r"\[(\d\d):(\d\d):(\d\d\.\d+)\] (.*)", l)
+        if not m:
+            continue
+        t = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+        if stamps and stamps[0][0] - t > 10:
+            break
+        stamps.append((t, m.group(4)))
+    if len(stamps) < 2:
+        return 0, ""
+    span = max(stamps[0][0] - stamps[-1][0], 1)
+    counts = {}
+    for _, text in stamps:
+        counts[text] = counts.get(text, 0) + 1
+    top = max(counts, key=counts.get)
+    return round(len(stamps) / span), top[:100]
+
+
+SPAM_RATE = 50                   # log lines a second above which a plugin or the host is flooding the log
+
+
+def spam_warning(lines):
+    rate, top = log_rate(lines)
+    return f"log flooding: {rate} lines/s, mostly: {top}" if rate > SPAM_RATE else ""
 
 
 def host_version(lines):
@@ -168,9 +216,12 @@ def dashboard(o, compact=False):
             continue
         lines = read_log(ti.data_dir(n) / "host.log")
         rows.append({"slot": n, "state": state, "host": host_version(lines), "errors": len(log_errors(lines)),
+                     "log_rate": f"{log_rate(lines)[0]}/s",
                      "plugins": " ".join(plugins_in(ti.data_dir(n) / "plugins", ti.data_dir(n) / "off.txt"))})
+        if spam_warning(lines):
+            o.kv(f"warning_slot_{n}", spam_warning(lines))
     o.kv("slots", f"{len(rows)} of 9 in use")
-    o.table("running", rows, ["slot", "state", "host", "errors", "plugins"], "no slot running")
+    o.table("running", rows, ["slot", "state", "host", "errors", "log_rate", "plugins"], "no slot running")
     game = player_game()
     lines = read_log(ti.PLAYER_LOG) if game else []
     player = {"game": "running" if game else "not running", "host": host_version(lines) if game else None,
@@ -178,6 +229,8 @@ def dashboard(o, compact=False):
               "plugins": " ".join(plugins_in(ti.WIN64 / "plugins"))}
     if game and log_errors(lines):
         player["last_error"] = last_error(lines)
+    if game and spam_warning(lines):
+        player["warning"] = spam_warning(lines)
     o.obj("player", player)
     if compact:
         return
@@ -185,7 +238,7 @@ def dashboard(o, compact=False):
         n = rows[0]["slot"]
         o.help(f'{CLI} run {n} -c "state"', f"{CLI} reload {n} <plugin folder>", f"{CLI} stop {n}")
     else:
-        o.help(f"{CLI} start next --plugin <plugin folder> [--map Map_LethTrial_01]",
+        o.help(f"{CLI} start next --plugin <plugin folder> --open 3805348161",
                f"{CLI} install-player <plugin folder>")
 
 
@@ -307,6 +360,11 @@ def cmd_start(a):
     for p in a.plugin or []:
         if not (Path(p) / "info.toml").exists():
             fail(f"--plugin {p}: no info.toml there", f"{CLI} start {a.slot} --plugin <a folder with info.toml>", code=2)
+    for m in a.map:
+        if not Path(m).is_file() or not Path(m).name.startswith("Map_LevelEditorMain&") or Path(m).suffix != ".balledit":
+            fail(f"--map {m}: expected a create-mode map file, Map_LevelEditorMain&<name>_<creator>.balledit",
+                 f"{CLI} start {a.slot} --open {TEST_MAP}", code=2)
+    ti.MAPS[:] = [Path(m).resolve() for m in a.map]
     if a.slot != "next" and ti.alive(int(a.slot)):
         n = int(a.slot)
         o = Out()
@@ -321,10 +379,11 @@ def cmd_start(a):
             if n is None:
                 fail("no free slot", f"{CLI}", f"{CLI} stop <slot>")
             code = ti.start(n, [], None, False, a.timeout, plugin_dirs=a.plugin, claimed=True, wipe=a.clean,
-                            only_mine=a.only, host=a.host)
+                            only_mine=a.only, host=a.host, interactive=a.interactive)
         else:
             n = int(a.slot)
-            code = ti.start(n, [], None, False, a.timeout, plugin_dirs=a.plugin, wipe=a.clean, only_mine=a.only, host=a.host)
+            code = ti.start(n, [], None, False, a.timeout, plugin_dirs=a.plugin, wipe=a.clean, only_mine=a.only,
+                            host=a.host, interactive=a.interactive)
     if code != 0:
         lines = read_log(ti.data_dir(n) / "host.log")
         fail(f"slot {n} didn't start sandboxed" + (f": {last_error(lines)}" if last_error(lines) else ""),
@@ -332,19 +391,19 @@ def cmd_start(a):
     o = Out()
     o.kv("slot", n)
     o.kv("result", "started: sandbox complete, main menu up")
-    if a.map:
+    if a.open:
         before = len(read_log(ti.data_dir(n) / "host.log"))
-        send(n, f"open {a.map}")
+        send(n, f"openworkshop {a.open}" if a.open.isdigit() else f"open {a.open}")
         track = wait_reply(n, before, r"race: track ", 60)
-        o.kv("map", a.map if track else f"{a.map} (no track loaded in 60 s)")
+        o.kv("opened", a.open if track else f"{a.open} (no track loaded in 60 s)")
     lines = read_log(ti.data_dir(n) / "host.log")
     o.kv("host", host_version(lines))
     loaded = [strip_time(l) for l in lines if re.search(r"\] loaded ", l)]
     o.items("plugins", [re.sub(r"^\[info\] ", "", l) for l in loaded], "none loaded")
     o.items("errors", [strip_time(l) for l in log_errors(lines)], "none")
     circuit = "callx GM_Climb_C S_RPC_PlayerWantsToRestart | o:BP_MyPlayerController_C"
-    o.help(f'{CLI} run {n} -c "{circuit}"' if a.map else f'{CLI} run {n} -c "open Map_LethTrial_01"',
-           f"{CLI} front {n}", f"{CLI} stop {n}")
+    o.help(f'{CLI} run {n} -c "{circuit}"' if a.open else f'{CLI} run {n} -c "openworkshop 3805348161"',
+           f"{CLI} shot {n} <name>", f"{CLI} stop {n}")
     o.emit()
 
 
@@ -373,6 +432,8 @@ def cmd_run(a):
     if not sandboxed(a.slot):
         fail(f"slot {a.slot} isn't completely sandboxed: nothing sent", f"{CLI} stop {a.slot}", f"{CLI} start {a.slot}")
     replies, shots, problems = run_commands(a.slot, commands, a.full)
+    if spam_warning(read_log(ti.data_dir(a.slot) / "host.log")):
+        problems.append(spam_warning(read_log(ti.data_dir(a.slot) / "host.log")))
     report_run(a.slot, replies, shots, problems, a.full)
 
 
@@ -391,7 +452,7 @@ def report_run(n, replies, shots, problems, full):
     if cut:
         o.help(f"{CLI} run {n} --full -c \"...\" for every reply in full")
     elif not problems:
-        o.help(f'{CLI} run {n} -c "state"', f"{CLI} front {n}")
+        o.help(f'{CLI} run {n} -c "state"', f"{CLI} shot {n} <name>")
     o.emit()
     if problems:
         sys.exit(1)
@@ -411,7 +472,7 @@ def cmd_shot(a):
     need_running(a.slot)
     path = screenshot(a.slot, a.name)
     if not path:
-        fail(f"no screenshot of slot {a.slot}", f"{CLI} front {a.slot}")
+        fail(f"no screenshot of slot {a.slot}", f'{CLI} run {a.slot} -c "state"')
     o = Out()
     o.kv("shot", str(path))
     o.emit()
@@ -448,33 +509,19 @@ def cmd_install_player(a):
         fail(f"{a.plugin}: no info.toml there", f"{CLI} install-player <a folder with info.toml>", code=2)
     src, pid = ti.plugin_id(a.plugin)
     dest = ti.WIN64 / "plugins" / pid
-    if dest.exists() and same_tree(src, dest) and player_game():
-        lines = read_log(ti.PLAYER_LOG)
-        if any(f"[{pid}] loaded" in l for l in lines):
-            o = Out()
-            o.kv("plugin", pid)
-            o.kv("result", "already installed and loaded in the player's game (no-op)")
-            o.emit()
-            return
-    was_running = bool(player_game())
-    with progress():
-        code = ti.install_player(a.plugin, a.timeout)
-    lines = read_log(ti.PLAYER_LOG)
-    mine = [strip_time(l) for l in ti.plugin_lines("\n".join(lines), pid)] if was_running else []
-    errors = [l for l in mine if "[error]" in l]
     o = Out()
     o.kv("plugin", pid)
+    if dest.exists() and same_tree(src, dest):
+        o.kv("result", "already installed (no-op)")
+        o.emit()
+        return
+    with progress():
+        ti.install_player(a.plugin)
     o.kv("installed", str(dest))
-    if was_running:
-        o.kv("result", "game restarted, plugin loaded" if code == 0 else "game restarted, plugin didn't load cleanly")
-        o.kv("host", host_version(lines))
-        o.items("errors", errors, "none")
-    else:
-        o.kv("result", "installed; the player's game wasn't running, so it loads at the next start")
-        o.help(f"{CLI} play")
+    # The game reads plugins only when it starts, and the player's game is never closed by a tool.
+    o.kv("result", "installed; it takes effect the next time the player starts the game" +
+         (" (the game is running now)" if player_game() else ""))
     o.emit()
-    if code != 0:
-        sys.exit(1)
 
 
 def same_tree(a, b):
@@ -486,35 +533,16 @@ def same_tree(a, b):
         return False
 
 
-def cmd_front(a):
-    if a.which == "player":
-        game = player_game()
-        if not game:
-            fail("the player's game isn't running", f"{CLI} play")
-    elif a.which.isdigit() and 1 <= int(a.which) <= 9:
-        game = slot_game(int(a.which))
-        if not game:
-            fail(f"slot {a.which} isn't running", f"{CLI} start {a.which}")
-    else:
-        fail(f"front takes a slot (1-9) or player, not {a.which}", f"{CLI} front player", code=2)
-    if not ti.front(game):
-        fail(f"Windows didn't bring {a.which} in front", f"{CLI} front {a.which}")
-    o = Out()
-    o.kv("front", a.which)
-    o.emit()
-
-
 def cmd_play(a):
     o = Out()
     if player_game():
         o.kv("result", "the player's game is already running (no-op)")
-        o.help(f"{CLI} front player")
         o.emit()
         return
     with progress():
         ti.play()
     o.kv("result", "the player's game is starting")
-    o.help(f"{CLI} front player", f"{CLI}")
+    o.help(f"{CLI}")
     o.emit()
 
 
@@ -608,11 +636,15 @@ def build():
         return p
 
     p = add("start", "start a sandboxed slot (waits for sandbox complete and the main menu)",
-            ["start next --plugin ../ballest-plugins/plugins/checkpoint-finder --map Map_LethTrial_01",
+            ["start next --plugin ../ballest-plugins/plugins/checkpoint-finder --open 3805348161",
              "start 2 --plugin ../ballest-grind-stats --only"], cmd_start)
     p.add_argument("slot", help="1-9, or next: the first free one")
     p.add_argument("--plugin", action="append", help="a plugin folder you're working on (any number)")
-    p.add_argument("--map", help="a map to open once the menu is up (no run starts by itself)")
+    p.add_argument("--open", help="once the menu is up, open a Workshop map by id (the test map: 3805348161) or a level "
+                   "by name; no run starts by itself. Race tests only on the test map or your own create-mode maps")
+    p.add_argument("--map", action="append", default=[],
+                   help="a create-mode map (.balledit) copied into the slot's own UserSavedMaps")
+    p.add_argument("--interactive", action="store_true", help="a normal window with sound, for the user to play in")
     p.add_argument("--only", action="store_true", help="every other plugin off")
     p.add_argument("--clean", action="store_true", help="empty the slot's data first")
     p.add_argument("--host", help="a host build (build/version.dll) for this slot only")
@@ -643,14 +675,10 @@ def build():
     p.add_argument("slot", type=int, choices=range(1, 10))
     p.add_argument("plugin", help="the plugin folder (the slot must already have it)")
 
-    p = add("install-player", "install a plugin into the player's own game: copy only its folder, restart the game "
-            "if it runs, wait for the plugin to load, bring the game in front",
-            ["install-player ../ballest-plugins/plugins/checkpoint-finder"], cmd_install_player)
+    p = add("install-player", "copy a plugin folder into the player's own game; it takes effect the next time they "
+            "start it (the game is never closed)", ["install-player ../ballest-plugins/plugins/checkpoint-finder"],
+            cmd_install_player)
     p.add_argument("plugin", help="the plugin folder")
-    p.add_argument("--timeout", type=int, default=180, help="seconds to wait for the game (default 180)")
-
-    p = add("front", "bring a slot's window or the player's game in front", ["front 1", "front player"], cmd_front)
-    p.add_argument("which", help="1-9 or player")
 
     add("play", "start the player's own game (works while slots run; Steam's Play button doesn't)", ["play"], cmd_play)
 

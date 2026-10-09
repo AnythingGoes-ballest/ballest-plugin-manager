@@ -27,8 +27,8 @@ leaderboard submissions or other players' data) and point it out.
 
 ## Testing in the game
 
-Drive sandboxed test copies and the player's game with `python tools/sandbox.py` (run bare first); see "Testing and
-debugging" in `docs/host.md`.
+Drive sandboxed test copies with `python tools/sandbox.py` (run bare first), race tests only on the test map
+(`--open 3805348161`) or your own create-mode maps; see "Testing and debugging" in `docs/host.md`.
 
 ## Commits
 

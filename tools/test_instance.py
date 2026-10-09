@@ -5,7 +5,6 @@ r"""Sandboxed test copies of Ballest, any number at once, next to the player's o
     python tools/test_instance.py stop N
     python tools/test_instance.py status [N]
     python tools/test_instance.py play
-    python tools/test_instance.py front N|player
     python tools/test_instance.py reload N DIR
     python tools/test_instance.py install-player DIR
 
@@ -14,16 +13,13 @@ running: Steam counts each copy as Ballest running, so Steam's Play button waits
 (measured: Steam's log goes WaitingPrevProcess -> Completed). Started this way it's the same game, Steam overlay
 included.
 
-`front` brings slot N's window, or the player's game, in front of everything (a slot opens behind everything).
-
 `reload N DIR` puts a plugin you're working on into running slot N again: copies the folder in and turns the plugin
 off and on (the test command `enable`), which reads its scripts from disk again. It waits for the plugin's "loaded"
 line or its errors in the slot's log. The plugin must already be in the slot (started with --plugin DIR).
 
-`install-player DIR` installs a plugin into the player's own game: copies that one folder into the game's plugins
-folder (nothing else changes), then, if the game is running, closes it the way its close button does and starts it
-again (as `play`), since the game reads plugins only when it starts. It waits for the plugin's "loaded" line or its
-errors in the player's host log, then for the main menu, and brings the game in front.
+`install-player DIR` copies a plugin folder into the player's own game's plugins folder (nothing else changes). The
+game reads plugins only when it starts, and a tool never closes the player's game: it takes effect the next time the
+player starts it.
 
 Slot N (1-9) gets:
   * its own data folder, %LOCALAPPDATA%\BallestTest<N> (the copy's LOCALAPPDATA, so the host's
@@ -552,13 +548,6 @@ def player_pids():
     return {pid: name for pid, (_, name) in processes().items() if pid not in slots}
 
 
-def front(pid):
-    """Brings the process's window in front (WScript's AppActivate gets past Windows' foreground lock)."""
-    out = subprocess.run(["powershell", "-NoProfile", "-Command",
-                          f"(New-Object -ComObject WScript.Shell).AppActivate({int(pid)})"], capture_output=True, text=True)
-    return out.stdout.strip() == "True"
-
-
 def plugin_lines(text, pid):
     """The log's lines about the plugin: its own, and its compiler errors."""
     return [l for l in text.splitlines() if f"[{pid}]" in l or ("[compiler]" in l and pid in l)]
@@ -612,42 +601,13 @@ def reload(n, folder):
     return 0 if ok else 1
 
 
-def install_player(folder, timeout=180):
+def install_player(folder):
+    """Copies a plugin folder into the player's own game. Never closes the game: it loads the plugin when next started."""
     src, pid = plugin_id(folder)
     dest = WIN64 / "plugins" / pid
-    running = player_pids()
-    game = [p for p, name in running.items() if name.lower() == "ballest-win64-shipping.exe"]
-    if game:
-        print(f"closing the player's game ({game[0]}) to install {pid}")
-        close_windows(game[0])
-        deadline = time.time() + 30
-        while time.time() < deadline and player_pids():
-            time.sleep(0.5)
-        for p in player_pids():
-            subprocess.run(["taskkill", "/PID", str(p), "/F"], capture_output=True)
-        time.sleep(2)
     copy_plugin(src, dest)
-    print(f"installed {pid} from {src} into {dest}")
-    if not game:
-        print("the player's game wasn't running: it loads the plugin the next time it starts")
-        return 0
-    started = time.time()
-    play()
-    while time.time() < started + timeout:      # the host starts a new log
-        try:
-            if PLAYER_LOG.stat().st_mtime > started and "plugin host" in PLAYER_LOG.read_text(encoding="utf-8", errors="replace"):
-                break
-        except OSError:
-            pass
-        time.sleep(0.5)
-    ok = wait_plugin(PLAYER_LOG, pid, 0, max(10, int(started + timeout - time.time())))
-    while time.time() < started + timeout and "footer button 'plugins' placed" not in PLAYER_LOG.read_text(encoding="utf-8", errors="replace"):
-        time.sleep(0.5)
-    game = [p for p, name in player_pids().items() if name.lower() == "ballest-win64-shipping.exe"]
-    if game:
-        front(game[0])
-    print(f"the player's game is up again with {pid}" + ("" if ok else " (see its errors above)"))
-    return 0 if ok else 1
+    print(f"installed {pid} from {src} into {dest}; it takes effect the next time the player starts the game")
+    return 0
 
 
 def play():
@@ -681,8 +641,6 @@ def main():
     t = sub.add_parser("stop")
     t.add_argument("slot", type=int, choices=range(1, 10))
     sub.add_parser("play")
-    f = sub.add_parser("front")
-    f.add_argument("which", help="a slot (1-9), or player")
     r = sub.add_parser("reload")
     r.add_argument("slot", type=int, choices=range(1, 10))
     r.add_argument("plugin", help="the plugin folder")
@@ -707,16 +665,6 @@ def main():
                        wipe=a.clean, only_mine=a.only, host=a.host, interactive=a.interactive))
     if a.cmd == "play":
         return play()
-    if a.cmd == "front":
-        if a.which == "player":
-            game = [p for p, name in player_pids().items() if name.lower() == "ballest-win64-shipping.exe"]
-        elif a.which.isdigit() and 1 <= int(a.which) <= 9:
-            game = [(instance(int(a.which)) or {}).get("game")] if alive(int(a.which)) else []
-        else:
-            sys.exit("front: a slot (1-9) or player")
-        if not game or not game[0]:
-            sys.exit(f"{a.which}: no game running")
-        sys.exit(0 if front(game[0]) else 1)
     if a.cmd == "reload":
         sys.exit(reload(a.slot, a.plugin))
     if a.cmd == "install-player":
