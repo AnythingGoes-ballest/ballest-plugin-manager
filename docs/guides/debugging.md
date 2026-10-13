@@ -2,8 +2,9 @@
 
 ## The log
 
-Everything goes to one log, which you read in the game: footer **plugins** > **console**. It shows the
-last 400 lines and updates live. The whole log is also saved to
+Everything goes to one log, which you read in the game: footer **plugins**, then the **>_** button (the console). It shows the
+newest 1000 lines (filters: everything, host, plugins, warnings, cosmetics, my commands) and updates live; the classic
+menu's console shows the last 400. The whole log is also saved to
 `%LOCALAPPDATA%\Ballest\Saved\PluginManager\host.log`, started fresh each time the game starts: use it for older
 lines, or when the game won't start.
 

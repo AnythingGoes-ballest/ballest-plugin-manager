@@ -9,6 +9,7 @@
 #include "game.hpp"
 #include "input.hpp"
 #include "log.hpp"
+#include "manager.hpp"
 
 using eng::Obj;
 using eng::Params;
@@ -109,6 +110,11 @@ bool SpawnFreeCamera() {
 void MoveFreeCamera(float dt) {
     Obj cam = eng::Get(gFreeCamera);
     if (!cam) return;
+    // (the plugin manager's window open: its keys and clicks are its own, the camera stays where it is)
+    if (manager::IsOpen()) {
+        gLooking = false;
+        return;
+    }
     if (input::Down(VK_RBUTTON)) {
         POINT now;
         GetCursorPos(&now);

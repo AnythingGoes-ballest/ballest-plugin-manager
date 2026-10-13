@@ -1,5 +1,7 @@
 // Plugin Manager: a "plugins" entry in the game's footer (main menu, inside maps and in the track editor) that opens
-// the plugin manager menu, and closes it again: tabs along the top, one card per plugin.
+// the plugin manager, and closes it again. With the Theme setting "Ballest Night" (the default; or "Ballest Light", "Lucid Lime") that is the redesigned
+// window the host draws (src/host/manager.cpp: Plugins::ShowManager). "Classic" is the classic menu below: tabs along
+// the top, one card per plugin, and a cog that opens the same settings window as the new look.
 //   installed  every plugin here: status, and update / settings / turn off or on / remove / github. A plugin turned
 //              off stays installed but doesn't run, also after a restart. When the registry names a newer plugin
 //              manager (the host and this plugin), a card at the top offers it; the update finishes when the game
@@ -18,6 +20,9 @@
 
 UI::FooterButton@ button;
 
+[Setting name="Theme" choices="Ballest Night|Ballest Light|Lucid Lime|Classic" description="How the plugin manager looks. Classic: the old plugins menu."]
+string Theme = "Ballest Night";
+
 // Colours (red, green, blue). The game's widget colours are linear, so each is the linear value of the colour in
 // the comment (a linear 0.05 shows as about 0.25 on screen).
 const float WINDOW_R = 0.0052f, WINDOW_G = 0.0060f, WINDOW_B = 0.0086f;     // #101217 the menu
@@ -35,6 +40,8 @@ UI::Window@ menu;
 UI::Button@ installedTab;
 UI::Button@ browseTab;
 UI::Button@ consoleTab;
+UI::Button@ cogButton;           // the plugin manager's settings window (its themes): the same as the new look's
+bool managerWasShown = false;
 UI::Button@ folderButton;
 UI::TextInput@ searchInput;
 string shownSearch;             // the search the cards were built for
@@ -121,6 +128,7 @@ void BuildMenu()
     @searchInput = menu.AddTextInput(300, "search plugins", 17);
     searchInput.clearOnSubmit = false;
     menu.AddSpace(0);
+    @cogButton = menu.AddIconButton("cog");
     @folderButton = menu.AddButton("open plugins folder");
     @closeButton = menu.AddButton("close");
     Secondary(folderButton);
@@ -590,7 +598,7 @@ void BuildCards()
     array<uint> available;
     array<string> availableNames;
     for (uint r = 0; r < Registry::Count(); r++)
-        if (InstalledIndex(Registry::Id(r)) < 0)
+        if (InstalledIndex(Registry::Id(r)) < 0 && Registry::Listed(r))     // not plugins only installed as dependencies
         {
             available.insertLast(r);
             availableNames.insertLast(Registry::Name(r));
@@ -865,6 +873,12 @@ void UpdateMenu()
         ShowView(browseView);
     if (consoleTab.Clicked())
         ShowView(consoleView);
+    if (cogButton.Clicked())
+    {
+        CloseMenu();
+        Plugins::ShowManager(true);     // (in Classic, the window opens on its settings)
+        return;
+    }
     if (shownView == consoleView)
         UpdateConsole();
     else if (shownView == settingsView)
@@ -875,10 +889,27 @@ void UpdateMenu()
 
 void Update(float dt)
 {
-    // The footer button opens the menu, and closes it while it's open.
+    // the settings window left while Classic is the theme (or picked in it): the old menu again
+    bool managerShown = Plugins::ManagerShown();
+    if (managerWasShown && !managerShown && Theme == "Classic")
+    {
+        managerWasShown = false;
+        OpenMenu();
+        return;                         // (the Esc that closed the settings window would close this menu too)
+    }
+    managerWasShown = managerShown;
+    // The footer button opens the menu, and closes it while it's open: the new window, or the classic menu.
     if (button.Clicked())
     {
-        if (menu.visible)
+        if (Theme != "Classic")
+        {
+            if (menu.visible)
+                CloseMenu();
+            Plugins::ShowManager(!Plugins::ManagerShown());
+        }
+        else if (Plugins::ManagerShown())
+            Plugins::ShowManager(false);    // (its settings window open: closed, the old menu comes back)
+        else if (menu.visible)
             CloseMenu();
         else
             OpenMenu();

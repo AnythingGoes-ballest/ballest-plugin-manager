@@ -15,7 +15,9 @@
 #include "tracks.hpp"
 #include "workshop.hpp"
 #include "hub.hpp"
+#include "browser.hpp"
 #include "cosmetics.hpp"
+#include "customize.hpp"
 #include "models.hpp"
 #include "editor.hpp"
 #include "engine.hpp"
@@ -25,6 +27,8 @@
 #include "leaderboard.hpp"
 #include "layout.hpp"
 #include "log.hpp"
+#include "manager.hpp"
+#include "packages.hpp"
 #include "plugins.hpp"
 #include "race.hpp"
 #include "runs.hpp"
@@ -116,10 +120,14 @@ void HostFrame(float dt) {
     hub::Frame();
     hud::Frame();
     replay::Frame(dt);
+    packages::Frame();              // Cosmetics 2: the player's own, loadouts
     cosmetics::Frame();
+    customize::Frame();             // the Customize page's strip and slot tabs (with Cosmetic Kit)
+    browser::Frame();
     models::ProbeFrame();
     leaderboard::Frame();
     ui::Frame();
+    manager::Frame();               // the plugin manager window (after ui: it sets the typing widget over windows')
     registry::Frame();              // installs and removals land between frames of plugin code
     plugins::Frame(dt);
     testchannel::Frame();

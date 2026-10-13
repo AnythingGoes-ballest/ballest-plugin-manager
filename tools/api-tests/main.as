@@ -523,16 +523,19 @@ void RegisterCore()
                               "Plugins::HostUpdateState '" + hostUpdate + "'")};
         return All(c);
     });
-    Add("core", "Plugins management is the plugin manager's", "Plugins::Install,Plugins::Remove,Plugins::SetEnabled,Plugins::UpdateHost", function() {
+    Add("core", "Plugins management is the plugin manager's", "Plugins::Install,Plugins::Remove,Plugins::SetEnabled,Plugins::UpdateHost,Plugins::ShowManager,Plugins::ManagerShown", function() {
         Plugins::Install("no-such-plugin");
         Plugins::Remove("no-such-plugin");
         Plugins::SetEnabled("no-such-plugin", false);
         Plugins::UpdateHost();
+        Plugins::ShowManager(true);
         int refusals = 0;
         for (uint i = mark; i < Log::LineCount(); i++)
             if (Log::Line(i).findFirst("[api-tests] only the plugin manager can install or remove plugins") >= 0)
                 refusals++;
-        return Is(refusals == 4, refusals + " of 4 calls refused (only the plugin manager may)");
+        array<string> c = {Is(refusals == 5, refusals + " of 5 calls refused (only the plugin manager may)"),
+                           Is(!Plugins::ManagerShown(), "Plugins::ManagerShown false (not opened)")};
+        return All(c);
     });
     Add("core", "Plugins::OpenFolder", "Plugins::OpenFolder", function() {
         return "SKIP: opens a File Explorer window on the player's screen";
@@ -627,7 +630,7 @@ void RegisterCore()
         return PASS;
     });
 
-    Add("core", "Registry loads", "Registry::Refresh,Registry::State,Registry::Count,Registry::Id,Registry::Name,Registry::Description,Registry::Author,Registry::Version,Registry::Page,Registry::Icon,Registry::HostVersion", function() {
+    Add("core", "Registry loads", "Registry::Refresh,Registry::State,Registry::Count,Registry::Id,Registry::Name,Registry::Description,Registry::Author,Registry::Version,Registry::Page,Registry::Icon,Registry::Listed,Registry::HostVersion", function() {
         if (step == 0)
         {
             Registry::Refresh();
@@ -645,6 +648,7 @@ void RegisterCore()
                            Is(Registry::Page(0).findFirst("https://") == 0, "Registry::Page(0) '" + Registry::Page(0) + "'"),
                            Is(Registry::Icon(0) == "" || Registry::Icon(0).findFirst(".png") > 0, "Registry::Icon(0) '" + Registry::Icon(0) + "'"),
                            Is(Registry::HostVersion().split(".").length() == 3, "Registry::HostVersion '" + Registry::HostVersion() + "'"),
+                           Is(!Registry::Listed(99999), "Registry::Listed past the end is true"),
                            Is(Registry::Id(99999) == "", "Registry::Id past the end is not empty")};
         return All(c);
     }, 30);

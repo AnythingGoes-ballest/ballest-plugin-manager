@@ -346,17 +346,33 @@ std::string LastSoundState() {
     return std::string("custom sound ") + (playing ? "playing" : "not playing") + ", play state " + std::to_string(state);
 }
 
-bool Sound(const std::string& sound, double volume, double pitch) {
+bool Sound(const std::string& sound, double volume, double pitch, double startTime) {
     if (EndsWith(sound, ".wav")) return PlayWav(sound, volume, pitch);
-    Obj asset = sound.empty() ? nullptr : cosmetics::LoadAsset(eng::Widen(sound));
+    // (kept loaded once played: a hover sound loaded again from disk after a garbage collection would hitch)
+    static std::map<std::string, eng::Weak> kept;
+    Obj asset = sound.empty() ? nullptr : eng::Get(kept[sound]);
+    if (!asset && !sound.empty()) {
+        asset = cosmetics::LoadAsset(eng::Widen(sound));
+        if (asset) {
+            cosmetics::KeepAlive(asset);
+            kept[sound] = eng::MakeWeak(asset);
+        }
+    }
     Obj controller = game::PlayerController();
     if (!asset || !controller) return false;
+    // (one sound not played again within 60 ms: a hover flickering on and off every frame (the footer's button under the
+    // plugin manager's click blocker during its intro) queued dozens that all burst out at once: Lvcid)
+    static std::map<std::string, double> lastAt;
+    double& last = lastAt[sound];
+    if (game::Seconds() - last < 0.06 && game::Seconds() >= last) return false;
+    last = game::Seconds();
     Obj statics = eng::FindCdo("GameplayStatics");
     eng::Params p(eng::FunctionOn(statics, "PlaySound2D"));
     p.Set("WorldContextObject", controller);
     p.Set("Sound", asset);
     p.Set("VolumeMultiplier", static_cast<float>(volume));
     p.Set("PitchMultiplier", static_cast<float>(pitch));
+    if (startTime > 0) p.Set("StartTime", static_cast<float>(startTime));
     return eng::Invoke(statics, p);
 }
 

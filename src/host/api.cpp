@@ -31,6 +31,8 @@
 #include "input.hpp"
 #include "leaderboard.hpp"
 #include "log.hpp"
+#include "manager.hpp"
+#include "packages.hpp"
 #include "plugins.hpp"
 #include "editor.hpp"
 #include "engine.hpp"
@@ -118,6 +120,12 @@ void PluginSetEnabled(const std::string& id, bool on) {
 void UpdateHost() {
     if (MayManage()) registry::UpdateHost();
 }
+// The plugin manager window (manager.cpp), opened and closed from the plugin manager's footer button.
+void PluginShowManager(bool on) {
+    if (!MayManage()) return;
+    if (on) manager::Open();
+    else manager::Close();
+}
 
 // --- Settings ------------------------------------------------------------------------------------------------------
 settings::Setting SettingAt(unsigned i) {
@@ -172,6 +180,12 @@ std::string RegistryAuthor(unsigned i) { return EntryAt(i).author; }
 std::string RegistryVersion(unsigned i) { return EntryAt(i).version; }
 std::string RegistryPage(unsigned i) { return i < registry::Entries().size() ? EntryAt(i).Page() : ""; }
 std::string RegistryIcon(unsigned i) { return EntryAt(i).icon; }
+// Offered for installing in a plugin browser: the classic menu has no cosmetics page, so cosmetic plugins count too.
+bool RegistryListed(unsigned i) {
+    if (i >= registry::Entries().size()) return false;
+    const registry::Entry entry = EntryAt(i);
+    return entry.listed || (entry.category == "cosmetics" && !registry::DependencyOnly(entry.id));
+}
 
 // Opens a page in the player's browser through the game (KismetSystemLibrary.LaunchURL). Only GitHub pages.
 void OpenUrl(const std::string& url) {
@@ -557,9 +571,13 @@ void EditorAddHotkey(const std::string& icon, const std::string& label, const st
 // --- Input, Replay -------------------------------------------------------------------------------------------------
 // While a text input has keyboard focus the keys are being typed there, so plugins see none of them, except Escape,
 // which types nothing and is how a player leaves a menu.
+// While the plugin manager's window is open it has the keyboard, the mouse buttons and pads (as it takes them from the
+// game): other plugins see no keys then, so a key pressed in it (typing in its search, Esc stepping back) doesn't also
+// work a plugin's hotkey or close a plugin's window. The plugin manager's own script still sees them.
 constexpr int kEscape = 0x1B;
-bool KeyPressed(int key) { return (!ui::Typing() || key == kEscape) && input::Pressed(key); }
-bool KeyDown(int key) { return (!ui::Typing() || key == kEscape) && input::Down(key); }
+bool InputTaken() { return manager::IsOpen() && !plugins::CurrentIsEssential(); }
+bool KeyPressed(int key) { return !InputTaken() && (!ui::Typing() || key == kEscape) && input::Pressed(key); }
+bool KeyDown(int key) { return !InputTaken() && (!ui::Typing() || key == kEscape) && input::Down(key); }
 
 void RegisterCore() {
     RegisterScriptArray(e, true);
@@ -620,6 +638,8 @@ void RegisterCore() {
     Global("string ReadFile(const string &in file)", asFUNCTION(PluginReadFile));
     Global("array<int>@ Base64Ints(const string &in b64, int bytes)", asFUNCTION(Base64Ints));
     Global("void UpdateHost()", asFUNCTION(UpdateHost));
+    Global("void ShowManager(bool)", asFUNCTION(PluginShowManager));
+    Global("bool ManagerShown()", asFUNCTION(manager::IsOpen));
     Global("string HostUpdateState()", asFUNCTION(registry::HostUpdateState));
 
     e->SetDefaultNamespace("Settings");
@@ -649,6 +669,7 @@ void RegisterCore() {
     Global("string Version(uint)", asFUNCTION(RegistryVersion));
     Global("string Page(uint)", asFUNCTION(RegistryPage));
     Global("string Icon(uint)", asFUNCTION(RegistryIcon));
+    Global("bool Listed(uint)", asFUNCTION(RegistryListed));
     Global("string HostVersion()", asFUNCTION(registry::HostVersion));
 
     e->SetDefaultNamespace("Console");
@@ -819,7 +840,7 @@ std::string KeyName(int key) {
         if (code == key) return name;
     return key ? "Key" + std::to_string(key) : "";
 }
-int AnyKeyPressed() { return ui::Typing() ? 0 : input::AnyPressed(); }
+int AnyKeyPressed() { return ui::Typing() || InputTaken() ? 0 : input::AnyPressed(); }
 
 void RegisterInput() {
     e->SetDefaultNamespace("Input");
@@ -1069,32 +1090,46 @@ bool ModelText(const std::string& path, std::string* text, bool hat = false) {
     }
     return true;
 }
+// Each cosmetic a plugin adds is also noted (packages.cpp), as one of its plugin's pack (the cosmetics page).
+std::wstring ModelFile(const std::string& model) {
+    bool ok = false;
+    const std::wstring file = PluginFile(model, &ok);
+    return ok ? file : L"";
+}
 bool CosmeticsAddBall(const std::string& id, const std::string& name, const std::string& image, const std::string& preview,
                       const std::string& model) {
     bool imageOk = false, previewOk = false;
     std::string text;
     const std::wstring file = PluginFile(image, &imageOk), picture = PluginFile(preview, &previewOk);
-    return imageOk && previewOk && ModelText(model, &text) && cosmetics::AddBall(id, name, file, picture, text);   // image "": clear
+    const bool ok = imageOk && previewOk && ModelText(model, &text) && cosmetics::AddBall(id, name, file, picture, text);   // image "": clear
+    if (ok) packages::NoteBall(id, name, file, picture, ModelFile(model));
+    return ok;
 }
 bool CosmeticsAddHat(const std::string& id, const std::string& name, const std::string& mesh, double scale,
                      const std::string& preview, const std::string& model) {
     bool ok = false;
     std::string text;
     const std::wstring picture = PluginFile(preview, &ok);
-    return ok && scale > 0 && ModelText(model, &text, true) && cosmetics::AddHat(id, name, mesh, scale, picture, text);
+    ok = ok && scale > 0 && ModelText(model, &text, true) && cosmetics::AddHat(id, name, mesh, scale, picture, text);
+    if (ok) packages::NoteHat(id, name, mesh, scale, picture, ModelFile(model));
+    return ok;
 }
 bool CosmeticsAddBfx(const std::string& id, const std::string& name, const std::string& base, double scale,
                      const std::string& preview, const std::string& system, const std::string& sound) {
     bool ok = false;
     const std::wstring picture = PluginFile(preview, &ok);
-    return ok && scale > 0 && cosmetics::AddBfx(id, name, base, scale, picture, system, sound);
+    ok = ok && scale > 0 && cosmetics::AddBfx(id, name, base, scale, picture, system, sound);
+    if (ok) packages::NoteBfx(id, name, base, scale, picture, system, sound);
+    return ok;
 }
 bool CosmeticsAddExtra(const std::string& slot, const std::string& id, const std::string& name, const std::string& preview,
                        const std::string& model) {
     bool ok = false;
     std::string text;
     const std::wstring picture = PluginFile(preview, &ok);
-    return ok && ModelText(model, &text) && cosmetics::AddExtra(slot, id, name, picture, text);
+    ok = ok && ModelText(model, &text) && cosmetics::AddExtra(slot, id, name, picture, text);
+    if (ok) packages::NoteExtra(slot, id, name, picture, ModelFile(model));
+    return ok;
 }
 bool CosmeticsEquipExtra(const std::string& slot, const std::string& id) { return cosmetics::EquipExtra(slot, id); }
 std::string CosmeticsEquippedExtra(const std::string& slot) { return cosmetics::EquippedExtra(slot); }

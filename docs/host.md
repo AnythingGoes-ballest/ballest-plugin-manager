@@ -38,6 +38,19 @@ plugin's GitHub repo and lists the SHA-256 of every file the game downloads:
   `raw.githubusercontent.com/<repo>/<commit>/<file>`, with WinHTTP on a worker thread. An entry with a `path`
   (`"path": "plugins/grind-stats"`, for a repo that holds several plugins) downloads from
   `<repo>/<commit>/<path>/<file>` instead; `files` stays relative to the plugin's folder either way.
+- `"category"` and `"priority"` place a plugin in the plugin manager's lists: `enhancements`, `utilities`, `fun`
+  (in that order, after the plugin manager itself), higher priority first within each; `cosmetics` keeps it out of the
+  plugin browser (the plugin manager's cosmetics page lists those; a plugin with no category that needs Cosmetic Kit
+  counts as one too). The host has its own table for plugins without them
+  (`kPlaces` in `src/host/registry.cpp`). A fresh install (no plugins but the bundled ones) gets the enhancements once,
+  the first time the registry loads (`defaults.txt` next to host.log marks it done).
+- `"added": "YYYY-MM-DD"` (optional) gives a plugin a pink NEW tag in browse (or explore, for cosmetics) for 7 days, until
+  its card is opened; without it, a plugin is NEW for 7 days after the game first sees it in the registry (nothing is
+  NEW on a first run).
+- **Cosmetic plugins** are installed into `plugins\cosmetics\<id>` instead of `plugins\<id>`, so they don't crowd the
+  plugins folder; the host loads plugins from both, and moves a cosmetic plugin it finds in `plugins\<id>` (installed
+  by an older host) into `plugins\cosmetics` at start. Each is a pack on the cosmetics page: getting or removing it is
+  the whole plugin.
 - Every file is checked against its SHA-256 before anything is written; a mismatch fails the install and leaves the
   plugins folder untouched. Files go to a hidden `plugins\.<id>.download` folder first and are moved into place
   only once all of them are verified.
@@ -90,6 +103,16 @@ plugin's GitHub repo and lists the SHA-256 of every file the game downloads:
 | `src/host/storage.*` | Per-plugin saved values |
 | `src/host/api.*` | The script API (all bindings in one file) |
 | `src/host/cosmetics.*` | Custom balls, hats and goal explosions: the Customize page's custom sections, what the player picks (the page's handler, wrapped), and wearing them on the player's own balls |
+| `src/host/packages.*` | Cosmetics 2: the slot table, Cosmetic Kit's settings, loadouts, and every cosmetic known (plugins' noted as their plugin's pack) |
+| `src/host/customize.*` | Cosmetics 2's Customize page (with Cosmetic Kit): the local/public strip, the browser button, loadout tabs, the dock-style slot tabs, the back button moved under them |
+| `src/host/browser.*` | The Classic theme's cosmetic browser window (installed cosmetics; the other themes have the window's cosmetics page) and, for now, Cosmetic Kit's settings |
+| `src/host/ux.*` | Building blocks for those screens: host widgets placed by position, rounded boxes per corner, the game's font and bubble hover |
+| `src/host/manager.*` | The plugin manager window (the redesigned menu: plugins installed / browse, settings and console overlays, search, popups, the update banner), opened by the Plugin Manager plugin's footer button while its Theme setting is any theme but Classic (Ballest Night, the default; Ballest Light; Lucid Lime). With "Classic", only its settings, from the classic menu's cog |
+| `src/host/manager_logo.inc` | The window's logo, animated (its layers `pm-logo-*`, `pm-glint`, `pm-twinkle` moved with the curves in the generated `logo_curves.inc`, both from `Handoff/sources/pm/logo/logo_layers.py`), and the welcome: on the first open since an install or update the logo plays big in the screen's middle and flies to its corner, then the what's new splash (`whats_new.inc`); the intro plays through, the splash closes with continue / Esc / a pad's B. The corner logo replays every 10 s while the update banner offers an update. Advanced settings' DEBUG: test the first open after an update |
+| `src/host/whats_new.inc` | The splash's highlights: a line each under `[version]`, written with the release notes; only the running version's are shown |
+| `src/host/manager_cosmetics.inc` | The window's cosmetics page, included into `manager.cpp`: the plugins page's twin for cosmetic packs (the registry's cosmetic plugins): owned / explore, pack rows that open in place, folding sections, get / remove (a whole pack: its plugin). The earlier grid page with its details drawer only behind an advanced settings DEBUG test row |
+| `src/host/pmui.*` | Immediate-mode drawing for that window on ux's widgets: boxes, pictures, texts and text boxes asked for by key every frame, groups that clip, hover and clicks from the pointer |
+| `src/host/hoverfx.*` | The Customize page's slot hover effect (glow, smoke, thread, sparks) for other screens' side buttons, either direction |
 | `src/host/leaderboard.*` | The leaderboard inside a map: its player count (Steam's entry count) and a note after its title |
 | `src/host/draw.*` | Shapes plugins draw in the world (tubes, balls, glow and glass) and the camera a plugin takes |
 | `src/host/steam.*` | Steam's flat API: leaderboards, their entries and attached files (UGC), workshop search |
@@ -100,7 +123,7 @@ plugin's GitHub repo and lists the SHA-256 of every file the game downloads:
 | `src/host/meshfile.*` | 3D model files (glTF 2.0 and OBJ): read into triangles per material and posed, skinned meshes included. No engine code: `tools/tests/meshfile_test.cpp` checks it offline |
 | `src/host/testchannel.*` | Test and measurement commands, from the console and from the tools below |
 | `src/proxy/` | The `version.dll` export stubs (generated from the system DLL's export table) |
-| `plugins/` | The bundled plugins: Plugin Manager (footer, console, plugin browser) and Hello World (an example) |
+| `plugins/` | The bundled plugins: Plugin Manager (the footer entry; with the Classic theme, its classic menu: console, plugin browser) and Hello World (an example) |
 | `third_party/angelscript/` | AngelScript 2.38.0 (zlib license): the engine and the string, array and script builder add-ons |
 
 ## Build
@@ -173,7 +196,7 @@ the saved map, `--keep` leaves the game open.
 - `python tools/measure_follow.py` samples the replay camera in default and follow 3D modes during a real replay
 
 Test channel commands (one line written to `test_command.txt` next to the log) are listed in
-`src/host/testchannel.hpp`. The same commands can be typed in game: footer **plugins** > **console**.
+`src/host/testchannel.hpp`. The same commands can be typed in game: footer **plugins**, then the **>_** button (the console).
 
 ### Reading the game's own types and blueprints
 

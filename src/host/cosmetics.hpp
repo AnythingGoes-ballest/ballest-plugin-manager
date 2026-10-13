@@ -60,6 +60,31 @@ int Count(Kind kind);
 // (a plugin restoring the player's choice); false if there is no such custom cosmetic.
 bool Equip(Kind kind, const std::string& id);
 std::string Equipped(Kind kind);
+// --- for Cosmetics 2 (packages.cpp, customize.cpp, browser.cpp) -----------------------------------------------------
+bool Has(Kind kind, const std::string& id);                 // a custom cosmetic of that id, made or waiting to be made
+// The game cosmetic worn locally (its asset path), "" for none; false if the path is not a cosmetic of that kind.
+bool SetLocalGamePath(Kind kind, const std::string& path);
+std::string LocalGamePath(Kind kind);
+std::vector<std::string> ExtraSlotNames();                  // extra slots with cosmetics ("arms", ...)
+eng::Obj Page();                // the Customize page (WBP_1_CustomizeColor_C), or null
+bool PageOnScreen();
+bool LocalMode();               // the page's mode: local (true) or public
+std::string ShownSlot();        // the slot the page shows: "ball", "hat", "bfx" or an extra slot
+void ShowSlot(const std::string& slot);
+eng::Obj WornPicture(const std::string& slot);              // the picture of what the slot shows now (by the page's mode)
+eng::Obj PreviewOf(const std::string& category, const std::string& id);    // a custom cosmetic's picture, or null
+bool WearItem(const std::string& category, const std::string& id);         // a custom cosmetic worn locally ("" off)
+std::string WornItem(const std::string& category);          // the custom cosmetic worn in a slot, or ""
+// Gloss and texture of the game's basic (colour) balls: the public ones are the profile's (the page saves them); the
+// local ones are the active loadout's, shown and edited on the page in local mode and worn on the player's own balls.
+struct SkinPrefs {
+    double texture = 0;                 // the texture row's slider
+    bool gloss = true, textureOn = false;
+};
+void SetLocalSkinPrefs(const SkinPrefs& prefs, bool set);   // the loadout's (set false: it has none yet)
+bool TakeLocalSkinPrefs(SkinPrefs* out);                     // true once after the local ones changed on the page
+// "browser" when that button of the custom section was clicked since last asked, else "".
+std::string TakeSectionClick();
 
 void Frame();                   // the custom section on the Customize page, and the plain sphere for image balls
 std::string Status();           // for the test channel

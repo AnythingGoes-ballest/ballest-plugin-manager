@@ -23,7 +23,7 @@ eng::Weak gViewport, gController;
 int gGeneration = 0;
 std::set<int> gCursorOwners;                // plugins currently asking for the cursor
 bool gCursorTaken = false, gCursorWasShown = false, gInputModeChanged = false;
-eng::Weak gTypingWidget;
+eng::Weak gTypingWidget, gModalWidget, gFocused;
 bool gTypingMode = false;
 
 void UpdateCursor(Obj controller) {
@@ -57,17 +57,22 @@ void UpdateTyping(Obj controller) {
     // Only on a track, where the game's keys (R, Backspace...) would act on what's typed. The menus route keys to
     // the focused box themselves, and switching their input mode there made the first click after typing go
     // nowhere (the user's report: leaving the hub's search took two clicks).
-    Obj typing = race::OnTrack() ? eng::Get(gTypingWidget) : nullptr;
-    if (!widgets || (typing != nullptr) == gTypingMode) return;
-    if (typing) {
+    // A modal host window (the plugin manager's) takes all input everywhere, menus too: keys and pads go to it (or the
+    // text box typed in), never to the game, until it lets go.
+    Obj modal = eng::Get(gModalWidget);
+    Obj typing = race::OnTrack() || modal ? eng::Get(gTypingWidget) : nullptr;
+    Obj focus = typing ? typing : modal;
+    if (!widgets || (focus == eng::Get(gFocused) && (focus != nullptr) == gTypingMode)) return;
+    if (focus) {
         // No mouse lock, input not flushed.
-        eng::Call(widgets, "SetInputMode_UIOnlyEx", controller, typing, uint8_t{0}, uint8_t{0});
-        hostlog::Info("typing: input is UI-only");
+        eng::Call(widgets, "SetInputMode_UIOnlyEx", controller, focus, uint8_t{0}, uint8_t{0});
+        if (!gTypingMode) hostlog::Info(modal ? "input: UI-only for the plugin manager" : "typing: input is UI-only");
     } else {
         eng::Call(widgets, "SetInputMode_GameAndUIEx", controller);
-        hostlog::Info("typing ended: input is game and UI");
+        hostlog::Info("input: game and UI again");
     }
-    gTypingMode = typing != nullptr;
+    gFocused = eng::MakeWeak(focus);
+    gTypingMode = focus != nullptr;
 }
 
 }  // namespace
@@ -96,6 +101,7 @@ void Frame() {
     if (controller != gController.o) {
         ++gGeneration;
         gCursorTaken = gInputModeChanged = gTypingMode = false;     // the new controller starts with the game's own state
+        gFocused = {};
     }
     gController = eng::MakeWeak(controller);
     if (controller) {
@@ -111,6 +117,7 @@ bool CursorShown() {
 }
 
 void SetTypingWidget(Obj textInput) { gTypingWidget = eng::MakeWeak(textInput); }
+void SetModalWidget(Obj widget) { gModalWidget = eng::MakeWeak(widget); }
 
 void RequestCursor(int owner, bool visible) {
     if (visible) gCursorOwners.insert(owner);
