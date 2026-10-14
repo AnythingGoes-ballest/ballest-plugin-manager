@@ -1,6 +1,6 @@
 // The Customize page's slot hover effect (customize.cpp: a lime glow, smoke, a quick white thread with a wash along it,
-// sparks white turning lime ending in puffs), for other screens' side buttons: the plugin manager's settings nav and the
-// cosmetic browser's nav. It comes out of an item's `anchor` edge and runs past its far `end`; either way round (the
+// sparks white turning lime ending in puffs), for another screen's side buttons: the Classic theme's cosmetic browser's
+// nav. It comes out of an item's `anchor` edge and runs past its far `end`; either way round (the
 // Customize page's goes left from its slots, these go right). The same pictures (fx-*.png) and timings; the Customize
 // page keeps its own copy (its look is locked). Game thread only.
 #pragma once

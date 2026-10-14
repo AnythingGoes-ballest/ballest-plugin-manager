@@ -8,6 +8,7 @@
 #include "draw.hpp"
 #include "game.hpp"
 #include "log.hpp"
+#include "manager.hpp"
 #include "ui.hpp"
 #include "widgets.hpp"
 
@@ -146,7 +147,9 @@ void SyncButton(FooterButton& b) {
     // discord button sounds on its hover (Lvcid)
     // (only a real new hover: one flickering frame to frame (a widget over it taking and giving back the pointer, as the
     // plugin manager's click blocker during its intro) sounded every frame, a burst: Lvcid)
-    if (b.hovered && !b.shownHover && game::Seconds() - b.unhoveredAt > 0.2) draw::Sound(kHoverSound, kHoverVolume, kHoverPitch, kHoverStart);
+    // (at the level set in the plugin manager's general settings, off with its hover sounds: AnythingGoes' review)
+    if (b.hovered && !b.shownHover && game::Seconds() - b.unhoveredAt > 0.2)
+        if (const double level = manager::HoverSoundLevel(); level > 0.001) draw::UiSound(kHoverSound, kHoverVolume * level, kHoverPitch, kHoverStart);
     if (!b.hovered && b.shownHover) b.unhoveredAt = game::Seconds();
     if (b.hovered != b.shownHover || b.active != b.shownActive) {
         w::SetTextColor(text, b.hovered ? Color{1, 1, 1, 1} : b.active ? Color{0.55f, 0.55f, 0.55f, 1} : b.normalColor);

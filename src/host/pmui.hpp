@@ -65,7 +65,6 @@ void End();
 void Reset();                               // a new screen: every widget is gone
 double Now();
 double Dt();
-Obj TreeOf();                               // the screen's widget tree (for widgets made outside pmui on its canvases)
 
 // --- drawing ----------------------------------------------------------------------------------------------------------
 // Rounded boxes (radius, or each corner): the shape is fixed when the key is first drawn.

@@ -41,9 +41,8 @@ plugin's GitHub repo and lists the SHA-256 of every file the game downloads:
 - `"category"` and `"priority"` place a plugin in the plugin manager's lists: `enhancements`, `utilities`, `fun`
   (in that order, after the plugin manager itself), higher priority first within each; `cosmetics` keeps it out of the
   plugin browser (the plugin manager's cosmetics page lists those; a plugin with no category that needs Cosmetic Kit
-  counts as one too). The host has its own table for plugins without them
-  (`kPlaces` in `src/host/registry.cpp`). A fresh install (no plugins but the bundled ones) gets the enhancements once,
-  the first time the registry loads (`defaults.txt` next to host.log marks it done).
+  counts as one too). A plugin without them is listed after the others; only the plugin manager itself is placed by
+  the host (first).
 - `"added": "YYYY-MM-DD"` (optional) gives a plugin a pink NEW tag in browse (or explore, for cosmetics) for 7 days, until
   its card is opened; without it, a plugin is NEW for 7 days after the game first sees it in the registry (nothing is
   NEW on a first run).
@@ -54,6 +53,7 @@ plugin's GitHub repo and lists the SHA-256 of every file the game downloads:
 - Every file is checked against its SHA-256 before anything is written; a mismatch fails the install and leaves the
   plugins folder untouched. Files go to a hidden `plugins\.<id>.download` folder first and are moved into place
   only once all of them are verified.
+- The id `cosmetics` is refused (it is the cosmetic plugins' folder).
 - Only plain names are accepted (ids, file names, `owner/repo`, `path`), so a registry entry cannot point outside the
   plugins folder. Only the plugin manager (an `essential` plugin) can install or remove, and essential plugins cannot
   be removed.
@@ -103,14 +103,13 @@ plugin's GitHub repo and lists the SHA-256 of every file the game downloads:
 | `src/host/storage.*` | Per-plugin saved values |
 | `src/host/api.*` | The script API (all bindings in one file) |
 | `src/host/cosmetics.*` | Custom balls, hats and goal explosions: the Customize page's custom sections, what the player picks (the page's handler, wrapped), and wearing them on the player's own balls |
-| `src/host/packages.*` | Cosmetics 2: the slot table, Cosmetic Kit's settings, loadouts, and every cosmetic known (plugins' noted as their plugin's pack) |
-| `src/host/customize.*` | Cosmetics 2's Customize page (with Cosmetic Kit): the local/public strip, the browser button, loadout tabs, the dock-style slot tabs, the back button moved under them |
+| `src/host/packages.*` | The slot table, Cosmetic Kit's settings, loadouts, and every cosmetic known (plugins' noted as their plugin's pack) |
+| `src/host/customize.*` | The Customize page's additions (with Cosmetic Kit): the local/public strip, the browser button, loadout tabs, the dock-style slot tabs, the back button moved under them |
 | `src/host/browser.*` | The Classic theme's cosmetic browser window (installed cosmetics; the other themes have the window's cosmetics page) and, for now, Cosmetic Kit's settings |
 | `src/host/ux.*` | Building blocks for those screens: host widgets placed by position, rounded boxes per corner, the game's font and bubble hover |
-| `src/host/manager.*` | The plugin manager window (the redesigned menu: plugins installed / browse, settings and console overlays, search, popups, the update banner), opened by the Plugin Manager plugin's footer button while its Theme setting is any theme but Classic (Ballest Night, the default; Ballest Light; Lucid Lime). With "Classic", only its settings, from the classic menu's cog |
-| `src/host/manager_logo.inc` | The window's logo, animated (its layers `pm-logo-*`, `pm-glint`, `pm-twinkle` moved with the curves in the generated `logo_curves.inc`, both from `Handoff/sources/pm/logo/logo_layers.py`), and the welcome: on the first open since an install or update the logo plays big in the screen's middle and flies to its corner, then the what's new splash (`whats_new.inc`); the intro plays through, the splash closes with continue / Esc / a pad's B. The corner logo replays every 10 s while the update banner offers an update. Advanced settings' DEBUG: test the first open after an update |
-| `src/host/whats_new.inc` | The splash's highlights: a line each under `[version]`, written with the release notes; only the running version's are shown |
-| `src/host/manager_cosmetics.inc` | The window's cosmetics page, included into `manager.cpp`: the plugins page's twin for cosmetic packs (the registry's cosmetic plugins): owned / explore, pack rows that open in place, folding sections, get / remove (a whole pack: its plugin). The earlier grid page with its details drawer only behind an advanced settings DEBUG test row |
+| `src/host/manager.*` | The plugin manager window (the redesigned menu: plugins installed / browse, settings and console overlays, a search per page, popups, the update banner), opened by the Plugin Manager plugin's footer button while its Theme setting is any theme but Classic (Ballest Night, the default; Ballest Light; Lucid Lime). With "Classic", only its settings, from the classic menu's cog |
+| `src/host/manager_logo.inc` | The window's logo, animated (its layers `pm-logo-*`, `pm-glint`, `pm-twinkle` moved with the curves in `logo_curves.inc`, both generated by a script kept outside this repo), and the welcome: on the first open since an install or update the logo plays big in the screen's middle and flies to its corner, then the window comes in on plugins / installed; the intro plays through. The corner logo replays every 10 s while the update banner offers an update. Advanced settings' DEBUG: test the first open after an update |
+| `src/host/manager_cosmetics.inc` | The window's cosmetics page, included into `manager.cpp`: the plugins page's twin for cosmetic packs (the registry's cosmetic plugins): owned / explore, pack rows that open in place, folding sections, get / remove (a whole pack: its plugin) |
 | `src/host/pmui.*` | Immediate-mode drawing for that window on ux's widgets: boxes, pictures, texts and text boxes asked for by key every frame, groups that clip, hover and clicks from the pointer |
 | `src/host/hoverfx.*` | The Customize page's slot hover effect (glow, smoke, thread, sparks) for other screens' side buttons, either direction |
 | `src/host/leaderboard.*` | The leaderboard inside a map: its player count (Steam's entry count), a note after its title, plugin rows, and a plugin's own source shown in place of the game's list for one track (rows, ghost toggles, replay mode) |

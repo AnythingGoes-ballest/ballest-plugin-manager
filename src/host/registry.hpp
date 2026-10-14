@@ -52,21 +52,15 @@ std::string DefaultIcon();          // the plugin manager's default-icon.png, or
 // Where a plugin is listed in the plugin manager, in this order: "core" (the plugin manager), "enhancements",
 // "utilities", "fun", "cosmetics", then everything without one. "cosmetics": not in the plugin browser (the plugin
 // manager's cosmetics page lists them). registry.json's "category" and "priority" (higher first) say so for each
-// plugin; the host's own table fills in for plugins without them (and for installed ones the registry doesn't list).
+// plugin (one the registry doesn't list, or without them: none); only the plugin manager itself is placed by the host
+// (core, first).
 void Placing(const std::string& id, std::string* category, int* priority);
 int CategoryRank(const std::string& category);         // 0 core .. 3 fun, 4 cosmetics, 5 anything else
-std::string CategoryTitle(const std::string& category); // "ENHANCEMENTS", ... ("" for none)
 
-// A fresh install of the plugin manager (no plugins but the bundled ones) gets the enhancements, once: the first time
-// the registry is ready (marker: defaults.txt next to host.log).
-void InstallDefaults();
 
 // A cosmetic plugin: placed in "cosmetics", or placed nowhere and needing Cosmetic Kit (or Plus). Listed on the cosmetics
 // page instead of the plugin browser, and kept in plugins\cosmetics\<id> (plugins::CosmeticsDir).
 bool IsCosmetic(const std::string& id, const std::vector<std::string>& dependencies);
-// Plugins installed only as another's dependency, not offered in the plugin browser: the host's own list (none now;
-// it held Cosmetic Kit Plus while that was Cosmetic Kit's "more slots" setting), or "listed": false.
-bool DependencyOnly(const std::string& id);
 
 // The host itself. registry.json's "host" entry names the newest release:
 //   "host": { "version": "0.4.2", "repo": "owner/name", "commit": "<the tag's full SHA>",

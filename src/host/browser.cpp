@@ -26,7 +26,7 @@ namespace w = ui::widgets;
 namespace browser {
 namespace {
 
-// --- the look (the placeholder from the handoff, in the Customize page's colours) -------------------------------------
+// --- the look (a placeholder, in the Customize page's colours) ---------------------------------------------------------
 const Color kLime = ux::Hex("#BEFF00"), kBlack = ux::Hex("#000000"), kWhite = ux::Hex("#FFFFFF");
 const Color kWindow = ux::Hex("#141518"), kNav = ux::Hex("#0D0E10"), kCard = ux::Hex("#1D1F23"), kCardHover = ux::Hex("#2A2D33");
 const Color kPictureBack = ux::Hex("#26282D"), kMuted = ux::Hex("#8B8E93"), kLine = ux::Hex("#26282D"), kField = ux::Hex("#202227");
@@ -311,7 +311,6 @@ void FillSettings(Obj tree, Obj content) {
         ux::InRow(row, MakePill(tree, "horizontal", "style 2", s.labelStyle == 2), 8);
         ux::InBox(content, row, {4, 0, 0, 18});
     }
-    // (no "more slots" choice: the extra slots come with Cosmetic Kit Plus, a plugin of its own again)
     ux::InBox(content, ux::TextBlock(tree, "Customize panel theme", 17, kWhite), {4, 0, 0, 6});
     if (Obj row = w::Spawn("HorizontalBox", tree)) {
         ux::InRow(row, MakePill(tree, "default", "theme 0", s.theme == 0), 0);

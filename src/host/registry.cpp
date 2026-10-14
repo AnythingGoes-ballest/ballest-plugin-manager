@@ -11,7 +11,6 @@
 #include <functional>
 #include <map>
 #include <mutex>
-#include <set>
 #include <thread>
 
 #include "engine.hpp"
@@ -72,32 +71,12 @@ struct HostRelease {
 };
 HostRelease gHost;
 std::string gHostState;
-const std::set<std::string> kDependencyOnly = {};     // (Cosmetic Kit Plus is a plugin of its own again: offered as one)
 
-// The host's own placing (Lvcid, 2026-10-07): registry.json's "category" and "priority" override it.
-struct Place {
-    const char *id, *category;
-    int priority;
-};
-const Place kPlaces[] = {
-    {"plugin-manager", "core", 100},
-    {"hub-plus", "enhancements", 50},       {"create-extensions", "enhancements", 40}, {"cosmetic-kit", "enhancements", 30}, {"cosmetic-kit-plus", "enhancements", 25},
-    {"player-count", "enhancements", 10},
-    {"replay-manager", "utilities", 50},    {"practice-checkpoints", "utilities", 40}, {"grind-stats", "utilities", 30},
-    {"grind-timer", "utilities", 20},       {"fit-window", "utilities", 10},
-    {"screen-filters", "fun", 10},
-    // the cosmetic plugins (the cosmetics page lists them; they're kept in plugins\cosmetics)
-    {"fun-balls", "cosmetics", 0},          {"example-bounce", "cosmetics", 0},        {"example-arms", "cosmetics", 0},
-    {"chicken-cosmetic", "cosmetics", 0},   {"clear-tec-balls", "cosmetics", 0},       {"dominus-ball", "cosmetics", 0},
-    {"example-cosmetics", "cosmetics", 0},  {"fish-bowl", "cosmetics", 0},             {"glass-balls", "cosmetics", 0},
-    {"halloween-pack", "cosmetics", 0},     {"monkey-balls", "cosmetics", 0},          {"pac-man", "cosmetics", 0},
-    {"rainbow-ball", "cosmetics", 0},       {"two-tone-balls", "cosmetics", 0},
-};
+// Where a plugin goes in the plugin manager's lists is registry.json's "category" and "priority"; the plugin manager
+// itself is always first.
 bool NeedsKit(const std::vector<std::string>& dependencies) {
     return std::any_of(dependencies.begin(), dependencies.end(), [](const std::string& d) { return d == "cosmetic-kit" || d == "cosmetic-kit-plus"; });
 }
-// Installed for a fresh install, on (the enhancements).
-const char* const kDefaults[] = {"hub-plus", "create-extensions", "cosmetic-kit", "player-count"};
 std::vector<std::string> gRemovals;                  // applied at the start of the next Frame
 
 // --- validation: registry values end up in paths and URLs, so only plain names are accepted -------------------------
@@ -223,6 +202,9 @@ bool ReadEntry(const json::Value& v, Entry& e, std::string& why) {
         for (const auto& d : deps->items)
             if (d.type == json::Value::String && ValidId(d.string)) e.dependencies.push_back(d.string);
     if (!ValidId(e.id)) return why = "bad id '" + e.id + "'", false;
+    // ("cosmetics" is the folder cosmetic plugins are installed into: a plugin by that id would replace it, every
+    // cosmetic plugin with it)
+    if (e.id == "cosmetics") return why = "the id 'cosmetics' is reserved (the cosmetic plugins' folder)", false;
     if (!ValidRepo(e.repo)) return why = e.id + ": bad repo", false;
     if (!e.path.empty() && !ValidPluginFile(e.path)) return why = e.id + ": bad path", false;
     if (!Hex(e.commit, 40, 40)) return why = e.id + ": commit must be a full SHA", false;
@@ -323,7 +305,7 @@ void Loaded(const std::string& body, const std::string& fetchError, const std::s
         std::string why;
         if (item.type == json::Value::Object && ReadEntry(item, e, why)) {
             const json::Value* listed = item.Get("listed");
-            e.listed = !DependencyOnly(e.id) && !(listed && listed->type == json::Value::Bool && !listed->boolean);
+            e.listed = !(listed && listed->type == json::Value::Bool && !listed->boolean);
             Placing(e.id, &e.category, &e.priority);
             e.category = item.Str("category", e.category);
             e.added = item.Str("added");
@@ -377,8 +359,6 @@ void Apply(const Entry& e) {
 
 std::string Pending(const std::string& id);
 
-bool DependencyOnly(const std::string& id) { return kDependencyOnly.count(id) > 0; }
-
 bool IsCosmetic(const std::string& id, const std::vector<std::string>& dependencies) {
     std::string category;
     int priority = 0;
@@ -401,7 +381,6 @@ void Frame() {
         results.swap(gResults);
     }
     for (auto& result : results) result();
-    InstallDefaults();
 }
 
 void Refresh() {
@@ -418,11 +397,11 @@ void Refresh() {
 void Placing(const std::string& id, std::string* category, int* priority) {
     *category = "";
     *priority = 0;
-    for (const Place& p : kPlaces)
-        if (id == p.id) {
-            *category = p.category;
-            *priority = p.priority;
-        }
+    if (id == "plugin-manager") {
+        *category = "core";
+        *priority = 100;
+        return;
+    }
     for (const Entry& e : gEntries)                 // the registry's own, when it has them
         if (e.id == id && !e.category.empty()) {
             *category = e.category;
@@ -439,48 +418,11 @@ int CategoryRank(const std::string& category) {
     return 5;
 }
 
-std::string CategoryTitle(const std::string& category) {
-    if (category == "core") return "PLUGIN MANAGER";
-    if (category == "enhancements") return "ENHANCEMENTS";
-    if (category == "utilities") return "UTILITIES";
-    if (category == "fun") return "FUN";
-    if (category == "cosmetics") return "COSMETICS";
-    return category.empty() ? "" : "OTHER";
-}
-
-void InstallDefaults() {
-    static bool done = false;
-    if (done || gState != "ready") return;
-    done = true;
-    const std::wstring marker = hostlog::DataDir() + L"\\defaults.txt";
-    if (GetFileAttributesW(marker.c_str()) != INVALID_FILE_ATTRIBUTES) return;
-    // fresh: nothing installed but what ships with the host
-    bool fresh = true;
-    for (const plugins::Info& info : plugins::List())
-        if (info.id != "plugin-manager" && info.id != "hello-world") fresh = false;
-    std::string installed;
-    if (fresh)
-        for (const char* id : kDefaults)
-            for (const Entry& e : gEntries)
-                if (e.id == id) {
-                    Install(id);
-                    installed += std::string(installed.empty() ? "" : ", ") + id;
-                }
-    HANDLE h = CreateFileW(marker.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h != INVALID_HANDLE_VALUE) {
-        const std::string text = fresh ? "fresh install: " + installed + "\n" : "not a fresh install: nothing added\n";
-        DWORD written = 0;
-        WriteFile(h, text.data(), static_cast<DWORD>(text.size()), &written, nullptr);
-        CloseHandle(h);
-    }
-    hostlog::Info(fresh ? "registry: a fresh install: getting " + (installed.empty() ? std::string("nothing (none listed)") : installed)
-                        : "registry: not a fresh install, no default plugins added");
-}
-
 std::string State() { return gState; }
 const std::vector<Entry>& Entries() { return gEntries; }
 
 void Install(const std::string& id) {
+    if (id == "cosmetics") return hostlog::Error("registry: the id 'cosmetics' is reserved (the cosmetic plugins' folder): not installed");
     const Entry* found = nullptr;
     for (const auto& e : gEntries)
         if (e.id == id) found = &e;

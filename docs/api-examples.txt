@@ -454,7 +454,8 @@ window.AddImage(Registry::Icon(i) != "" ? Registry::Icon(i) : Plugins::DefaultIc
 
 == Registry::Listed
 Whether the plugin is offered in the plugin browser: false for one that is only installed as another plugin's
-dependency (one the registry marks as dependency-only).
+dependency (registry.json's `"listed": false`). Cosmetic plugins count as listed (the classic menu has no cosmetics
+page of its own).
 --
 for (uint i = 0; i < Registry::Count(); i++)
     if (Registry::Listed(i)) AddCard(i);

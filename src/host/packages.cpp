@@ -21,7 +21,7 @@ namespace {
 
 constexpr double kRestoreSeconds = 30;      // a loadout's choice of a cosmetic not added yet is tried this long
 constexpr double kSaveDelay = 0.5;
-constexpr int kTestLoadouts = 3;            // loadouts made the first time (a temporary test count)
+constexpr int kMaxLoadouts = 5;             // loadouts at most (one made the first time; "+" adds one, up to these)
 
 // --- files ----------------------------------------------------------------------------------------------------------
 void MakeFolders(const std::wstring& dir) {
@@ -135,7 +135,6 @@ void LoadSettings() {
     std::string text;
     if (!ReadAll(SettingsFile(), &text)) return;
     const Toml t = ParseToml(text);
-    gSettings.moreSlots = Str(t, ".more_slots", "true") != "false";
     const int style = static_cast<int>(Num(t, ".label_style", 2));
     gSettings.labelStyle = style == 1 ? 1 : 2;
     const std::string theme = Str(t, ".panel_theme", "default");
@@ -145,7 +144,6 @@ void LoadSettings() {
 void SaveSettings() {
     MakeFolders(Root());
     std::string text = "# Cosmetic Kit settings (the host writes this file; unknown lines are not kept)\n";
-    text += std::string("more_slots = ") + (gSettings.moreSlots ? "true" : "false") + "\n";
     text += "label_style = " + std::to_string(gSettings.labelStyle) + "        # slot tab names: 1 sideways, 2 horizontal\n";
     static const char* const kThemes[3] = {"default", "charcoal", "night"};
     text += std::string("panel_theme = \"") + kThemes[std::clamp(gSettings.theme, 0, 2)] + "\"   # the Customize panel: default, charcoal, night\n";
@@ -251,14 +249,16 @@ void LoadLoadouts() {
             Loadout& l = gLoadouts.back();
             // Every other key is a slot (one this host doesn't know, a newer host's, is kept and written back as it is).
             if (key == "name") l.name = value;
-            else if (key == "gloss" || key == "texture") l.other.emplace_back(key, value);
+            // (gloss, texture and texture_on are the loadout's look, not slots: texture_on read as a slot was lost on reload)
+            else if (key == "gloss" || key == "texture" || key == "texture_on") l.other.emplace_back(key, value);
             else l.values[key] = value;
         }
+        if (gLoadouts.size() > static_cast<size_t>(kMaxLoadouts)) gLoadouts.resize(kMaxLoadouts);     // (an older test's extras)
         gActive = std::clamp(active - 1, 0, std::max(0, static_cast<int>(gLoadouts.size()) - 1));
     }
     if (!gLoadouts.empty()) return;
     // The first time: loadout 1 is what was worn (the local game cosmetics of cosmetics_local.txt, and Cosmetic Kit's
-    // saved custom ones, which win as they did), the others empty.
+    // saved custom ones, which win as they did); more are added with "+".
     Loadout first;
     first.name = "Loadout 1";
     const char* const kinds[3] = {"ball", "hat", "bfx"};
@@ -270,11 +270,6 @@ void LoadLoadouts() {
     }
     for (const std::string& slot : cosmetics::ExtraSlotNames()) first.values[slot] = cosmetics::EquippedExtra(slot);
     gLoadouts.push_back(first);
-    for (int i = 2; i <= kTestLoadouts; ++i) {
-        Loadout l;
-        l.name = "Loadout " + std::to_string(i);
-        gLoadouts.push_back(l);
-    }
     gActive = 0;
     SaveLoadouts();
     hostlog::Info("cosmetics: loadouts made (loadout 1 from what was worn)");
@@ -476,8 +471,10 @@ void UseLoadout(int index) {
     hostlog::Info("cosmetics: loadout " + std::to_string(gActive + 1));
 }
 
+int MaxLoadouts() { return kMaxLoadouts; }
+
 int AddLoadout() {
-    if (gLoadouts.empty()) return -1;
+    if (gLoadouts.empty() || gLoadouts.size() >= static_cast<size_t>(kMaxLoadouts)) return -1;
     Loadout copy = gLoadouts[static_cast<size_t>(gActive)];
     copy.name = "Loadout " + std::to_string(gLoadouts.size() + 1);
     gLoadouts.push_back(copy);

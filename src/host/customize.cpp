@@ -89,8 +89,8 @@ ux::Screen gScreen;
 double gLast = -1;
 
 // The hover shine of every button here: a soft halo of the button's shape and tiny rays along its edge, over everything
-// round it (reported: the neighbours hid it). Each shape has its own pictures (Handoff/sources/button_glow.py:
-// "glow-<shape>-halo.png", "-rays0..3.png", 12 units of room round the shape); the four ray phases are cross-faded in
+// round it (reported: the neighbours hid it). Each shape has its own pictures (generated: "glow-<shape>-halo.png",
+// "-rays0..3.png", 12 units of room round the shape); the four ray phases are cross-faded in
 // turn, so the rays travel round the edge. (Rays placed one by one, turning smoothly, were tried: Lvcid liked these.)
 struct Shine {
     ux::Node halo, rays[4];
@@ -139,14 +139,13 @@ struct SlotTab {
 };
 std::vector<SlotTab> gSlots;
 std::string gSlotsKey;
-ux::Node gShadow;                       // the soft oval shade behind the column (tab-shadow.png, Handoff/sources/tab_shadow.py)
+ux::Node gShadow;                       // the soft oval shade behind the column (tab-shadow.png)
 double gG = 0, gPy = 0;
 bool gInside = false, gArmed = false;
 int gWiggleSlot = -1;
 double gWiggleAt = -100;
 
-// The hover effect of a slot row (Lvcid's pick, Handoff/images/tab-beam-hq.mp4; its pictures from
-// Handoff/sources/hover_fx.py): as a row is newly hovered, a soft lime glow blooms from its slot along its name tab, a fine
+// The hover effect of a slot row (Lvcid's pick): as a row is newly hovered, a soft lime glow blooms from its slot along its name tab, a fine
 // thread of light lights with one wash sweeping out along it, and a few sparks leave along curling paths (most along the
 // tab's top and bottom edges from the slot, some from its end), white turning lime, each ending in a soft smoky puff;
 // then only smoke stays, faintly, drifting left while the row is hovered. Two of them, so the last row's can finish as the
@@ -173,6 +172,7 @@ std::mt19937 gFxRandom{std::random_device{}()};
 eng::Weak gStack;                                  // the game's tabs (hidden while ours are shown)
 uint8_t gStackVisibility = 0;
 bool gStackHidden = false;
+bool gStackFaded = false;                   // (faded out, waiting for the balls tab to be measured)
 // Where the balls tab is from the cosmetics panel (both are in the page's OptionalInset, which its fly-in moves): measured
 // once while the game's tabs are drawn, so they can then be hidden outright (see HideGameTabs).
 bool gTabMeasured = false;
@@ -239,13 +239,15 @@ void HideGameTabs(Obj page) {
         } else {
             eng::Call(stack, "SetRenderOpacity", 0.001f);
             w::SetVisibility(stack, w::kHitTestInvisible);
+            gStackHidden = gStackFaded = true;      // (so ShowGameTabs puts it back even from here: it stayed invisible)
             return;
         }
     }
-    if (gStackHidden) return;
+    if (gStackHidden && !gStackFaded) return;
     eng::Call(stack, "SetRenderOpacity", 1.0f);
     w::SetVisibility(stack, uint8_t{2});            // Hidden
     gStackHidden = true;
+    gStackFaded = false;
 }
 
 void ShowGameTabs() {
@@ -253,7 +255,7 @@ void ShowGameTabs() {
     if (!stack || !gStackHidden) return;
     eng::Call(stack, "SetRenderOpacity", 1.0f);
     w::SetVisibility(stack, gStackVisibility);
-    gStackHidden = false;
+    gStackHidden = gStackFaded = false;
 }
 
 // Where the game's balls tab is (hidden or not): the anchor of the strip, the loadouts and the slot tabs.
@@ -520,7 +522,7 @@ void UpdateStrip(const ux::Rect& tab, Obj page, double dt, double now) {
 
 void UpdateLoadouts(const ux::Rect& tab, bool local, double dt, double now) {
     const int count = packages::LoadoutCount();
-    const int wanted = local && count > 0 ? count + 1 : 0;      // and the "+"
+    const int wanted = local && count > 0 ? count + (count < packages::MaxLoadouts() ? 1 : 0) : 0;      // and the "+" (none at the cap)
     if (wanted != gLoadoutsShown) {
         for (auto& b : gLoadouts) DropButton(b);
         gLoadouts.clear();
@@ -1020,7 +1022,7 @@ double UpdateSlots(const ux::Rect& tab, bool local, double dt, double now) {
         gShadow.Picture(ux::Picture("tab-shadow.png"));
     }
     const double shadeTop = top0 - 5, shadeBottom = bottom + 6, middle = (shadeTop + shadeBottom) / 2;
-    const double reach = (shadeBottom - shadeTop) * 190.0 / 309.0;     // its half height, as the mockup's
+    const double reach = (shadeBottom - shadeTop) * 190.0 / 309.0;     // its half height (the picture's 190 of 309)
     gShadow.Box(tab.Right() - 251, middle - reach, 251, 2 * reach);     // the picture: 235 left of its middle to 16 right
     gShadow.Opacity(n && gShadow.hasPicture == 1 ? 1.0f : 0.0f);
     return bottom;
@@ -1038,6 +1040,11 @@ void SectionClicks() {
 
 void TearDown() {
     ShowGameTabs();
+    // (the panel theme undone too: Cosmetic Kit turned off with the page open left the page in its colours; on the page
+    // again it's applied afresh)
+    for (auto& t : gThemed) ThemeOne(t, nullptr);
+    gThemed.clear();
+    gThemeShown = 0;
     RestoreBack();
     if (gScreen.Ready()) gScreen.Show(false);
 }

@@ -192,7 +192,7 @@ std::string RegistryIcon(unsigned i) { return EntryAt(i).icon; }
 bool RegistryListed(unsigned i) {
     if (i >= registry::Entries().size()) return false;
     const registry::Entry entry = EntryAt(i);
-    return entry.listed || (entry.category == "cosmetics" && !registry::DependencyOnly(entry.id));
+    return entry.listed || entry.category == "cosmetics";
 }
 
 // Opens a page in the player's browser through the game (KismetSystemLibrary.LaunchURL). Only GitHub pages.
@@ -596,7 +596,7 @@ void EditorAddHotkey(const std::string& icon, const std::string& label, const st
 // game): other plugins see no keys then, so a key pressed in it (typing in its search, Esc stepping back) doesn't also
 // work a plugin's hotkey or close a plugin's window. The plugin manager's own script still sees them.
 constexpr int kEscape = 0x1B;
-bool InputTaken() { return manager::IsOpen() && !plugins::CurrentIsEssential(); }
+bool InputTaken() { return manager::TookInputThisFrame() && !plugins::CurrentIsEssential(); }     // (and the frame it closed in)
 bool KeyPressed(int key) { return !InputTaken() && (!ui::Typing() || key == kEscape) && input::Pressed(key); }
 bool KeyDown(int key) { return !InputTaken() && (!ui::Typing() || key == kEscape) && input::Down(key); }
 

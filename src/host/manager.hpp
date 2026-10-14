@@ -9,7 +9,7 @@
 //   cosmetics  the plugins page's twin for cosmetic packs: owned / explore.
 //   settings   an overlay over the page: the plugin manager's own (general, advanced) and each installed plugin's
 //              settings. The console is one too. Esc or their key goes back.
-//   welcome    the first open after an update: the logo's intro, then the what's new splash.
+//   welcome    the first open after an install or update: the logo's intro, then the window on plugins / installed.
 //   popups     get with dependencies, remove (and forget its settings), reset.
 //   banner     a newer plugin manager in the registry.
 // Its own settings (size, scale, dim, hover sounds, views, folds) are kept in the plugin manager's storage. Drawn with
@@ -19,9 +19,13 @@
 
 namespace manager {
 
-void Open(const std::string& page = "");    // "" where it was; "plugins", "cosmetics", "settings", "console"
+// "" where it was; "plugins", "cosmetics", "settings", "console". Not over a run being raced (unpaused): it closes if
+// one starts under it too.
+void Open(const std::string& page = "");
 void Close();
 bool IsOpen();
+bool TookInputThisFrame();                   // open now, or closed during this host frame (its closing key or click)
+double HoverSoundLevel();                    // its hover sounds' level as set in general (0 when off; 1 = the default)
 bool NewLook();                              // a theme other than Classic (the Plugin Manager plugin's Theme setting)
 void Frame();                                // every frame, after ui::Frame (it sets the typing widget after windows)
 

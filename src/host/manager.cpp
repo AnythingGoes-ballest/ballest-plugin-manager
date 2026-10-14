@@ -1,4 +1,5 @@
 #include "manager.hpp"
+#include "race.hpp"
 
 #include <windows.h>
 
@@ -107,12 +108,13 @@ const Color kPopupText = ux::Hex("#A9ACB1"), kConsole = ux::Hex("#08090B"), kOff
 
 // Sizes in design units (the concept's pixels at 1920x1080, scale 1).
 constexpr double kWinW = 1540, kWinH = 916, kTopH = 78, kSubH = 74, kGap = 10;
-constexpr double kThickH = 98, kCompactH = 58, kCardGap = 16;
+constexpr double kThickH = 98, kCompactH = 58;
 constexpr double kEase = 0.06;
 constexpr double kRowEase = 0.26;           // a row's or card's hover: slow and soft (Lvcid: a quarter of the speed or less)
 constexpr double kGlowMargin = 40.0 / 96, kGlowUnits = 96, kGlowRoom = 24;     // pm-glow.png: a radius-16 box inset 24 of 96
 constexpr int kCursorOwner = -77;
 const char* const kSelf = "plugin-manager";
+const char* const kRepo = "https://github.com/AnythingGoes-ballest/ballest-plugin-manager";
 const char* const kReleases = "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases";
 // A version's own release page (its notes), as the releases are tagged: v0.23.8.
 std::string ReleasePage(const std::string& version) { return std::string(kReleases) + "/tag/v" + version; }
@@ -137,10 +139,10 @@ struct Prefs {
     double winW = 0, winH = 0;              // the window's size on screen (UI units), 0: the concept's
     bool marquee = true;
     std::string view = "compact";           // compact or thick (compact by default: Lvcid, cleaner)
-    std::string cosView = "small";          // the cosmetics page: big (grid), small (grid), list (small by default: Lvcid)
+    std::string cosView = "compact";        // the cosmetics page's own: compact or thick (compact by default: Lvcid)
     double diskH = 0;                       // advanced: the disk box's height (dragged by its bottom edge); 0: as tall as what it shows
     // general's hover sounds (Lvcid): the plugin manager's own hover sounds (on by default) and their volume, 0..1 of
-    // the slider (69% by default, kDefaultHoverVol; the footer's buttons sound at their own, fixed volume)
+    // the slider (69% by default, kDefaultHoverVol; the footer's buttons follow it too: HoverSoundLevel)
     bool hoverSound = true;
     double hoverVol = kDefaultHoverVol;
     bool dimOn = true;                      // the screen dim on (its toggle, general: Lvcid)
@@ -187,13 +189,11 @@ void ReadPrefs() {
     gPrefs.hoverSound = get("hoversound", "1") == "1";
     gPrefs.dimOn = get("dimon", "1") == "1";
     gPrefs.hoverVol = std::clamp(num("hovervol2", "0.69"), 0.0, 1.0);     // ("2": the new scale; 69% by default)
-    gPrefs.cosView = get("cosview", "small");
-    // (the cosmetics page's view: "compact" / "thick" since it became the plugins page's twin; small / big / list are the
-    // earlier page's (DEBUG): anything else is the default, the small list)
-    if (gPrefs.cosView != "big" && gPrefs.cosView != "list" && gPrefs.cosView != "thick" && gPrefs.cosView != "compact") gPrefs.cosView = "small";
-    if (get("cosview2", "") != "1") {       // (once: a saved view goes to the new default, small; the views can change it)
-        gPrefs.cosView = "small";
-        storage::Set(kSelf, "manager.cosview", "small");
+    gPrefs.cosView = get("cosview", "compact");
+    if (gPrefs.cosView != "thick") gPrefs.cosView = "compact";     // (anything else, an older page's grid or list too: compact)
+    if (get("cosview2", "") != "1") {       // (once: a saved view goes to the default, compact; the views can change it)
+        gPrefs.cosView = "compact";
+        storage::Set(kSelf, "manager.cosview", "compact");
         storage::Set(kSelf, "manager.cosview2", "1");
     }
     gPrefsRead = true;
@@ -231,6 +231,7 @@ struct Plug {
     std::string id, name, version, latest, author, description, icon, status, pending, page, minHost, home, category;
     int priority = 0, order = 0;            // within its category (higher first); where it was listed (load or registry order)
     std::vector<std::string> needs;
+    std::vector<std::string> net;           // the servers it may connect to ([net] domains; none listed for the maintainer's own)
     bool installed = false, enabled = true, essential = false, update = false, settings = false, inRegistry = false;
     bool fresh = false;                     // new to the browser (its NEW tag)
     bool warned = false;                    // it logged a warning this session (on, but not quite right)
@@ -348,6 +349,7 @@ void BuildModel() {
         p.status = info.status;
         p.essential = info.essential;
         p.installed = true;
+        p.net = info.netDomains;
         p.enabled = !plugins::IsOff(info.id);
         p.pending = registry::Pending(info.id);
         if (const registry::Entry* e = entryOf(info.id)) {
@@ -362,6 +364,8 @@ void BuildModel() {
             if (p.icon.empty()) p.icon = e->icon;
             p.update = plugins::CompareVersions(e->version, info.version) > 0;
         }
+        // (the maintainer's own plugins don't list their servers, as the Classic menu: OWN_REPOS in its main.as)
+        if (p.home.rfind("https://github.com/AnythingGoes-ballest/", 0) == 0) p.net.clear();
         if (info.id == kSelf && p.home.empty()) {
             p.home = "https://github.com/AnythingGoes-ballest/ballest-plugin-manager";
             p.page = p.home + "/tree/main/plugins/plugin-manager";
@@ -380,7 +384,7 @@ void BuildModel() {
     }
     for (const registry::Entry& e : entries) {
         // (the cosmetic packs too, unlisted on the plugins page's browse: the cosmetics page's explore shows them)
-        if (!e.listed && (e.category != "cosmetics" || registry::DependencyOnly(e.id))) continue;
+        if (!e.listed && e.category != "cosmetics") continue;
         Plug p;
         p.id = e.id;
         p.name = e.name.empty() ? e.id : e.name;
@@ -476,20 +480,13 @@ struct State {
     bool bannerLater = false;
     std::string flash;
     double flashAt = -100;
-    std::string search;
-    bool searchOpen = false, searchFocused = false;
-    int searchPick = 0;
-    double searchReadAt = -100;
     std::string choiceOpen;                 // the settings dropdown that is open
-    // A jump into a plugin's settings (a row's cog, a search result): where it came from, for the pane's back button,
+    // A jump into a plugin's settings (a row's cog): where it came from, for the pane's back button,
     // shown while that section is still the one open (any other way of moving on forgets it)
     std::string backFor, backOverlay, backSection;
-    std::string browseSearch;               // browse's own search and sort
-    std::string installedSearch;            // installed's own search
+    std::string installedSearch;            // the page's search (both its tabs)
     double installedReadAt = -100;
-    bool installedFocused = false;
-    double browseReadAt = -100;
-    bool browseFocused = false, sortOpen = false;
+    bool installedFocused = false, sortOpen = false;
     std::string swapFrom;                   // installed / browse: the tab being switched away from, while its fog drifts
     double swapAt = -100;
     std::string filter = "everything";
@@ -548,7 +545,7 @@ std::string TestNeedsHostOf(const std::string& id) {
             break;
         }
     for (const registry::Entry& e : registry::Entries())
-        if (registry::IsCosmetic(e.id, e.dependencies) && !registry::DependencyOnly(e.id) && !plugins::Find(e.id, nullptr)) {
+        if (registry::IsCosmetic(e.id, e.dependencies) && !plugins::Find(e.id, nullptr)) {
             if (e.id == id) return version;
             break;
         }
@@ -611,6 +608,19 @@ struct FooterHole {
 } gHole;
 std::vector<std::string> gForgetAfterRemove;
 Obj gTypingField = nullptr;
+
+// A text box kept from frame to frame: held weakly (as the rest of the host holds widgets), so one freed with its screen
+// (a map change) reads as null instead of a dangling pointer (AnythingGoes' review: a pad's Y could reach a freed one).
+struct FieldRef {
+    eng::Weak weak;
+    FieldRef() = default;
+    FieldRef(Obj o) : weak(o ? eng::MakeWeak(o) : eng::Weak{}) {}
+    FieldRef& operator=(Obj o) {
+        weak = o ? eng::MakeWeak(o) : eng::Weak{};
+        return *this;
+    }
+    operator Obj() const { return eng::Get(weak); }
+};
 bool gTypedLastFrame = false;               // a text box had the keyboard last frame (Esc then leaves the box first)
 
 struct Anim {
@@ -692,8 +702,7 @@ double HoverCurve(const std::string& key, bool on, double up, double down) {
 // The game's own hover sound (its main menu buttons', WBP_ButtonBase: the engine's Flashlight_Switch; Lvcid, 2026-10-10)
 // as the pointer comes onto anything that can be clicked (every button, card, tab and key, the logo; pmui tells us:
 // OnHoverStart), never more than one every 45 ms (sweeping down the list). Scroll bars, sliders, the resize edges and the
-// window's own background are quiet. (A soft key-press click made for it is kept for later: Handoff/sources/sounds,
-// hover-click-soft-low.wav.)
+// window's own background are quiet.
 constexpr const char* kHoverSound = "/Engine/VREditor/Sounds/UI/Flashlight_Switch.Flashlight_Switch";
 void HoverSound(const std::string& /*id*/) {
     if (!gPrefs.hoverSound || gPrefs.hoverVol <= 0.001) return;      // (general's hover sounds: on by default, 69%)
@@ -701,7 +710,7 @@ void HoverSound(const std::string& /*id*/) {
     if (game::Seconds() - lastAt <= 0.045) return;
     lastAt = game::Seconds();
     // (as the game's discord button plays it: double pitch, from 0.11 s in; its volume the slider's, 69% by default)
-    draw::Sound(kHoverSound, gPrefs.hoverVol, 2.0, 0.11);
+    draw::UiSound(kHoverSound, gPrefs.hoverVol, 2.0, 0.11);
 }
 
 double Measured(Layer& l, const std::string& key, const std::string& s, double px) {
@@ -770,7 +779,7 @@ void OpenOverlay(const std::string& overlay, const std::string& section = "") {
     gS.choiceOpen.clear();
 }
 
-void OpenSettingsOf(const std::string& id, const std::string& flash = "") {
+void OpenSettingsOf(const std::string& id) {
     // (the plugin manager's own: its general page, where its theme is too (Lvcid, 2026-10-11))
     const std::string fromOverlay = gS.overlay, fromSection = gS.section,
                       to = id == kSelf ? "general" : "plugin:" + id;     // (the theme is on general too)
@@ -780,7 +789,7 @@ void OpenSettingsOf(const std::string& id, const std::string& flash = "") {
         gS.backOverlay = fromOverlay;
         gS.backSection = fromSection;
     }
-    gS.flash = flash.empty() ? "header" : flash;
+    gS.flash = "header";
     gS.flashAt = pmui::Now();
 }
 
@@ -851,25 +860,19 @@ void Glow(Layer& l, const std::string& key, int z, const Rect& r, const Color& c
     pmui::Sliced(l, key, z, r.Grow(kGlowRoom), "pm-glow.png", kGlowMargin, kGlowUnits, A(colour, alpha));
 }
 
-// --- the metallic makeover (Lvcid, 2026-10-11) ------------------------------------------------------------------------
-// A very slight metal feel on a few borders: the white hover edges (the black bubble buttons), the window's edge, the
-// rule under the top bar, the settings nav's separator, the plugin cards' top trim. Lvcid may say "revert the metallic
-// makeover": set kMetal false (every touch is behind it; the round chrome rings of the get and lock buttons are not part
-// of it and stay).
-constexpr bool kMetal = false;          // (reverted, Lvcid 2026-10-11: true brings it back)
-const Color kSteel = ux::Hex("#6E737B"), kSilver = ux::Hex("#B9BDC4");
 
-// A rounded box's outline (`radius`, `width`) in `c`, a touch metallic: as chrome reflects, its top a little brighter,
-// a darker band just under its middle (the horizon), its bottom a soft silver; `strength` 0..1 how much (1: the white
-// hover edges; the window's own edge far less). Without kMetal, the plain outline, unless `always` (a part that keeps
-// its metal: Ballest Light's icon tiles, Lvcid 2026-10-12).
+// A rounded box's outline (`radius`, `width`) in `c`, on a group of its own (the hover edges round the bubble buttons).
+void EdgeOutline(Layer& l, const std::string& key, int z, const Rect& r, double radius, float width, const Color& c, double opacity = 1) {
+    Layer& g = pmui::Group(l, key + ".m", z, r.Grow(width), false, opacity);
+    pmui::Box(g, "o", 0, {width, width, r.w, r.h}, A(kWhite, 0), radius).Outline(width, c);
+}
+
+// The same, a touch metallic (the icon tiles' frame): as chrome reflects, its top a little brighter, a darker band just
+// under its middle (the horizon), its bottom a soft silver; `strength` 0..1 how much.
+const Color kSteel = ux::Hex("#6E737B"), kSilver = ux::Hex("#B9BDC4");
 void MetalOutline(Layer& l, const std::string& key, int z, const Rect& r, double radius, float width, const Color& c, double strength,
-                  double opacity = 1, bool always = false) {
-    if ((!kMetal && !always) || strength <= 0) {
-        Layer& g = pmui::Group(l, key + ".m", z, r.Grow(width), false, opacity);
-        pmui::Box(g, "o", 0, {width, width, r.w, r.h}, A(kWhite, 0), radius).Outline(width, c);
-        return;
-    }
+                  double opacity = 1) {
+    if (strength <= 0) return EdgeOutline(l, key, z, r, radius, width, c, opacity);
     const double s = strength;
     struct Part {
         double from, to;
@@ -887,20 +890,8 @@ void MetalOutline(Layer& l, const std::string& key, int z, const Rect& r, double
     }
 }
 
-// A rule (a thin bar) in `c`, a touch metallic: a faint light along its top, brightest a little left of its middle and
-// gone at its ends, and its underside a shade darker. Without kMetal, the plain bar.
-void MetalRule(Layer& l, const std::string& key, int z, const Rect& r, const Color& c) {
-    pmui::Box(l, key, z, r, c, std::min(r.w, r.h) / 2);
-    if (!kMetal) return;
-    const bool flat = r.w >= r.h;
-    if (flat) {
-        pmui::Box(l, key + ".dark", z, {r.x, r.B() - 1, r.w, 1}, A(kBlack, 0.25), 0.5);
-        pmui::Pic(l, key + ".shine", z, {r.x + r.w * 0.08, r.y, r.w * 0.6, 1}, "fx-glow.png", A(kWhite, 0.10));
-        pmui::Pic(l, key + ".shine2", z, {r.x + r.w * 0.2, r.y, r.w * 0.25, 1}, "fx-glow.png", A(kWhite, 0.08));
-    } else {
-        pmui::Pic(l, key + ".shine", z, {r.x, r.y + r.h * 0.04, 1, r.h * 0.5}, "fx-glow.png", A(kWhite, 0.07));
-    }
-}
+// A rule (a thin bar) in `c`, its ends round.
+void Rule(Layer& l, const std::string& key, int z, const Rect& r, const Color& c) { pmui::Box(l, key, z, r, c, std::min(r.w, r.h) / 2); }
 
 // A square icon button (a row's settings, source, remove): dark at rest, white when hovered; black in a hovered row.
 // `hoverFill`: another colour than white when hovered (remove: red, its icon white), and `grow`: bigger by that, eased.
@@ -1075,12 +1066,12 @@ void Tile(Layer& l, const std::string& key, int z, const Rect& r, const std::str
         const Color frame = Mix(ux::Themed(kTrim, 3), ux::Themed(kCardEdge, 3), 0.5);
         ux::RawColors raw;
         pmui::Box(l, key + ".b", z, r, ux::Hex("#202125"), radius);
-        if (bubble < 0.99) MetalOutline(l, key + ".metal", z, r, radius, static_cast<float>(ring), A(frame, 1 - bubble), 0.85, 1, true);
+        if (bubble < 0.99) MetalOutline(l, key + ".metal", z, r, radius, static_cast<float>(ring), A(frame, 1 - bubble), 0.85, 1);
     } else {
         // (the dark themes: a touch metallic frame, a grey that lightens as its card is hovered, in place of the black
         // bubble band and its white edge (Lvcid: the black and white didn't fit))
         pmui::Box(l, key + ".b", z, r, kTile, radius);
-        MetalOutline(l, key + ".metal", z, r, radius, static_cast<float>(ring), Mix(Mix(ux::Hex("#2C2F34"), ux::Hex("#393C42"), rowHover), ux::Hex("#585C63"), bubble), 0.4, 1, true);      // (darker, less shine: Lvcid)
+        MetalOutline(l, key + ".metal", z, r, radius, static_cast<float>(ring), Mix(Mix(ux::Hex("#2C2F34"), ux::Hex("#393C42"), rowHover), ux::Hex("#585C63"), bubble), 0.4, 1);      // (darker, less shine: Lvcid)
     }
     if (light && bubble > 0.01) {
         const double band = ring + 2;                 // (a little wider than the ring: the swirl shows in it)
@@ -1229,64 +1220,6 @@ int SearchScore(const std::string& name, const std::string& query) {
     return used ? score : -1;
 }
 
-struct Result {
-    std::string kind, id, title, sub, icon, variable;
-    int score = 0;
-};
-std::vector<Result> gResults;
-std::string gResultsFor;
-
-void FindResults() {
-    gResultsFor = gS.search;
-    gResults.clear();
-    std::vector<Result> found, sets;
-    for (const Plug& p : gInstalled)
-        if (int sc = std::max(SearchScore(p.name, gS.search), SearchScore(p.id, gS.search)); sc >= 0)
-            found.push_back({"installed", p.id, p.name, "installed \xC2\xB7 " + std::string(!p.enabled ? "offline" : p.update ? "update " + p.latest : p.status), p.icon, "", sc});
-    for (const Plug& p : gBrowse)
-        if (!p.installed)
-            if (int sc = std::max(SearchScore(p.name, gS.search), SearchScore(p.id, gS.search)); sc >= 0)
-                found.push_back({"browse", p.id, p.name, "in browse \xC2\xB7 by " + p.author, p.icon, "", sc});
-    for (const settings::Setting& s : settings::List()) {
-        if (s.hidden) continue;
-        const int sc = SearchScore(s.name.empty() ? s.variable : s.name, gS.search);
-        if (sc < 0) continue;
-        plugins::Info info;
-        const std::string owner = plugins::Find(s.pluginId, &info) ? info.name : s.pluginId;
-        sets.push_back({"setting", s.pluginId, s.name.empty() ? s.variable : s.name, owner + " \xE2\x80\xBA " + s.description, info.icon, s.variable, sc});
-    }
-    auto best = [](std::vector<Result>& v) {
-        std::stable_sort(v.begin(), v.end(), [](const Result& a, const Result& b) { return a.score > b.score; });
-        if (v.size() > 4) v.resize(4);
-    };
-    best(found);
-    best(sets);
-    gResults = found;
-    gResults.insert(gResults.end(), sets.begin(), sets.end());
-    gS.searchPick = std::clamp(gS.searchPick, 0, std::max(0, static_cast<int>(gResults.size()) - 1));
-}
-
-void EndSearch(Obj field) {
-    gS.searchOpen = false;
-    gS.search.clear();
-    gResultsFor.clear();
-    if (field) w::SetText(field, "");
-    Unfocus();
-}
-
-void Choose(const Result& r, Obj field) {
-    hostlog::Info("manager: search \"" + gS.search + "\" -> " + r.kind + " " + r.id);
-    if (r.kind == "setting") {
-        OpenSettingsOf(r.id, "set." + r.variable);
-    } else {
-        gS.page = "plugins";
-        gS.tab = r.kind == "browse" ? "browse" : "installed";
-        OpenOverlay("");
-        gS.expanded = gS.scrollTo = r.id;
-    }
-    EndSearch(field);
-}
-
 // A search box's look (the field sits over it): a dark pill, a bigger magnifier on its left, and a very faint hint of
 // our own while it's empty (the text box's own hint can't be dimmed that far).
 const Color kHintFaint = ux::Hex("#3A3D42");
@@ -1322,17 +1255,14 @@ void SearchLook(Layer& l, const std::string& key, int z, const Rect& r, const st
 }
 
 // --- the top bar ---------------------------------------------------------------------------------------------------------
-Obj gSearchField = nullptr;
-Rect gSearchRect;
-
 void SetPage(const std::string& page) {
     gS.page = page;
     gS.sortOpen = false;                    // (the cosmetics sort's list: only on its page)
     OpenOverlay("");
 }
 
-// The top bar (Lvcid's layout B): the logo (drawn by Frame, over the corner), then the pages; on the right the search,
-// the console and settings as a pair of round keys, and the close x a little apart from them.
+// The top bar (Lvcid's layout B): the logo (drawn by Frame, over the corner), the cog (settings), then the pages; on the
+// right update all and its note, the console and folder as a pair of round keys, and the close x a little apart.
 constexpr double kKey = 48, kKeyGap = 12, kCloseGap = 20;
 
 void UpdateAll(Layer& wl, double right, double cy);
@@ -1349,7 +1279,7 @@ void NightKey(Layer& wl, const std::string& key, const Rect& g, double h) {
     }
     if (h > 0.01) {
         pmui::Bubble(wl, key + ".nb", 301, g.Grow(kBubbleOut), g.w / 2 + kBubbleOut, h, 2);
-        MetalOutline(wl, key + ".ring", 301, g, g.w / 2, 2, A(kWhite, 0.85 * h), 1);
+        EdgeOutline(wl, key + ".ring", 301, g, g.w / 2, 2, A(kWhite, 0.85 * h));
     }
 }
 
@@ -1417,7 +1347,7 @@ void TopBar(Layer& wl, double W) {
         const double s2 = sz * (1 + 0.08 * h);
         // (Ballest Night, hovered: a round black bubble behind it, as the pages' pill; Lvcid)
         if (BallestNight() && h > 0.01) {
-            MetalOutline(wl, "top.cog.ring", 301, r, r.w / 2, 2, A(kWhite, 0.85 * h), 1);
+            EdgeOutline(wl, "top.cog.ring", 301, r, r.w / 2, 2, A(kWhite, 0.85 * h));
             pmui::Bubble(wl, "top.cog.bub", 299, r.Grow(kBubbleOut), r.w / 2 + kBubbleOut, h, 2);
         }
         Glow(wl, "top.cog.glow", 300, {r.Cx() - s2 * 0.6, r.Cy() - s2 * 0.6, s2 * 1.2, s2 * 1.2}, Mix(Mix(kWhite, lit, on), kWhite, h), 0.3 * std::max(h, on));
@@ -1454,10 +1384,10 @@ void TopBar(Layer& wl, double W) {
                     // (Ballest Light: as Night's, not turned white: the black bubble, its white swirls, a black edge;
                     // the word white on it (Lvcid))
                     ux::RawColors raw;
-                    MetalOutline(wl, key + ".ring", 301, bub, 23, 2, A(kBlack, 0.85 * h), 1);
+                    EdgeOutline(wl, key + ".ring", 301, bub, 23, 2, A(kBlack, 0.85 * h));
                     pmui::Bubble(wl, key + ".bub", 300, bub.Grow(kBubbleOut), 23 + kBubbleOut, h, 2);
                 } else {
-                    MetalOutline(wl, key + ".ring", 301, bub, 23, 2, A(kWhite, 0.85 * h), 1);
+                    EdgeOutline(wl, key + ".ring", 301, bub, 23, 2, A(kWhite, 0.85 * h));
                     pmui::Bubble(wl, key + ".bub", 300, bub.Grow(kBubbleOut), 23 + kBubbleOut, h, 2);
                 }
             }
@@ -1512,68 +1442,7 @@ void TopBar(Layer& wl, double W) {
     // update all and its note, left of the folder (Lvcid: on the top bar, every page)
     UpdateAll(wl, termX - 16, cy);
     // the rule under the bar
-    MetalRule(wl, "top.rule", 299, {14, kTopH, W - 28, 3}, kRule);
-}
-
-// The results under the search box: plugins, then settings; the picked one is the bubble (Enter opens it).
-void SearchDrop(Layer& wl) {
-    if (!gS.searchOpen || Bare(gS.search).empty()) return;
-    if (gResultsFor != gS.search) FindResults();
-    pmui::Level(kDropLevel);
-    std::vector<std::pair<std::string, size_t>> lines;     // headings ("" for a result) and result indices
-    std::string group;
-    for (size_t i = 0; i < gResults.size(); ++i) {
-        const std::string g = gResults[i].kind == "setting" ? "SETTINGS" : "PLUGINS";
-        if (g != group) lines.push_back({group = g, 0});
-        lines.push_back({"", i});
-    }
-    double height = 20;
-    for (const auto& [head, i] : lines) height += head.empty() ? 52 : 28;
-    if (gResults.empty()) height = 64;
-    const Rect d{gSearchRect.R() - 520, gSearchRect.B() + 10, 520, height};
-    // the pointer picks a result when it moves (so it doesn't undo the arrow keys while it rests on the list)
-    static double lastX = 0, lastY = 0;
-    const bool moved = std::fabs(pmui::Mouse().x - lastX) + std::fabs(pmui::Mouse().y - lastY) > 0.5;
-    lastX = pmui::Mouse().x;
-    lastY = pmui::Mouse().y;
-    Glow(wl, "drop.shadow", 700, d, kBlack, 0.8);
-    pmui::Box(wl, "drop.b", 701, d, kPopup, 18).Outline(2, kPopupRing);
-    if (gResults.empty()) {
-        pmui::Text(wl, "drop.none", 702, "nothing matches \"" + gS.search + "\"", 16, "Semilight", kSub, d.x + 22, d.Cy());
-    }
-    double y = d.y + 10;
-    for (const auto& [head, i] : lines) {
-        if (!head.empty()) {
-            pmui::Text(wl, "drop.h." + head, 702, head, 12, "Bold", kHead, d.x + 20, y + 16);
-            y += 28;
-            continue;
-        }
-        const Result& r = gResults[i];
-        const std::string key = "drop.r" + std::to_string(i);
-        const Rect row{d.x + 10, y, d.w - 20, 52};
-        if (pmui::Over(wl, row) && moved) gS.searchPick = static_cast<int>(i);
-        const double pick = Ease(key, gS.searchPick == static_cast<int>(i), 0.04), on = 0;
-        pmui::Bubble(wl, key + ".bub", 702, row, 12, pick, true);
-        pmui::Box(wl, key + ".bar", 703, {row.x + 2, row.y + 12, 3, row.h - 24}, A(kLime, pick), 1.5);
-        if (r.kind == "setting") {
-            pmui::Box(wl, key + ".tb", 703, {row.x + 10, row.y + 8, 36, 36}, kTile, 9).Outline(2, Mix(kTileRing, kBlack, on));
-            pmui::Pic(wl, key + ".ti", 704, {row.x + 18, row.y + 16, 20, 20}, "pm-cog.png", Mix(kSub, kBlack, on));
-        } else {
-            Tile(wl, key + ".tile", 703, {row.x + 10, row.y + 8, 36, 36}, r.icon, 9, 2, on, false);
-        }
-        pmui::Text(wl, key + ".t", 705, r.title, 17, "Regular", Mix(kRowLabel, kWhite, pick), row.x + 58, row.y + 17);
-        const double sw = Measured(wl, key + ".s", r.sub, 13);
-        pmui::Text(wl, key + ".s", 705, pmui::Fit(r.sub, sw, row.w - 58 - 70), 13, "Semilight", Mix(kVer, kSub, pick), row.x + 58,
-                   row.y + 36);
-        const std::string go = gS.searchPick == static_cast<int>(i) ? "enter" : r.kind == "browse" ? "get" : "";
-        if (!go.empty()) pmui::Text(wl, key + ".go", 705, go, 12, "Bold", Mix(kVer, kLime, pick), row.R() - 12, row.Cy(), 1);
-        if (pmui::Click(wl, row, key)) {
-            Choose(r, gSearchField);
-            return;
-        }
-        y += 52;
-    }
-    if (pmui::PressedOutside(wl, d) && pmui::PressedOutside(wl, gSearchRect)) gS.searchOpen = false;
+    Rule(wl, "top.rule", 299, {14, kTopH, W - 28, 3}, kRule);
 }
 
 // Debug switches (advanced settings' DEBUG group): pretend states, to see the look without anything being wrong.
@@ -1584,13 +1453,12 @@ bool gBannerLive = false;
 bool gBannerUpdateClicked = false;          // "update now" clicked this session: the replays stop
 
 // The first open since this plugin manager was installed or updated (Lvcid): the welcome plays then (manager_logo.inc:
-// the screen dims, the big logo animates and flies to its corner, the what's new splash). Kept as the build it was last
-// shown for ("manager.welcomed": the version and when it was built), so an update shows it again, and so does a new
-// build of the same version (a release is one build; a test build counts each rebuild as an update); there's no
-// separate "first ever" (an install is an update from nothing). It plays when the window is first opened, never by
-// itself when the game starts.
+// the screen dims, the big logo animates and flies to its corner, the window comes in). Kept as the build it was last
+// shown for ("manager.welcomed": the version), so an update shows it again (a rebuild of the same version doesn't: DEBUG's
+// "welcome on every open" tests it); there's no separate "first ever" (an install is an update from nothing). It plays
+// when the window is first opened, never by itself when the game starts.
 bool gFirstOpen = false;
-const std::string kBuild = std::string(plugins::kHostVersion) + " (built " + __DATE__ + " " + __TIME__ + ")";
+const std::string kBuild = plugins::kHostVersion;
 bool FirstOpenNow() {
     const std::string seen = storage::Get(kSelf, "manager.welcomed", "");
     const bool first = gTestFirstOpen || seen != kBuild;
@@ -1742,6 +1610,17 @@ void Details(Layer& row, const Plug& p, const std::string& /*u*/, double x, doub
         pmui::Text(row, key + ".v", 4, pmui::Fit(kv[i].second, vw, std::max(40.0, factsRight - cx - kw - 10)), 17, "Regular", factValue, cx + kw + 10, line);
         cx += kw + 10 + vw + 40;
     }
+    // the servers it may connect to, on a line of their own in the warning gold (as the Classic menu's card): players see
+    // where a plugin talks to
+    if (!p.net.empty()) {
+        std::string list;
+        for (const std::string& d : p.net) list += (list.empty() ? "" : ", ") + d;
+        line += 32;
+        const double kw = Measured(row, "net.k", "connects to", 14);
+        pmui::Text(row, "net.k", 4, "connects to", 14, "Bold", Mix(WarnAccent(), kBlack, hover), x, line);
+        pmui::Text(row, "net.v", 4, pmui::Fit(list, Measured(row, "net.v", list, 17), std::max(40.0, factsRight - x - kw - 10)), 17, "Regular",
+                   factValue, x + kw + 10, line);
+    }
     // (the plugin id itself: Row pins it to the card's bottom right corner, at any size, opening or open: Lvcid)
     *bottom = std::max(line + 16, firstY + 44) + 14;
 }
@@ -1773,7 +1652,7 @@ void SourceButton(Layer& l, const std::string& id, int z, const Rect& r, const s
     pmui::Box(l, id + ".b", z, pill, A(kPill, 1 - h), kPillH / 2).Outline(0, A(kWhite, 0));      // (no edge: the blacked-out one's had one)
     if (h > 0.01) {
         pmui::Bubble(l, id + ".blk", z + 1, pill.Grow(kBubbleOut), kPillH / 2 + kBubbleOut, h, 2);
-        MetalOutline(l, id + ".ring", z + 1, pill, kPillH / 2, 2, A(kWhite, 0.85 * h), 1);
+        EdgeOutline(l, id + ".ring", z + 1, pill, kPillH / 2, 2, A(kWhite, 0.85 * h));
     }
     pmui::Text(l, id + ".t", z + 2, label, 16, "Regular", Mix(kTabHover, kWhite, h), (pill.x + icon.x) / 2, r.Cy(), 0.5);
     // the icon end: the settings key's hover (Lvcid): white with a white glow, growing from its middle quickly and
@@ -1800,7 +1679,7 @@ std::string StatusText(const Plug& p, ChipKind* kind) {
         return p.pending;
     }
     if (!p.installed) return "";
-    if (!p.enabled) return *kind = ChipKind::Off, "offline";
+    if (!p.enabled) return *kind = ChipKind::Off, "off";
     if (p.status != "running") return *kind = ChipKind::Error, p.status;
     if (p.update) return *kind = ChipKind::Update, "update " + p.latest;
     if (p.essential) return *kind = ChipKind::Built, "built in";
@@ -1838,8 +1717,8 @@ const Color kChromeDim{0.42f, 0.43f, 0.45f, 1};
 constexpr double kChromeTurn = 24;          // the chrome rings turn this many degrees a second (Lvcid: slowly)
 
 // A chrome ring in r, its light turning round it at `degreesPerSecond`. Not a picture rotated (that shimmered and shook:
-// Lvcid): the light pre-turned in 16 frames (pm-ring-chrome-00..15.png, from Handoff/sources/pm/chrome_ring.py
-// --frames), cross-faded; the ring itself stays still, its box snapped to whole units.
+// Lvcid): the light pre-turned in 16 frames (pm-ring-chrome-00..15.png, generated: the script is kept outside this
+// repo), cross-faded; the ring itself stays still, its box snapped to whole units.
 void ChromeRing(Layer& l, const std::string& key, int z, const Rect& r, const Color& tint, double degreesPerSecond) {
     constexpr int kFrames = 16;
     const Rect at{std::round(r.x), std::round(r.y), std::round(r.w), std::round(r.h)};
@@ -1896,7 +1775,7 @@ void GetButton(Layer& list, const Plug& p, const std::string& u, const Rect& b, 
     pmui::Pic(list, u + "get.glow", z, g.Grow(gs * 0.35), "pm-glow-round.png", A(kLime, 0.35 * (1 - h)));      // (round, centred: Lvcid)
     pmui::Bubble(list, u + "get.bub", z + 1, g, gs / 2, 1);
     pmui::Box(list, u + "get.w", z + 2, g, A(kWhite, h), gs / 2);
-    // (its edge chrome, grey-white and metallic: pm-ring-chrome.png, from Handoff/sources/pm/chrome_ring.py; Lvcid)
+    // (its edge chrome, grey-white and metallic: the pm-ring-chrome frames; Lvcid)
     ChromeRing(list, u + "get.ring", z + 2, g.Grow(3.5), Mix(kChromeDim, kWhite, 0.25 * h), kChromeTurn);       // (turning slowly round it; darker, a touch lighter hovered: Lvcid)
     // (its hover shine over the ring, Lvcid; only as it nears full size)
     Shine(list, u + "get.shine", z + 3, g, "globe", Smooth((h - 0.65) / 0.35));
@@ -2360,7 +2239,6 @@ void AccentTrim(Layer& row, const std::string& u, double wd, double ht, double r
 }
 
 // The cosmetics page draws the plugins page's rows for the cosmetic packs (manager_cosmetics.inc): these from there.
-bool PackKey(Layer& l, const std::string& u, int z, const Rect& b, bool single);
 std::string PackSymbol(const std::string& id);     // an owned pack's symbol: its slot's when all of it is one slot, else the pack
 double PackItems(Layer& row, const std::string& u, const std::string& id, double x0, double y, double right);
 
@@ -2426,8 +2304,6 @@ void Row(Layer& list, const Plug& p, const Rect& whole, double baseH, bool compa
     } else {
         pmui::Box(row, "trim", 1, {radius, 1.5, wd - radius, 1}, A(kWhite, 0.07 + 0.05 * h), 0.5);
     }
-    // (the metallic makeover: a soft gloss on the trim, a little way in from the left, brighter on hover)
-    if (kMetal) pmui::Pic(row, "trim.gloss", 1, {radius + 10, 1.5, std::min(320.0, wd * 0.4), 1}, "fx-glow.png", A(kWhite, 0.10 + 0.08 * h));
     // hovered: a soft light in from the left edge (no bubbles: their swirl was too busy, Lvcid); its edge is lit lime (Accent)
     pmui::Pic(row, "sheen", 1, {0, 0, std::min(220.0, wd * 0.3), R.h}, "pm-fade-left.png", A(kWhite, 0.07 * h));
     // The left (both views, Lvcid 2026-10-10): the cog (installed), where the arrow was (no arrow: a click on the card
@@ -2475,13 +2351,13 @@ void Row(Layer& list, const Plug& p, const Rect& whole, double baseH, bool compa
             if (pmui::Click(row, hit, u + "cog")) OpenSettingsOf(p.id);
         }
     }
-    // the pills: running / offline rightmost (none when it failed to run), then its error, then its warning; turned
+    // the pills: running / off rightmost (none when it failed to run), then its error, then its warning; turned
     // off, those two stay, blacked out somewhat. Compact: in the row's middle; big rows: on the title's line (Lvcid)
     if (!browse) {
         const double py = compact ? cy : cy - 16;
         ChipKind rk;
         std::string rs = StatusText(p, &rk);
-        if (rk == ChipKind::Update || rk == ChipKind::Built) rs = p.enabled ? "running" : "offline", rk = p.enabled ? ChipKind::Run : ChipKind::Off;
+        if (rk == ChipKind::Update || rk == ChipKind::Built) rs = p.enabled ? "running" : "off", rk = p.enabled ? ChipKind::Run : ChipKind::Off;
         const bool failed = p.enabled && p.installed && p.pending.empty() && !ErrorOf(p).empty() && p.status != "running";
         if (failed) rs.clear();
         // (error / warning: hovered, a compact tooltip with the message, as the open card shows it: Lvcid)
@@ -2535,7 +2411,7 @@ void Row(Layer& list, const Plug& p, const Rect& whole, double baseH, bool compa
     ChipKind kind;
     std::string status = StatusText(p, &kind);
     if (browse && p.installed && status.empty()) status = "installed", kind = ChipKind::Run;
-    if (kind == ChipKind::Update || kind == ChipKind::Built) status = p.enabled ? "running" : "offline", kind = p.enabled ? ChipKind::Run : ChipKind::Off;
+    if (kind == ChipKind::Update || kind == ChipKind::Built) status = p.enabled ? "running" : "off", kind = p.enabled ? ChipKind::Run : ChipKind::Off;
     const bool updateTag = !browse && (p.update || test);
     const bool busy = p.pending == "installing" || (test && pmui::Now() < gTestBusyUntil);
     // (on the list, not clipped by the card: a grown name may rise past its top edge; clipped on the right, before the
@@ -2629,20 +2505,19 @@ void Row(Layer& list, const Plug& p, const Rect& whole, double baseH, bool compa
     }
 }
 
-// --- the search: installed and browse each have their own ---------------------------------------------------------------
-Obj gBrowseField = nullptr, gInstalledField = nullptr;
+// --- the search: one for the page, both its tabs ------------------------------------------------------------------------
+FieldRef gInstalledField;
 
 // From `left` to `right`: the search (filtering the list as it's typed: name, author, description). No sort (Lvcid).
-void BrowseTools(Layer& wl, double cy, double left, double right, bool installed = false) {
+void BrowseTools(Layer& wl, double cy, double left, double right) {
     const double sx = left;
-    const Rect sr{sx, cy - 20, std::max(44.0, right - sx), 40};      // (it narrows before anything overlaps it)     // (it narrows before anything overlaps it)
+    const Rect sr{sx, cy - 20, std::max(44.0, right - sx), 40};      // (it narrows before anything overlaps it)
     // (one search for the page, both its tabs: its results are both, under INSTALLED / OWNED and AVAILABLE: Lvcid)
-    (void)installed;
     const std::string fk = "isearch";
     std::string& query = gS.installedSearch;
     double& readAt = gS.installedReadAt;
     bool& wasFocused = gS.installedFocused;
-    Obj& field = gInstalledField;
+    FieldRef& field = gInstalledField;
     field = pmui::Field(wl, fk + ".field", 16, {sr.x + 46, sr.y + 4, sr.w - 56, sr.h - 8}, "", 16,
                         CurrentTheme() == 1 ? ux::Hex("#1E1F23") : kWhite);       // (Ballest Light: dark words in its light box)
     const bool focused = Focused(field);
@@ -2659,7 +2534,6 @@ void BrowseTools(Layer& wl, double cy, double left, double right, bool installed
 Rect gSlideFrom, gSlideNow;                 // installed / browse: where the lime box set off from, and where it is
 
 // The page's sub bar: installed / browse, the counts, update all, the folder or refresh, the views.
-void ShowSplash();                          // (manager_logo.inc)
 
 void SubBar(Layer& wl, double W, double top) {
     const double cy = top + kSubH / 2;
@@ -2818,8 +2692,7 @@ void SubBar(Layer& wl, double W, double top) {
         }
     }
     x += 16;
-    const bool installed = gS.tab == "installed";
-    // on the right (Lvcid): this version, muted, and "what's new" (the splash), a dark, muted button
+    // on the right (Lvcid): this version, muted, and "what's new" (the plugin manager's GitHub page), a dark, muted button
     const std::string ver = std::string("v") + plugins::kHostVersion;
     const double ww = PillWidth(wl, "whatsnew", "what's new", 16, nullptr, 18);
     const Rect wr{W - 22 - ww, cy - 20, ww, 40};
@@ -2841,7 +2714,7 @@ void SubBar(Layer& wl, double W, double top) {
                 .Outline(2, Mix(ux::Hex("#2F3238"), ux::Hex("#4C5058"), h));
             pmui::Text(wl, "whatsnew.t", 12, "what's new", 16, "Regular", Mix(ux::Hex("#9A9EA6"), kWhite, h), wr.Cx(), cy, 0.5);
         }
-        if (pmui::Click(wl, wr, "whatsnew")) ShowSplash();
+        if (pmui::Click(wl, wr, "whatsnew")) OpenUrl(kRepo);      // (the plugin manager's GitHub page: its releases and notes)
     }
     const double vtw = Measured(wl, "ver.t", ver, 16);
     {
@@ -2852,7 +2725,7 @@ void SubBar(Layer& wl, double W, double top) {
         pmui::TextOutline(wl, "ver.t", BallestLight() ? 1 : 0, A(kBlack, 0.9));
     }
     double rightEdge = wr.x - 14 - vtw - 18;
-    // the views: compact, thick    // the views: compact, thick (Lvcid: no grid)
+    // the views: compact, thick (Lvcid: no grid)
     const std::vector<std::pair<std::string, const char*>> views = {{"compact", "pm-compact.png"}, {"thick", "pm-thick.png"}};
     const double vw = 4 + 2 * 40 + 4 + 4;
     const Rect box{viewsRight ? rightEdge - 6 - vw : 22, cy - 23, vw, 46};
@@ -2876,13 +2749,13 @@ void SubBar(Layer& wl, double W, double top) {
         vx += 44;
     }
     // this page's own search, from the strip to the version (Lvcid: a search for each page)
-    BrowseTools(wl, cy, x - 4, rightEdge, installed);
+    BrowseTools(wl, cy, x - 4, rightEdge);
 }
 
 // Update all and its note, right-aligned at `right` (on the top bar, every page: Lvcid, 2026-10-09).
 void UpdateAll(Layer& wl, double right, double cy) {
     constexpr double kPillK = 1.4;
-    // Update all on rails (Lvcid, 2026-10-09; the table in Handoff/Plugin Manager Style Guide.md, 10): what can update
+    // Update all on rails (Lvcid, 2026-10-09): what can update
     // now, with the plugin manager's own update in mind. While it's out (or failed) and none of the updates need it,
     // update all does both; when some need it, the plugin manager comes first (from the banner, or as "update plugin
     // manager" once the banner is hidden); installed, the game's restart; ones needing a plugin manager not out yet are
@@ -2971,7 +2844,7 @@ const char* const kCosExamples[] = {"example-cosmetics", "example-arms", "exampl
 const char* const kCosRowSorts[] = {"newest", "oldest", "A-Z", "Z-A"};
 int gCosSort = 0;
 // Folded sections (Lvcid, 2026-10-11): a click on a section's heading folds it (and opens it again). Kept in the
-// plugin manager's storage as "<page>:<heading>" ("plugins:UTILITIES", "cosmetics:COMMUNITY"), so it lasts through
+// plugin manager's storage as "<page>:<heading>" ("plugins:INSTALLED", "cosmetics:COMMUNITY"), so it lasts through
 // updates; a heading renamed is simply open again (only the names kept are folded). Failsafe: anything in an unexpected
 // shape, or under another version mark than kFoldVersion, and everything is open. A search shows every section open.
 constexpr const char* kFoldVersion = "v1";
@@ -3119,8 +2992,8 @@ void PluginsPage(Layer& wl, const Rect& area) {
                     if (searching) return std::string(rowBrowse[n] ? "AVAILABLE" : gCosRows ? "OWNED" : "INSTALLED");
                     // (the cosmetics page: owned, one OWNED section (it said COMMUNITY: Lvcid); explore, EXAMPLES then COMMUNITY)
                     if (gCosRows) return std::string(!rowBrowse[n] ? "OWNED" : CosExample(rows[n]->id) >= 0 ? "EXAMPLES" : "COMMUNITY");
-                    const std::string c = registry::CategoryTitle(rows[n]->category);
-                    return c.empty() ? std::string("OTHER") : c;     // (as shown: no category and an unknown one are one OTHER section)
+                    // (the plugins page: one section a tab, INSTALLED / AVAILABLE (Lvcid); the rows still in the categories' order)
+                    return std::string(rowBrowse[n] ? "AVAILABLE" : "INSTALLED");
                 };
                 const std::string t = title(i);
                 const std::string before = i ? title(i - 1) : "-";
@@ -3162,12 +3035,12 @@ void PluginsPage(Layer& wl, const Rect& area) {
         double y = 4 - scroll;
         Rect sortAt;                        // (the cosmetics page: its sort, when its heading is drawn)
         // Ballest Light: the dark column behind the toggles (pieces with the rows, below, scrolling with them) and the
-        // medium dark strip between the band and the first section (Lvcid's mock)
+        // medium dark strip between the band and the first section (Lvcid)
         const bool lightCol = BallestLight(), nightCol = CurrentTheme() == 0;
         constexpr double kColW = 90, kColFade = 54;
         const Color kColour = ux::Hex("#121316");
         if (lightCol || nightCol) {
-            // (under the band, the band's own shape again a little lower, as a coloured drop shadow (Lvcid's mock): ballest
+            // (under the band, the band's own shape again a little lower, as a coloured drop shadow (Lvcid): ballest
             // blue on the plugins page; the cosmetics page tries its open tab's pink (owned) or cyan (explore). Drawn
             // under the band; its foot again over the list (the rows scroll under it))
             ux::RawColors raw;
@@ -3221,8 +3094,8 @@ void PluginsPage(Layer& wl, const Rect& area) {
                     if (lightHead) {
                         // the bar: its left end round the tab's corner, a strip over the tab, the tab's right end sloping
                         // down to the bar's foot, the bar on, its right end dissolving into the halftone on a slant
-                        // (pm-section-trail.png, section_trail.py); hovered, the tab brightens. Pictures:
-                        // pm-section-tab-*.png (Handoff/sources/pm/section_tab.py).
+                        // (pm-section-trail.png); hovered, the tab brightens. The tab's pictures: pm-section-tab-*.png
+                        // (both generated: the scripts are kept outside this repo).
                         ux::RawColors raw;
                         constexpr double kLW = 16, kSW = 22, kIn = 3;
                         const Color bar = ux::Hex(nightHead ? "#27292F" : "#17181B");
@@ -3377,10 +3250,10 @@ double gRowH = kRowH;                       // the last row's height (a long des
 // The label box's width in a pane `w` wide; its control follows it.
 double LabelW(double w) { return std::min(kLabelMax, w - kCtlW - 20); }
 bool gNoteTips = false;                     // (the plugin manager's own pages: descriptions as tooltips)
-// The plugin manager's own pages, tight (Lvcid's mock, 2026-10-11): no label boxes; the names in from the group's
-// heading, the controls in one column after them, the rows close (a touch more room than the mock: Lvcid).
+// The plugin manager's own pages, tight (Lvcid, 2026-10-11): no label boxes; the names in from the group's
+// heading, the controls in one column after them, the rows close.
 constexpr double kTightLabelX = 32, kTightCtlX = 206, kTightCtlW = 374, kTightRowH = 42;
-// (a page's controls in one column: past its longest name when that's longer than the mock's; from the last frame)
+// (a page's controls in one column: past its longest name when that's longer than kTightCtlX allows; from the last frame)
 std::map<std::string, double> gTightCol;
 std::string gTightPage;
 double TightCol() { return std::max(kTightCtlX, gTightCol[gTightPage]); }     // this page's control column
@@ -3400,18 +3273,11 @@ Rect SettingLabel(Layer& pane, const std::string& key, double y, double w, const
         // long for its column pushes its control along)
         h = kTightRowH;
         gRowH = h;
-        double flash = 0;
-        if (gS.flash == key) {
-            const double t = pmui::Now() - gS.flashAt;
-            flash = t < 0.25 ? t / 0.25 : std::max(0.0, 1 - (t - 0.25) / 1.4);
-            if (t > 2) gS.flash.clear();
-        }
         double& col = gTightCol[gTightPage];
         col = std::max(col, kTightLabelX + pmui::Width(label, 18, "Regular") + 24);
         const double cx = std::max(kTightCtlX, col);
         const Rect row{kTightLabelX - 16, y, cx + kTightCtlW - kTightLabelX + 16, h};
-        Glow(pane, key + ".flash", 0, row, kLime, 0.5 * flash);
-        pmui::Text(pane, key + ".l", 3, label, 18, "Regular", Mix(kRowLabel, kLime, flash), kTightLabelX, y + h / 2);
+        pmui::Text(pane, key + ".l", 3, label, 18, "Regular", kRowLabel, kTightLabelX, y + h / 2);
         Tip(pane, key, row, note);
         return {cx, y, kTightCtlW, h};
     }
@@ -3423,15 +3289,6 @@ Rect SettingLabel(Layer& pane, const std::string& key, double y, double w, const
     }
     gRowH = h;
     const Rect r{0, y, lw, h};
-    // a setting the search led to flashes lime
-    double flash = 0;
-    if (gS.flash == key) {
-        const double t = pmui::Now() - gS.flashAt;
-        flash = t < 0.25 ? t / 0.25 : std::max(0.0, 1 - (t - 0.25) / 1.4);
-        if (t > 2) gS.flash.clear();
-    }
-    Glow(pane, key + ".flash", 0, r, kLime, 0.5 * flash);
-    if (flash > 0.01) pmui::Box(pane, key + ".ring", 0, r.Grow(2), A(kLime, flash), 14);
     pmui::Box(pane, key + ".bg", 1, r, kSetRow, 12);
     if (note.empty()) {
         pmui::Text(pane, key + ".l", 3, label, 18, "Regular", kRowLabel, 20, y + kRowH / 2);
@@ -3532,7 +3389,7 @@ bool Slider(Layer& pane, const std::string& key, const Rect& track, double* t, c
 bool SliderRow(Layer& pane, const std::string& key, double y, double w, const std::string& label, const std::string& note, double* t,
                const std::string& value, double step = 0.01, bool testable = true) {
     const Rect c = SettingLabel(pane, key, y, w, label, note);
-    const Rect track{c.x, c.Cy() - 2, c.w - (gNoteTips ? 64 : 90), 4};       // (tight: the mock's 310 of its 374)
+    const Rect track{c.x, c.Cy() - 2, c.w - (gNoteTips ? 64 : 90), 4};       // (tight: 310 of the column's 374)
     return Slider(pane, key, track, t, value, c.R(), step, testable);
 }
 
@@ -3664,8 +3521,8 @@ constexpr int kThemeCount = 4;
 // (the setting's values, as the plugin's choices spell them)
 const char* const kThemeValues[] = {"Ballest Night", "Ballest Light", "Lucid Lime", "Classic"};
 
-// (the Plugin Manager plugin's "Theme" setting: Ballest Night (the default, first: Lvcid), Lucid Lime, or Classic, the
-// old menu. An older name ("Limelit Dark", "Lucid Lime (Dark)", from test builds only) isn't one of the setting's
+// (the Plugin Manager plugin's "Theme" setting: Ballest Night (the default, first: Lvcid), Ballest Light, Lucid Lime,
+// or Classic, the old menu. An older name ("Limelit Dark", "Lucid Lime (Dark)", from test builds only) isn't one of the setting's
 // choices, so the settings loader keeps the default instead: Ballest Night)
 // (read once a frame, not on each of its dozens of asks a frame: Frame() and PickTheme forget it)
 int gThemeNow = -1;
@@ -3701,7 +3558,7 @@ Color LightMap(const Color& c, int kind) {
             if (hue < 0) hue += 360;
         }
         const bool lime = hue >= 62 && hue <= 105, gold = hue >= 36 && hue < 62;
-        return lime || gold ? Color{0, 0, 0, 0.9f * c.a} : Color{0, 0, 0, 0};      // (stronger: the open card's lime words were hard to read, Lvcid)
+        return lime || gold ? Color{0, 0, 0, 0.45f * c.a} : Color{0, 0, 0, 0};      // (a light one: the words are darker themselves now)
     }
     if (kind == 5) {
         // a lime fill's trim (Lvcid: anything lime on the light panel has a black trim round it)
@@ -3716,6 +3573,21 @@ Color LightMap(const Color& c, int kind) {
         return hue >= 62 && hue <= 105 ? Color{0, 0, 0, 0.85f * c.a} : Color{0, 0, 0, 0};
     }
     if (lum < 0.02f && kind != 0) return c;                         // black words, icons, edges: as they are
+    if (kind == 1 && colour >= 0.6f) {
+        // lime and gold words a deeper shade of themselves: the game's bright ones were low contrast on the light panel
+        // (AnythingGoes' review; Lvcid), the other colours (pink, cyan, red) as they are
+        float hue = 0;
+        if (mx - mn > 1e-4f) {
+            if (mx == r) hue = 60 * std::fmod((g - b) / (mx - mn), 6.0f);
+            else if (mx == g) hue = 60 * ((b - r) / (mx - mn) + 2);
+            else hue = 60 * ((r - g) / (mx - mn) + 4);
+            if (hue < 0) hue += 360;
+        }
+        if (hue >= 36 && hue <= 105) {
+            constexpr float kDeep = 0.6f;
+            return {toL(r * kDeep), toL(g * kDeep), toL(b * kDeep), c.a};
+        }
+    }
     // Each kind one way only, so a fade never goes dark and back (Lvcid): fills lighter as they were lighter (the
     // near-black backgrounds the panel's grey, the cards a shade lighter, a hover's white white); words and icons the
     // other way round (white words dark, grey ones mid); edges darker, for contrast (a card's trim a mid grey, white
@@ -3750,7 +3622,7 @@ void PickTheme(int n) {
     ux::SetThemeMap(BallestLight() ? LightMap : nullptr);
 }
 
-// The theme's preview (Lvcid): one picture of it (pm-theme-<theme>-1.png; test pictures for now), in a frame; another
+// The theme's preview (Lvcid): its pictures (pm-theme-<theme>-1.png, and -2, -3 for a slideshow), in a frame; another
 // theme hovered in the dropdown, its picture crossfades in.
 int gPreviewShown = -1, gPreviewWas = -1;
 double gPreviewAt = -100;
@@ -3770,7 +3642,7 @@ void ThemePreview(Layer& pane, const Rect& r, int theme) {
         std::snprintf(name, sizeof name, "pm-theme-%s-1.png", kThemes[gPreviewWas].picture);
         pmui::Pic(img, "was", 1, {0, 0, ir.w, ir.h}, name, kWhite, 10).Opacity(static_cast<float>(1 - u));
     }
-    // (several frames (Ballest Night's: Lvcid's screenshots, Handoff/sources/pm/theme_night_frames.py): each held a
+    // (several frames (cut from Lvcid's screenshots of the theme): each held a
     // few seconds, the next cross-fading in over it)
     const int frames = std::max(1, kThemes[theme].frames);
     constexpr double kHold = 3.6, kFade = 0.7;
@@ -3851,7 +3723,7 @@ void ThemeRow(Layer& pane, Layer& overlay, const Rect& r) {
 // and says what it resets (`what`: this page's settings only).
 void PageButtons(Layer& pane, const std::string& key, double w, const char* popup, const char* what) {
     constexpr double kH = 52;
-    const double right = std::min(832.0, w + 20);         // (the mock's: its right edge 832 in, or the pane's)
+    const double right = std::min(832.0, w + 20);         // (its right edge 832 in, or the pane's)
     const double rw = PillWidth(pane, key + ".reset.btn", "reset to default", 18, nullptr, 22);
     const Rect reset{right - rw, 34 - kH / 2, rw, kH};
     // (hovered, as the top bar's pages in Ballest Night: a black bubble inside a thin white edge, the words white,
@@ -3862,7 +3734,7 @@ void PageButtons(Layer& pane, const std::string& key, double w, const char* popu
         .Outline(BallestLight() ? 1.3f : 0.0f, A(kBlack, 0.4 * (1 - h)));      // (Ballest Light: a slight edge at rest: Lvcid)
     if (h > 0.01) {
         pmui::Bubble(pane, key + ".reset.bb", 3, g.Grow(kBubbleOut), g.h / 2 + kBubbleOut, h, 2);
-        MetalOutline(pane, key + ".reset.ring", 3, g, g.h / 2, 2, A(kWhite, 0.85 * h), 1);
+        EdgeOutline(pane, key + ".reset.ring", 3, g, g.h / 2, 2, A(kWhite, 0.85 * h));
     }
     pmui::Text(pane, key + ".reset.t", 4, "reset to default", 18, "Regular", Mix(kTabHover, kWhite, h), g.Cx(), g.Cy(), 0.5);
     if (pmui::Entry* e = pmui::Find(pane, key + ".reset.t")) e->node.Transform(1 + 0.04 * h, 0);      // (grows with it: a scale, no twitch)
@@ -3870,41 +3742,37 @@ void PageButtons(Layer& pane, const std::string& key, double w, const char* popu
     Tip(pane, key + ".reset", reset, std::string("resets this page only: ") + what);
 }
 
-// General (Lvcid): everything of the plugin manager's own but its theme (its own page) and advanced.
-// A theme's words beside its preview (Lvcid's mock): a line, then four short ones centred, their colour words in their
+// A theme's words beside its preview (Lvcid): a line, then four short ones centred, their colour words in their
 // colours (null: the plain grey). Its colours are read each time (the limes follow the theme).
 struct ThemePart {
     const char* text;
     const Color* colour;
 };
 struct ThemeWords {
-    const char* line;
-    std::vector<std::vector<ThemePart>> verse;
+    std::vector<ThemePart> line;                     // its one line (a colour word in its colour)
+    std::vector<std::vector<ThemePart>> verse;       // and the short verse under it (none: just the line)
 };
 const ThemeWords& WordsOf(int theme) {
-    static const ThemeWords kNight{"Ballest's own colors; after dark.",
+    static const ThemeWords kNight{{{"Ballest's own colors; after dark.", nullptr}},
                                    {{{"Leaderboard ", nullptr}, {"pink", &kPink}, {" and ", nullptr}, {"cyan", &kBallestCyan}, {",", nullptr}},
                                     {{"energizing hints of ", nullptr}, {"lime", &kNightLime}, {",", nullptr}},
                                     // ("bytes", not "bites", on purpose (Lvcid): a bite of apple red, the few small dots it
                                     // shows as, and memory, as the errors it marks)
                                     {{"reserved bytes of ", nullptr}, {"red", &kErrAccent}, {",", nullptr}},
                                     {{"& a touch of ", nullptr}, {"gold", &kBallestGold}, {".", nullptr}}}};
-    static const ThemeWords kLucid{"The plugin manager's own look.",
-                                   {{{"Bright ", nullptr}, {"lime", &kLucidLime}, {" on graphite,", nullptr}},
-                                    {{"calm greys,", nullptr}},
-                                    {{"clean white hovers,", nullptr}},
-                                    {{"& the classic ", nullptr}, {"red", &kRed}, {" and ", nullptr}, {"yellow", &kGold}, {".", nullptr}}}};
-    static const ThemeWords kClassic{"The old plugins menu.",
+    static const ThemeWords kLucid{{{"Nightvision ", nullptr}, {"lime", &kLucidLime}, {" styled dark mode.", nullptr}}, {}};     // (Lvcid)
+    static const ThemeWords kClassic{{{"The old plugins menu.", nullptr}},
                                      {{{"The menu from before:", nullptr}},
                                       {{"plain lists and buttons;", nullptr}},
                                       {{"its cog still opens", nullptr}},
                                       {{"these same settings.", nullptr}}}};
-    static const ThemeWords kLight{"Ballest's own colors; in daylight.", kNight.verse};
+    static const ThemeWords kLight{{{"Ballest's own colors; in daylight.", nullptr}}, kNight.verse};
     return theme == 0 ? kNight : theme == 1 ? kLight : theme == 2 ? kLucid : kClassic;
 }
 
-// One line of parts, centred on cx: the plain words grey, the colour words bold in their colours.
-void PartsLine(Layer& l, const std::string& key, int z, const std::vector<ThemePart>& parts, double px, double cx, double cy) {
+// One line of parts, centred on cx: the plain words in `plain` (grey), the colour words bold in their colours.
+void PartsLine(Layer& l, const std::string& key, int z, const std::vector<ThemePart>& parts, double px, double cx, double cy,
+               const Color& plain = kSub) {
     std::vector<double> widths;
     double total = 0;
     for (const ThemePart& part : parts) {
@@ -3914,12 +3782,12 @@ void PartsLine(Layer& l, const std::string& key, int z, const std::vector<ThemeP
     double x = cx - total / 2;
     for (size_t i = 0; i < parts.size(); ++i) {
         pmui::Text(l, key + "." + std::to_string(i), z, parts[i].text, px, parts[i].colour ? "Bold" : "Semilight",
-                   parts[i].colour ? *parts[i].colour : kSub, x, cy);
+                   parts[i].colour ? *parts[i].colour : plain, x, cy);
         x += widths[i];
     }
 }
 
-// General (Lvcid's mock, 2026-10-11): the plugin manager's own settings but advanced, on one page. DISPLAY & SOUND: a
+// General (Lvcid, 2026-10-11): the plugin manager's own settings but advanced, on one page. DISPLAY & SOUND: a
 // row each, a toggle on the left where it has one (smaller than elsewhere), its name, its slider and value; then
 // THEME: the preview on the left, its dropdown on the right, the theme's words under the dropdown.
 double General(Layer& pane, Layer& overlay, double w) {
@@ -3982,7 +3850,7 @@ double General(Layer& pane, Layer& overlay, double w) {
     // hover sounds: on or off, and how loud (69% by default); the slider plays the sound as it moves
     {
         const double cy = row("tw.sound", "hover sounds",
-                              "a soft click as the pointer comes onto a button or a card, and how loud (on, 69% by default; the footer's buttons always click)");
+                              "a soft click as the pointer comes onto a button or a card, and how loud (on, 69% by default; the footer's buttons follow it too)");
         if (toggle("tw.sound", cy, gPrefs.hoverSound, cyan)) {
             gPrefs.hoverSound = !gPrefs.hoverSound;
             PrefsChanged();
@@ -3999,7 +3867,7 @@ double General(Layer& pane, Layer& overlay, double w) {
         const int pct = static_cast<int>(std::lround(gPrefs.hoverVol * 100));
         if (lastPct < 0) lastPct = pct;
         if (pct != lastPct && game::Seconds() - lastAt >= 0.045) {
-            draw::Sound(kHoverSound, gPrefs.hoverVol, 2.0, 0.11);
+            draw::UiSound(kHoverSound, gPrefs.hoverVol, 2.0, 0.11);
             lastAt = game::Seconds();
             lastPct = pct;
         }
@@ -4010,14 +3878,16 @@ double General(Layer& pane, Layer& overlay, double w) {
     // preview's bottom and the line between the dropdown and the verse; the preview on its right (Lvcid's flip)
     y = GroupHead(pane, "th.g", y + kGroupGap - 2, "THEME");
     const Rect drop{14, y + 6, 280, 38};
-    const Rect pv{drop.R() + std::clamp(w - 14 - 280 - 425 - 16, 9.0, 56.0), y + 6, 425, std::floor(425.0 * 9 / 16) + 24};      // (the gap as the mock, less on a narrow window)
+    const Rect pv{drop.R() + std::clamp(w - 14 - 280 - 425 - 16, 9.0, 56.0), y + 6, 425, std::floor(425.0 * 9 / 16) + 24};      // (less of a gap on a narrow window)
     const int shownTheme = gThemeHover >= 0 ? gThemeHover : CurrentTheme();
     ThemePreview(pane, pv, shownTheme);
     const double cx = drop.Cx();
     const ThemeWords& words = WordsOf(shownTheme);
     constexpr double kVerse = 23, kWordPx = 16;
-    const double lastY = pv.B() - 22, firstY = lastY - kVerse * static_cast<double>(words.verse.size() - 1);
-    pmui::Text(pane, "th.line", 3, words.line, kWordPx, "Semilight", kRowLabel, cx, (drop.B() + firstY - 12) / 2, 0.5);
+    // (the line where it is with Night's four-line verse, verse or not: it doesn't move as the theme changes)
+    constexpr double kVerseLines = 4;
+    const double lastY = pv.B() - 22, firstY = lastY - kVerse * static_cast<double>(std::max<size_t>(words.verse.size(), 1) - 1);
+    PartsLine(pane, "th.line", 3, words.line, kWordPx, cx, (drop.B() + lastY - kVerse * (kVerseLines - 1) - 12) / 2, kRowLabel);
     for (size_t i = 0; i < words.verse.size(); ++i)
         PartsLine(pane, "th.v" + std::to_string(i), 3, words.verse[i], kWordPx, cx, firstY + kVerse * static_cast<double>(i));
     ThemeRow(pane, overlay, drop);           // (after the words: its open list drops over them)
@@ -4348,14 +4218,14 @@ double Advanced(Layer& pane, Layer& overlay, double w) {
     }
     // DEBUG (Lvcid: tidied, 2026-10-10): pretend states, to check the look (nothing is changed, downloaded or saved),
     // in three small groups; how many are on in its heading, and one button turns them all off.
-    const int testsOn = gTestFirstOpen + (gTestHost > 0) + (gTestNeedsHost > 0) + gTestUpdates + gTestUpdate + (gTestError || gTestToggles) + gTestNew + gTestOldCos;
+    const int testsOn = gTestFirstOpen + (gTestHost > 0) + (gTestNeedsHost > 0) + gTestUpdates + gTestUpdate + (gTestError || gTestToggles) + gTestNew;
     if (FoldGroup(pane, "ad.debug", y, w, "DEBUG", testsOn ? std::to_string(testsOn) + " on" : "", true)) {     // (folded at first: Lvcid)
         auto sub = [&](const std::string& key, const std::string& title) {
             pmui::Text(pane, key, 3, title, 12, "Bold", kHead, 16, y + 10);
             y += 28;
         };
         if (ButtonRow(pane, "t.reset", y, w, "all tests off", "Turns every test below off at once.", "reset")) {
-            gTestFirstOpen = gTestUpdates = gTestUpdate = gTestError = gTestToggles = gTestNew = gTestOldCos = false;
+            gTestFirstOpen = gTestUpdates = gTestUpdate = gTestError = gTestToggles = gTestNew = false;
             gTestHost = gTestNeedsHost = 0;
             gTestHostAt = -100;
             gS.bannerLater = false;
@@ -4365,7 +4235,7 @@ double Advanced(Layer& pane, Layer& overlay, double w) {
         }
         y += Step() + 6;
         sub("t.h.welcome", "WELCOME");
-        if (TestRow(pane, "t.first", y, w, "welcome on every open", "Each open counts as the first since an update: the logo's intro and the what's new splash play.", gTestFirstOpen))
+        if (TestRow(pane, "t.first", y, w, "welcome on every open", "Each open counts as the first since an update: the logo's intro plays.", gTestFirstOpen))
             gTestFirstOpen = !gTestFirstOpen;
         y += Step() + 6;
         sub("t.h.host", "PLUGIN MANAGER UPDATE");
@@ -4401,10 +4271,7 @@ double Advanced(Layer& pane, Layer& overlay, double w) {
             gModelAt = -100;
         }
         y += Step();
-        if (TestRow(pane, "t.new", y, w, "NEW tags", "Every plugin on browse, and every cosmetic, shows its NEW tag.", gTestNew)) gTestNew = !gTestNew;
-        y += Step();
-        if (TestRow(pane, "t.oldcos", y, w, "earlier cosmetics page", "The cosmetics page as it was before it became the plugins page's twin: the sidebar, grids and pack pages.", gTestOldCos))
-            gTestOldCos = !gTestOldCos;
+        if (TestRow(pane, "t.new", y, w, "NEW tags", "Every plugin on browse, and every pack on explore, shows its NEW tag.", gTestNew)) gTestNew = !gTestNew;
         y += Step();
     }
     gNoteTips = false;
@@ -4432,7 +4299,7 @@ double PluginSection(Layer& pane, Layer& overlay, double w, const std::string& i
     Tile(pane, "p.tile", 3, {0, 6, 60, 60}, p->icon, 15, 3, 0, !p->enabled);
     Header(pane, "", "", w);
     pmui::Text(pane, "p.name", 3, p->name, 34, "Regular", kWhite, 78, 28);
-    pmui::Text(pane, "p.by", 3, (p->author.empty() ? "" : "by " + p->author + "  \xC2\xB7  ") + p->version + (p->enabled ? "" : "  \xC2\xB7  offline"), 17,
+    pmui::Text(pane, "p.by", 3, (p->author.empty() ? "" : "by " + p->author + "  \xC2\xB7  ") + p->version + (p->enabled ? "" : "  \xC2\xB7  off"), 17,
                "Semilight", kSub, 78, 60);
     double y = 112;
     bool any = false;
@@ -4501,9 +4368,9 @@ bool NavItem(Layer& nav, Layer& /*o*/, const std::string& key, double y, const s
         // (Ballest Light, on the blue: a white bubble with dark bubbles inside a black edge, its words black; Lvcid)
         const bool light = BallestLight();
         pmui::Bubble(nav, key + (light ? ".ink" : ".bub"), 2, r.Grow(kBubbleOut), round + kBubbleOut, h, light ? 4 : 2);
-        MetalOutline(nav, key + ".ring", 3, r, round, 2, A(light ? kBlack : kWhite, 0.85 * h), 1);
+        EdgeOutline(nav, key + ".ring", 3, r, round, 2, A(light ? kBlack : kWhite, 0.85 * h));
     }
-    if (!on) SideAccent(nav, key, r, over, kOverlay, round, gFx);
+    if (!on && gFx) SideAccent(nav, key, r, over, round, *gFx);
     const Rect ir{r.x + 12, r.Cy() - 12, 24, 24};
     // (Ballest Light, on the blue: the names white, as the game's main menu, a turned-off plugin's softer; black on the
     // white hover bubble. Night: grey, white hovered)
@@ -4545,7 +4412,7 @@ void SideNav(Layer& o, double height) {
         y += 50;
     }
     y += 12;
-    MetalRule(nav, "sep", 1, {30, y, 330 - 60, 2}, kPopupRing);
+    Rule(nav, "sep", 1, {30, y, 330 - 60, 2}, kPopupRing);
     y += 22;
     Tick(nav, "h2.bar", 1, {24, y + 1, 3, 14});
     pmui::Text(nav, "h2", 1, "PLUGIN SETTINGS", 13, "Bold", NavHead(), 36, y + 8);
@@ -4581,7 +4448,7 @@ void SettingsOverlay(Layer& wl, const Rect& area, double t) {
         const Rect side{334, 0, area.w - 334 - 8, area.h - 8};
         pmui::MaterialOf(o, "bg.halftone", 0, side, ux::HalftoneMaterial(1.25f), 16, 0.2);
     } else if (CurrentTheme() == 0) {
-        // (Ballest Night (Lvcid's pick of the mockups): the menu on a soft step lighter than the window (shows about
+        // (Ballest Night (Lvcid's pick): the menu on a soft step lighter than the window (shows about
         // #16171A), its names white; the page's side on the dark halftone, fully (its box the window's colour, so its
         // edges melt into it)
         pmui::BoxCorners(o, "nav.bg", 0, {kFootIn, 0, 330 - kFootIn, area.h - kFootIn}, kNightNavBg, 0, 0, 0, kFootRound);
@@ -4596,7 +4463,7 @@ void SettingsOverlay(Layer& wl, const Rect& area, double t) {
             flipped = eng::MakeWeak(img);
         }
     }
-    MetalRule(o, "edge", 1, {330, 0, 2, area.h}, kSideEdge);
+    Rule(o, "edge", 1, {330, 0, 2, area.h}, kSideEdge);
     if (BallestLight()) {
         // (Ballest Light: the settings menu on ballest blue, its items as Night draws them over it: white words, the
         // black bubble hover, the lime open one; Lvcid)
@@ -4897,10 +4764,6 @@ void Popup(Layer& wl, double W, double H) {
         ResetPopup(wl, W, H);
         return;
     }
-    if (gS.popup.rfind("cos.", 0) == 0) {
-        CosPopup(wl, W, H);
-        return;
-    }
     const Plug* p = FindPlug(gS.popupId);
     if (!p) {
         ClosePopup();
@@ -4993,19 +4856,16 @@ void Popup(Layer& wl, double W, double H) {
 
 // --- back and forward (Lvcid) ----------------------------------------------------------------------------------------------
 // The mouse's side buttons (4: back, 5: forward) step through the places visited, as a browser's do; nothing is drawn for
-// it. A place: the page and its tab, settings (and its section) or the console, the cosmetics page's slot and pack.
+// it. A place: the page and its tab, settings (and its section) or the console.
 // Taken as it changes, however it changed; a new place after going back drops the forward ones. This session only.
 struct Place {
-    std::string page, tab, overlay, section, slot, pack;
+    std::string page, tab, overlay, section;
     bool operator==(const Place&) const = default;
 };
 std::vector<Place> gHistory;
 size_t gHere = 0;
 
-Place PlaceNow() {
-    const bool cos = gS.page == "cosmetics";
-    return {gS.page, cos ? "" : gS.tab, gS.overlay, gS.overlay == "settings" ? gS.section : "", cos ? gC.slot : "", cos ? gC.pack : ""};
-}
+Place PlaceNow() { return {gS.page, gS.tab, gS.overlay, gS.overlay == "settings" ? gS.section : ""}; }     // (the tab: both pages')
 
 void TrackPlace() {
     const Place now = PlaceNow();
@@ -5020,20 +4880,12 @@ bool gResync = false;                       // a back / forward step was taken: 
 void GoTo(const Place& p) {
     gResync = true;
     if (p.page != gS.page) SetPage(p.page);
-    if (p.page == "plugins" && !p.tab.empty() && p.tab != gS.tab) {
+    if (!p.tab.empty() && p.tab != gS.tab) {
         gSlideFrom = gSlideNow;             // (as a click on the tab: the lime box slides)
         gS.swapFrom = gS.tab;
         gS.swapAt = pmui::Now();
         gS.tab = p.tab;
         gS.expanded.clear();
-    }
-    const std::string pack = p.pack.empty() || FindPack(p.pack) ? p.pack : "";      // (a pack removed since: its slot)
-    if (p.page == "cosmetics" && (p.slot != gC.slot || pack != gC.pack)) {
-        gC.glide.from = gC.slot + "/" + gC.pack;
-        gC.glide.at = pmui::Now();
-        gC.slot = p.slot;
-        gC.pack = pack;
-        gC.open.clear();
     }
     if (p.overlay != gS.overlay || (p.overlay == "settings" && p.section != gS.section)) OpenOverlay(p.overlay, p.section);
 }
@@ -5042,9 +4894,7 @@ void GoTo(const Place& p) {
 // installed, nothing open, no history.
 void FreshStart() {
     gS = State{};
-    gC = CosState{};
-    for (Obj f : {gInstalledField, gBrowseField, gCosField})
-        if (f) w::SetText(f, "");
+    if (gInstalledField) w::SetText(gInstalledField, "");
     gHistory.clear();
     gHere = 0;
     gSlideFrom = gSlideNow = {};
@@ -5055,7 +4905,6 @@ void FreshStart() {
 // closing), Space / Enter select, arrows and WASD move, Tab / Shift+Tab move in order. A pad: the D-pad or stick moves,
 // A selects, B back / close, Start closes the window, Y the page's search, X turns the focused plugin on or off, LT / RT
 // settings / plugins / cosmetics, LB / RB the page's two tabs (installed / browse, owned / explore), View settings.
-// (Archived first version: Handoff/archive/input-layers.)
 
 bool gPadMode = false;                      // the last thing used was a pad (the legend shows its buttons), else keys / mouse
 
@@ -5065,11 +4914,10 @@ void TrackInputMode() {
     else if (k > 0 || pmui::MouseMoved()) gPadMode = false;
 }
 
-// What Esc / B does now: closes the window (true) or steps back (false). The splash's counts as closing (it goes).
+// What Esc / B does now: closes the window (true) or steps back (false).
 bool BackCloses() {
-    if (gWelcome == Welcome::Splash) return true;
-    if (!gS.popup.empty() || !gS.choiceOpen.empty() || gS.sortOpen || gS.searchOpen || gTypedLastFrame) return false;
-    if (gS.page == "cosmetics" && gS.overlay.empty() && (!gC.open.empty() || !gC.pack.empty() || !gCosRowsState.expanded.empty()))
+    if (!gS.popup.empty() || !gS.choiceOpen.empty() || gS.sortOpen || gTypedLastFrame) return false;
+    if (gS.page == "cosmetics" && gS.overlay.empty() && !gCosRowsState.expanded.empty())
         return false;
     return gS.overlay.empty();
 }
@@ -5123,7 +4971,7 @@ void NavKeys() {
     }
     // Y: the page's search
     if (Pressed(kPadY) && gS.overlay.empty()) {
-        if (Obj field = gS.page == "cosmetics" && gTestOldCos ? gCosField : gInstalledField) {
+        if (Obj field = gInstalledField) {
             eng::Call(field, "SetKeyboardFocus");
             pmui::NavOff();
         }
@@ -5195,12 +5043,11 @@ void Legend(Layer& root, const Rect& win, const Rect& dim, double alpha) {
 }
 
 // --- keys -----------------------------------------------------------------------------------------------------------------------
-// Esc goes back one step: a popup, an open dropdown, the search, an overlay, then the window itself. Up, down and Enter
-// pick from the search's results. The welcome has its own: its intro skips to the splash, the splash's keys pick.
+// Esc goes back one step: a popup, an open dropdown, a text box, an open card, an overlay, then the window itself. The
+// welcome's intro takes no keys (it plays through).
 void Keys() {
     TrackInputMode();
     if (gWelcome == Welcome::Intro) return;     // (the intro plays through: it's short; Lvcid)
-    if (gWelcome == Welcome::Splash) return SplashKeys();
     // Back (Esc, or a pad's B): one step each press, the topmost thing first; the window itself only when nothing else
     // is open (Lvcid: a back never closes more than one level). Each step is logged.
     if (input::Pressed(VK_ESCAPE) || input::Pressed(input::kPadB)) {
@@ -5208,10 +5055,7 @@ void Keys() {
         if (!gS.popup.empty()) ClosePopup(), step = "the popup";
         else if (!gS.choiceOpen.empty()) gS.choiceOpen.clear(), step = "the list";
         else if (gS.sortOpen) gS.sortOpen = false, step = "the sort list";
-        else if (gS.searchOpen) EndSearch(gSearchField), step = "the search";
         else if (gTypedLastFrame) Unfocus(), step = "the text box (its text kept)";      // typing: out of the box, not the window
-        else if (gS.page == "cosmetics" && gS.overlay.empty() && !gC.open.empty()) gC.open.clear(), step = "the details";
-        else if (gS.page == "cosmetics" && gS.overlay.empty() && !gC.pack.empty()) gC.pack.clear(), step = "the pack";
         else if (gS.page == "cosmetics" && gS.overlay.empty() && !gCosRowsState.expanded.empty()) gCosRowsState.expanded.clear(), step = "the open card";
         else if (!gS.overlay.empty() && gS.overlay == "settings" && gS.backFor == gS.section) {
             const std::string overlay = gS.backOverlay, section = gS.backSection;      // (a jump in: back where it came from)
@@ -5241,31 +5085,16 @@ void Keys() {
         if (back ? gHere > 0 : gHere + 1 < gHistory.size()) {
             gS.choiceOpen.clear();
             gS.sortOpen = false;
-            if (gS.searchOpen) EndSearch(gSearchField);
             gHere = back ? gHere - 1 : gHere + 1;
             const Place& p = gHistory[gHere];
             GoTo(p);
             hostlog::Info(std::string("manager: ") + (back ? "back" : "forward") + " to " + p.page +
-                          (p.tab.empty() ? "" : " / " + p.tab) + (p.slot.empty() ? "" : " / " + p.slot) +
-                          (p.pack.empty() ? "" : " / " + p.pack) + (p.overlay.empty() ? "" : ", " + p.overlay) +
+                          (p.tab.empty() ? "" : " / " + p.tab) + (p.overlay.empty() ? "" : ", " + p.overlay) +
                           (p.section.empty() ? "" : " / " + p.section));
         }
         return;
     }
-    if (!gS.searchOpen && !gTypedLastFrame && gS.choiceOpen != "theme") NavKeys();
-    if (!gS.searchOpen) return;
-    const int n = static_cast<int>(gResults.size());
-    if (input::Pressed(VK_DOWN) && n > 0) gS.searchPick = (gS.searchPick + 1) % n;
-    if (input::Pressed(VK_UP) && n > 0) gS.searchPick = (gS.searchPick + n - 1) % n;
-    if (input::Pressed(VK_RETURN) && gS.searchFocused && gSearchField) {
-        const std::string typed = w::ReadText(gSearchField);
-        if (typed != gS.search) {
-            gS.search = typed;
-            gS.searchPick = 0;
-        }
-        if (gResultsFor != gS.search) FindResults();
-        if (!gResults.empty()) Choose(gResults[static_cast<size_t>(std::clamp(gS.searchPick, 0, static_cast<int>(gResults.size()) - 1))], gSearchField);
-    }
+    if (!gTypedLastFrame && gS.choiceOpen != "theme") NavKeys();
 }
 
 // Closing lets go of input a moment later (only the click blocker stays up meanwhile), so the click or key that closed
@@ -5304,10 +5133,20 @@ struct Resize {
 
 // The footer's plugins button opens on the page it was left on the last time it was opened from there (plugins at
 // first); the Customize page's globe opens cosmetics without changing that (Lvcid). This session only.
+// (plugins run after the window each frame: the Esc or click that closed it would reach them too, the same frame)
+long long gFrameNo = 0, gClosedFrameNo = -1;
 std::string gFooterPage = "plugins";
 bool gFromFooter = false;
 
+// A run being raced, not paused and not finished: the window doesn't open over it, and closes if one starts under it (the
+// timer runs on and the ball can't be driven meanwhile: AnythingGoes' review).
+bool LiveRun() { return race::Active() && !race::Complete() && !race::Paused(); }
+
 void Open(const std::string& page_) {
+    if (!gS.open && LiveRun()) {
+        hostlog::Info("manager: not opened: a run is being raced (pause it first)");
+        return;
+    }
     // (the Classic theme: this window is only its settings, opened by the old menu's cog)
     const std::string page = page_.empty() && !NewLook() ? "settings" : page_;
     const bool first = !gS.open && FirstOpenNow();
@@ -5329,10 +5168,7 @@ void Open(const std::string& page_) {
             hostlog::Info(std::string("manager: first open since ") + plugins::kHostVersion + " was installed" +
                           (gTestFirstOpen ? " (pretend, from DEBUG)" : "") + ": the welcome plays");
             StartWelcome();
-        } else if (gSplashPending) {
-            ShowSplash();                   // (closed during its intro last time: the splash, without the animation)
         }
-        gSplashPending = false;
     }
     if (!gS.open) gHole.until = game::Seconds() + 0.5;     // (the footer's button measured again as it opens)
     if (!gS.open && gReleaseAt < 0) gOpenedAt = game::Seconds();     // (reopened while its dim goes: it comes back from there)
@@ -5353,15 +5189,13 @@ void Close() {
     }
     if (gFromFooter) gFooterPage = gS.page;
     gS.open = false;
-    // the splash up (the welcome's, or the logo's): it's still up at the next open (Lvcid: closing keeps the state);
+    gClosedFrameNo = gFrameNo;
     // the corner logo's replay is cut off where it is. (The intro can't be closed: Close refuses it above.)
-    if (gWelcome == Welcome::Splash) gSplashPending = true;
     gWelcome = Welcome::None;
     gWelcomeAt = -100;
     gReplayAt = -100;
     gReplayNext = -1;
     ClosePopup();
-    gS.searchOpen = false;
     gS.choiceOpen.clear();
     gS.sortOpen = false;
     gResize.edge.clear();
@@ -5372,6 +5206,13 @@ void Close() {
 }
 
 bool IsOpen() { return gS.open; }
+
+double HoverSoundLevel() {
+    if (!gPrefsRead) ReadPrefs();
+    return gPrefs.hoverSound ? gPrefs.hoverVol / kDefaultHoverVol : 0.0;
+}
+
+bool TookInputThisFrame() { return gS.open || gClosedFrameNo == gFrameNo; }
 
 bool NewLook() {
     const int nl = NewLookIndex();
@@ -5399,6 +5240,7 @@ void ThemeLimes() {
 }
 
 void Frame() {
+    ++gFrameNo;
     ux::SetThemeMap(nullptr);               // (a theme's colour map is only ever on while the window draws)
     ux::SetOutlineFade(1);
     gThemeNow = -1;                         // (the theme read again this frame: the classic menu or a setting may have changed it)
@@ -5428,6 +5270,10 @@ void Frame() {
     }
     // closed: for a moment the window fades out as it was (taking nothing); its dim eases out meanwhile and longer
     bool closing = false;
+    if (gS.open && LiveRun() && gWelcome != Welcome::Intro) {
+        hostlog::Info("manager: closed: a run started");
+        Close();
+    }
     if (!gS.open) {
         if (gReleaseAt < 0) return;
         if (!gReleased && game::Seconds() >= gReleaseAt) Release();
@@ -5470,11 +5316,10 @@ void Frame() {
     if (pmui::Now() - gModelAt > 0.25) BuildModel();
     if (!closing) Keys();
     closing = closing || !gS.open;          // (closed by a key just now: it fades from this frame)
-    // the welcome: its intro shows only the logo (nothing answers; a click skips it); its splash answers alone
-    if (gWelcome == Welcome::Intro && IntroTime() >= kSplashAt) ShowSplash();
+    // the welcome: its intro shows only the logo (nothing answers); once the logo has gone, the window is the pages
+    if (gWelcome == Welcome::Intro && IntroTime() >= kWindowAt) EndWelcome();
     if (closing || gWelcome == Welcome::Intro) pmui::SetModal(1000);      // fading out: nothing answers
-    else if (gWelcome == Welcome::Splash) pmui::SetModal(kPopupLevel);
-    else pmui::SetModal(!gS.popup.empty() ? kPopupLevel : (gS.searchOpen || !gS.choiceOpen.empty() || gS.sortOpen) ? kDropLevel : !gS.overlay.empty() ? kBarLevel : 0);
+    else pmui::SetModal(!gS.popup.empty() ? kPopupLevel : (!gS.choiceOpen.empty() || gS.sortOpen) ? kDropLevel : !gS.overlay.empty() ? kBarLevel : 0);
     // Where it goes: centred between the game's top bar and its footer, drawn at the size setting about the screen's
     // middle. Its size on screen: the one dragged to (else the concept's 1540x916 at 1080), never smaller than its pages
     // fit, never bigger than the room between the bars. The dim leaves both bars as they are; clicks are taken everywhere.
@@ -5544,7 +5389,7 @@ void Frame() {
         gBlocker[3].Box(hole.R(), hole.y, std::max(0.0, screen.R() - hole.R()), hole.h);                     // right of it
     }
     // A click outside the window (on the dim, the game under it) closes it from whatever is open (a popup, a list,
-    // settings, the splash), as it is (Lvcid); not while the welcome's intro plays. Pressed and let go out there.
+    // settings), as it is (Lvcid); not while the welcome's intro plays. Pressed and let go out there.
     bool outside = false;
     {
         static bool pressedOut = false;
@@ -5584,8 +5429,8 @@ void Frame() {
     double shown = EaseOut((pmui::Now() - gOpenedAt) / kWindowIn);               // it fades in, quickly
     if (closing) shown = std::min(shown, 1 - EaseOut(closedFor / kWindowOut));   // and out, as quickly
     // the welcome's intro (Lvcid): no window while the logo plays in the middle (not even its edge); once the logo has
-    // gone, the window comes in sharply on the splash
-    if (gWelcomeAt > -50 && IntroTime() < kSplashAt + kSharpIn) shown *= EaseOut(logo::Clamp01((IntroTime() - kSplashAt) / kSharpIn), 2);
+    // gone, the window comes in sharply, on plugins / installed
+    if (gWelcomeAt > -50 && IntroTime() < kWindowAt + kSharpIn) shown *= EaseOut(logo::Clamp01((IntroTime() - kWindowAt) / kSharpIn), 2);
     // (the window's outlines fade with it: they don't follow the window's opacity by themselves)
     ux::SetOutlineFade(shown);
     // (the theme's colour map on from here even on the first, unshown frame: things first made unmapped kept that)
@@ -5607,10 +5452,6 @@ void Frame() {
         if (BallestLight())
             // (its own box past the edges; drawn 8 in, so its square corners sit inside the window's curve: Lvcid)
             pmui::MaterialOf(root, "win.halftone", 2, win.Grow(-8), ux::HalftoneMaterial(1.25f), 16, shown);
-        else if (CurrentTheme() == 0 && gWelcome == Welcome::Splash)
-            // (Ballest Night's welcome: the game's own dark halftone behind it (MI_Halftone, as its medal and queue
-            // screens), the light one's dark twin: Lvcid)
-            pmui::MaterialOf(root, "win.halftone.dark", 2, win.Grow(-8), ux::HalftoneMaterial(1.25f, true), 16, shown);
         bg.Outline(2, A(kBlack, 0));      // (its faint grey edge, not black on black: win.edge, below)
         bg.Opacity(static_cast<float>(shown));
         // (its edge over the window's insides (z 4: the settings overlay's backing covered it) and under the logo; a hint
@@ -5620,9 +5461,7 @@ void Frame() {
     Layer& wl = pmui::Group(root, "w", 3, win, true, shown);
     gFx = &pmui::Group(root, "fx", 5, screen, false, shown);
     gFxScreen = {0, 0, screen.w, screen.h};      // (the screen itself: a group as big as root's endless clip drew nothing)
-    // (closed from the splash: the splash goes on drawing while it fades out, not the pages in its place)
-    const bool splashOut = closing && gWelcome == Welcome::None && gSplashPending;
-    const bool welcome = gWelcome != Welcome::None || splashOut;
+    const bool welcome = gWelcome != Welcome::None;
     if (!welcome && CurrentTheme() == 0)
         // (Ballest Night: the dark halftone faintly behind the top bar, its big dots toward the top right, as the welcome's;
         // past the logo, in from the window's top and right (its square corners inside the curve): Lvcid)
@@ -5680,8 +5519,7 @@ void Frame() {
             // clicked: the symbol goes white and fades back to lime, on the pages' hover curve and speeds (Lvcid)
             look.flash = HoverCurve("logo.flash", now - gRefreshAt < kHoverIn, kHoverIn, kHoverOut);
         }
-        // hovered (in its corner, the welcome closed): a soft lime glow inside its ring, the ring lit (Lvcid); a click
-        // shows the splash again (what's new), without the animation
+        // hovered (in its corner, the welcome over): it's the refresh button (below)
         const double hov = Ease("logo", pmui::Over(root, lr) && !closing && !welcome);
         if (!Animating()) {
             // (in its corner: the window's edge goes on round it, a thin ring just outside it in the edge's colour, and
@@ -5712,21 +5550,11 @@ void Frame() {
         closing = true;
         pmui::SetModal(1000);
     }
-    if (welcome) {                          // the splash instead of the pages (the intro: hidden, but there to fade in)
+    if (welcome) {                          // (the intro: the window hidden, there to fade in)
         gBannerLive = false;
-        if (gWelcome == Welcome::Splash || splashOut) Splash(wl, W, H);
         ux::SetThemeMap(nullptr);
         ux::SetOutlineFade(1);
-        if (gWelcome == Welcome::Splash || splashOut) Legend(root, win, dim, closing ? shown : 1.0);
         pmui::End();
-        // (a click outside the window closes it from the splash too, as from anywhere: Lvcid's rule; the splash is kept
-        // for the next open)
-        if (outside && gResize.edge.empty() && gWelcome == Welcome::Splash) {
-            hostlog::Info("manager: closed by a click outside the window (from the splash)");
-            Close();
-        }
-        gTypedLastFrame = gTypingField != nullptr;
-        if (gTypingField && !closing) game::SetTypingWidget(gTypingField);
         return;
     }
     double y = kTopH + 3;
@@ -5744,7 +5572,6 @@ void Frame() {
         if (gS.overlayShown == "settings") SettingsOverlay(wl, area, Smooth(gS.overlayT));
         else ConsoleOverlay(wl, area, Smooth(gS.overlayT));
     }
-    SearchDrop(wl);
     Popup(wl, W, H);
     // The resize handles (above): a thin line shows the edge under the pointer (or dragged), a grip marks the bottom
     // right corner.

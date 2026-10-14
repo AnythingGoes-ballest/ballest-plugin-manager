@@ -29,13 +29,10 @@ std::string LabelOf(const std::string& slot);
 
 // --- Cosmetic Kit ------------------------------------------------------------------------------------------------------
 bool KitOn();                           // Cosmetic Kit is installed and turned on
-// Cosmetic Kit Plus is installed, turned on and running: the extra slots (arms, bounce effects, ...) are its (it stays
-// a plugin of its own for now: Lvcid, 2026-10-11; merging it into Cosmetic Kit as a setting is archived in
-// Handoff/archive/cosmetic-kit-plus-merged).
+// Cosmetic Kit Plus is installed, turned on and running: the extra slots (arms, bounce effects, ...) are its.
 bool PlusOn();
 
 struct Settings {
-    bool moreSlots = true;              // (unused while Cosmetic Kit Plus is its own plugin: PlusOn; kept in the file)
     int labelStyle = 2;                 // the slot tabs' names: 1 sideways, 2 horizontal
     int theme = 0;                      // the Customize panel: 0 the game's (light), 1 charcoal, 2 Ballest night
 };
@@ -68,7 +65,8 @@ void NoteExtra(const std::string& slot, const std::string& id, const std::string
 int LoadoutCount();
 int ActiveLoadout();                    // 0-based
 void UseLoadout(int index);             // wears it at once
-int AddLoadout();                       // a copy of the active one, made active; its index
+int AddLoadout();                       // a copy of the active one, made active; its index (-1 at the cap, 5)
+int MaxLoadouts();
 
 void Frame();                           // every frame, before cosmetics::Frame
 std::string Status();

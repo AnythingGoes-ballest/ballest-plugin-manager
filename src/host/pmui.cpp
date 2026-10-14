@@ -284,7 +284,6 @@ void Reset() {
 }
 
 double Now() { return gNow; }
-Obj TreeOf() { return Tree(); }
 double Dt() { return gDt; }
 
 // --- drawing ----------------------------------------------------------------------------------------------------------

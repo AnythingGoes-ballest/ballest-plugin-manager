@@ -53,7 +53,10 @@ bool Scale(int owner, int id, double scale);
 bool Effect(const std::string& system, double x, double y, double z, double scale, double nx = 0, double ny = 0, double nz = 1);
 // One of the game's sounds, played once (not placed: as the game's own hit sounds, PlaySound2D).
 std::string LastSoundState();        // for measuring: whether the last custom .wav sound is playing
-bool Sound(const std::string& sound, double volume, double pitch, double startTime = 0);     // (startTime: seconds into it; game sounds only)
+bool Sound(const std::string& sound, double volume, double pitch);
+// The host's own interface sounds (the plugin manager's hover): a game sound kept loaded, from `startTime` seconds in,
+// not played again within 60 ms.
+bool UiSound(const std::string& sound, double volume, double pitch, double startTime = 0);
 // The game's camera shake (Shake_BallestCam), `scale` times as strong.
 bool Shake(double scale);
 int Adopt(int owner, eng::Obj actor);   // an actor made elsewhere, kept like a shape (moved, shown, removed with it)

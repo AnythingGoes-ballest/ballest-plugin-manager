@@ -1,8 +1,8 @@
 // Building blocks for Cosmetics 2's own screens (the Customize page's strip and slot tabs, the cosmetic browser, the
 // plugin manager's window): host-made UMG widgets placed by position on a full-screen canvas of their own, in the game's look
 // (its font, Cocogoose Pro; its bubble hover material, M_UI_BubbleButton; rounded boxes per corner). Sizes are widget
-// units: at 1920x1080 one unit is one pixel, so the mockups' pixels are used as they are (at 2560x1440 a unit is 4/3 of a
-// pixel). Colours are given as the mockups' sRGB hex and made linear. Every function does nothing on null objects.
+// units: at 1920x1080 one unit is one pixel, so design pixels at 1080p are used as they are (at 2560x1440 a unit is 4/3 of
+// a pixel). Colours are given as sRGB hex and made linear. Every function does nothing on null objects.
 // Game thread only.
 #pragma once
 #include <string>

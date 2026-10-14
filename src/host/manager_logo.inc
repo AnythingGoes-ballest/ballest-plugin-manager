@@ -1,8 +1,8 @@
 // The plugin manager logo, animated, and the welcome (part of manager.cpp, inside its namespace).
 //
-// The animation (Lvcid, 2026-10-08; reference: Handoff/sources/pm/logo/logo_intro.py and its video
-// Handoff/images/logo/logo_animated.mp4) is drawn from the logo's layers (pm-logo-bowl, -glow, -greys, -dot, pm-glint,
-// pm-twinkle: logo_layers.py) and moved with the same curves (logo_curves.inc): the lime light turning on, the glint
+// The animation (Lvcid, 2026-10-08) is drawn from the logo's layers (pm-logo-bowl, -glow, -greys, -dot, pm-glint,
+// pm-twinkle) and moved with its curves (logo_curves.inc; the layers and curves are generated together by a script
+// kept outside this repo): the lime light turning on, the glint
 // once round the ring (lime in the glow, a sheen at the bottom, dim up the left), the twinkle where it ends, and the
 // bowl turning its light round to the top left, settling. In the game: the corner's replay while an update banner
 // shows (the light already on), and the welcome's: that replay with the light turning on as it starts, big in the
@@ -214,29 +214,23 @@ void Draw(Layer& l, const std::string& key, int z, const Rect& r, const Look& k,
 // --- the welcome ------------------------------------------------------------------------------------------------------
 // The first open since an install or update (Lvcid): the screen dims, the logo fades in big in the screen's middle (no
 // window at all, not even its edge) and plays its animation; after its twinkle it's gone in a sharp fade, and the window
-// comes in, sharply too, on the splash (the corner's logo with it): what's new in this version, "read more" (its release
-// page), "take the tour" (to come) and "continue". The intro plays through (it's short: Lvcid): no key, click or
-// closing stops it. On the splash, Esc or B is "continue" (to the window); A, Start, Enter or Space press the picked
-// button (continue unless moved); a click outside the window closes it. "what's new" (the sub bar) shows it again.
-enum class Welcome { None, Intro, Splash };
+// comes in, sharply too, on plugins / installed (the corner's logo with it). It plays through (it's short: Lvcid): no
+// key, click or closing stops it.
+enum class Welcome { None, Intro };
 Welcome gWelcome = Welcome::None;
 double gWelcomeAt = -100;                   // the intro's start (it fades in, then the animation's own time runs)
-double gSplashAt = -100;                    // the splash's start (its pieces come in one by one)
-bool gSplashPending = false;
-int gSplashPick = 2;                        // picked by keys or a pad: 0 read more, 2 continue (1, the tour, to come)
-bool gSplashKeys = false;                   // a key or pad moved or pressed the pick (its ring shows only then)
 // The big logo (Lvcid): a moment of only the dim, then a quick fade in, unlit; as it reaches full opacity its lime
 // light starts turning on and the animation (logo::Welcome: the corner's replay) begins.
 constexpr double kIntroHold = 0.25;         // nothing but the dim
 constexpr double kIntroFade = 0.12;         // the big logo fading in (sharp: eased out)
 constexpr double kIntroLead = kIntroHold + kIntroFade;
 constexpr double kBigLogo = 260;            // across, in the screen's middle (the corner's is 86)
-// After its twinkle (Lvcid): the big logo goes in a sharp fade, a beat, then the window and the splash come in sharply.
-// Sharp fades in (kSharpIn) are the window's way for anything coming in: the splash, popups.
+// After its twinkle (Lvcid): the big logo goes in a sharp fade, a beat, then the window comes in sharply. Sharp fades
+// in (kSharpIn) are the window's way for anything coming in: the window after the intro, popups.
 constexpr double kOutAt = logo::kReplayTwinkle + kLogoTwinkleLen, kOutLen = 0.1;
-constexpr double kSplashAt = kOutAt + kOutLen + 0.05;
+constexpr double kWindowAt = kOutAt + kOutLen + 0.05;
 constexpr double kSharpIn = 0.12;
-constexpr double kWelcomeLen = kSplashAt;                                      // the logo's part, all of it
+constexpr double kWelcomeLen = kWindowAt;                                      // the logo's part, all of it
 // The corner's replay (logo::Replay) while an update banner shows (otherwise logo::Nudge, the twinkle alone, every 9 s): every 10 s (the first 2 s after it shows); when the banner goes
 // (later, update now) the one playing finishes and no more start; closing the window cuts it off where it is.
 double gReplayAt = -100, gReplayNext = -1;
@@ -255,130 +249,8 @@ bool Animating() { return gWelcomeAt > -50 && IntroTime() < kWelcomeLen; }
 void StartWelcome() {
     gWelcome = Welcome::Intro;
     gWelcomeAt = game::Seconds();
-    gSplashPick = 2;
-    gSplashKeys = false;
-}
-void ShowSplash() {
-    gWelcome = Welcome::Splash;
-    gSplashAt = game::Seconds();
-    gSplashPick = 2;
-    gSplashKeys = false;
-}
-void SkipIntro() {
-    if (gWelcome != Welcome::Intro && !(gWelcome == Welcome::Splash && Animating())) return;
-    hostlog::Info("manager: welcome skipped to the splash");
-    if (gWelcome == Welcome::Intro) ShowSplash();
-    gWelcomeAt = pmui::Now() - kIntroLead - kWelcomeLen;     // the logo in its corner, still
 }
 void EndWelcome() {
     gWelcome = Welcome::None;
-    hostlog::Info("manager: welcome closed");
-}
-
-// This version's highlights (whats_new.inc).
-std::vector<std::string> Highlights() {
-    static const std::string all =
-#include "whats_new.inc"
-        ;
-    std::vector<std::string> out;
-    const std::string head = std::string("[") + plugins::kHostVersion + "]";
-    bool in = false;
-    size_t at = 0;
-    while (at <= all.size()) {
-        size_t end = all.find('\n', at);
-        if (end == std::string::npos) end = all.size();
-        std::string line = all.substr(at, end - at);
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
-        if (!line.empty() && line[0] == '[') in = line == head;
-        else if (in && !line.empty()) out.push_back(line);
-        at = end + 1;
-    }
-    return out;
-}
-
-bool SkipKey() {
-    return input::Pressed(VK_ESCAPE) || input::Pressed(VK_SPACE) || input::Pressed(VK_RETURN) || input::Pressed(input::kPadA) ||
-           input::Pressed(input::kPadB) || input::Pressed(input::kPadMenu);
-}
-
-// The splash's keys: Esc or B continue; left and right (or Tab, a pad's d-pad or stick) move the pick; A, Start, Enter
-// or Space press it.
-void SplashKeys() {
-    if (Animating() && SkipKey()) return SkipIntro();         // (still flying in: a key settles it first)
-    if (input::Pressed(VK_ESCAPE) || input::Pressed(input::kPadB)) return EndWelcome();
-    if (input::Pressed(VK_LEFT) || input::Pressed(VK_RIGHT) || input::Pressed(VK_TAB) || input::Pressed(input::kPadLeft) ||
-        input::Pressed(input::kPadRight) || input::Pressed(input::kPadStickLeft) || input::Pressed(input::kPadStickRight)) {
-        gSplashPick = gSplashPick == 0 ? 2 : 0;               // (the tour is to come: skipped)
-        gSplashKeys = true;
-    }
-    if (input::Pressed(VK_RETURN) || input::Pressed(VK_SPACE) || input::Pressed(input::kPadA) || input::Pressed(input::kPadMenu)) {
-        gSplashKeys = true;
-        if (gSplashPick == 0) OpenUrl(ReleasePage(plugins::kHostVersion));
-        else EndWelcome();
-    }
-}
-
-// The splash, over the whole window (its pages aren't drawn meanwhile): what's new, in pieces coming in one by one.
-void Splash(Layer& wl, double W, double H) {
-    pmui::Level(kPopupLevel);
-    const double since = pmui::Now() - gSplashAt;
-    auto in = [&](int) { return EaseOut(logo::Clamp01(since / kSharpIn), 2); };     // (sharp, all at once: Lvcid)
-    const double colW = std::min(760.0, W - 160), x = std::floor((W - colW) / 2);
-    double y = std::max(96.0, std::floor(H * 0.14));
-    int piece = 0;
-    double t = in(piece++);
-    {
-        // (Ballest Light: a stronger shadow under the small lime words, to read on the light panel: Lvcid)
-        std::optional<pmui::TextShadowScope> shade;
-        if (BallestLight()) shade.emplace(Color{0, 0, 0, static_cast<float>(0.85 * t)});
-        pmui::Text(wl, "wn.kicker", 10, "what's new", 17, "Bold", A(kLime, t), x, y + (1 - t) * 10);
-    }
-    y += 42;
-    t = in(piece++);
-    pmui::Text(wl, "wn.title", 10, std::string("Plugin Manager ") + plugins::kHostVersion, 38, "Bold", A(kText, t), x, y + (1 - t) * 10);
-    y += 58;
-    const double bottom = H - 96;                             // (the buttons' row)
-    Layer& list = pmui::Group(wl, "wn.list", 10, {x - 4, y, colW + 8, std::max(0.0, bottom - 36 - y)}, true);
-    std::vector<std::string> lines = Highlights();
-    if (lines.empty()) lines.push_back("This version's changes are on its release page: read more.");
-    static std::map<std::string, double> heights;            // (a paragraph's height comes two frames late: kept)
-    double ly = 0;
-    for (size_t i = 0; i < lines.size(); ++i) {
-        t = in(piece++);
-        const std::string key = "wn.l" + std::to_string(i);
-        const double oy = ly + (1 - t) * 10;
-        pmui::Box(list, key + ".dot", 0, {4, oy + 10, 8, 8}, A(kLime, t), 4);
-        const double ph = pmui::Para(list, key, 0, lines[i], 19, "Regular", A(kDescOpen, t), {28, oy, colW - 24, 200});
-        if (ph > 0) heights[key] = ph;
-        ly += (heights.count(key) ? heights[key] : 28) + 18;
-    }
-    // the buttons: read more (left), take the tour (to come: blacked out) and continue (right)
-    t = in(piece++);
-    Layer& row = pmui::Group(wl, "wn.row", 11, {x - 8, bottom - 8 + (1 - t) * 10, colW + 16, 64}, false, t);
-    const double by = 8;
-    const double cw = std::max(200.0, PillWidth(row, "wn.go", "continue", 20, nullptr, 30));
-    const Rect go{8 + colW - cw, by, cw, 48};
-    const double rw = PillWidth(row, "wn.more", "read more", 18, nullptr, 24);
-    const Rect more{8, by, rw, 48};
-    const double tw = Measured(row, "wn.tour.t", "take the tour", 18) + 48;
-    const Rect tour{go.x - 14 - tw, by, tw, 48};
-    if (BallestLight()) {
-        // (Ballest Light: its buttons on soft shadows, lifting them off the light panel: Lvcid)
-        ux::RawColors raw;
-        for (const auto& [k, b] : {std::pair<const char*, Rect>{"wn.more.sh", more}, {"wn.tour.sh", tour}, {"wn.go.sh", go}})
-            pmui::Sliced(row, k, 0, b.Moved(0, 3).Grow(kGlowRoom), "pm-glow.png", kGlowMargin, kGlowUnits, A(kBlack, 0.28));
-    } else if (CurrentTheme() == 0) {
-        // (Ballest Night: a soft white glow round each, as the cards' and what's new's: Lvcid)
-        for (const auto& [k, b] : {std::pair<const char*, Rect>{"wn.more.gl", more}, {"wn.tour.gl", tour}, {"wn.go.gl", go}})
-            pmui::Sliced(row, k, 0, b.Grow(kGlowRoom), "pm-glow.png", kGlowMargin, kGlowUnits, A(kWhite, std::string(k) == "wn.tour.gl" ? 0.12 : 0.4));      // (0.16 hid behind the buttons: only the glow's far edge shows past them)
-    }
-    if (Pill(row, "wn.more", 1, more, "read more", 18, nullptr, PillKind::Ghost, false, 14)) OpenUrl(ReleasePage(plugins::kHostVersion));
-    pmui::Box(row, "wn.tour", 1, tour, kOffFill, 14).Outline(2, A(kAbEdge, 0.5));
-    pmui::Text(row, "wn.tour.t", 2, "take the tour", 18, "Regular", A(kSub, 0.3), tour.Cx(), tour.Cy(), 0.5);
-    if (Pill(row, "wn.go", 1, go, "continue", 20, nullptr, PillKind::Lime, false, 14)) EndWelcome();
-    // the pick, once keys or a pad are used: a lime ring round it
-    if (gSplashKeys) {
-        const Rect p = (gSplashPick == 0 ? more : go).Grow(5);
-        pmui::Box(row, "wn.pick", 0, p, A(kLime, 0), 19).Outline(2, kLime);
-    }
+    hostlog::Info("manager: welcome done");
 }
