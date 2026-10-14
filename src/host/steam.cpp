@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <map>
+#include <string>
 
 #include "log.hpp"
 
@@ -377,6 +379,116 @@ bool RequestPersona(uint64_t steamId) {
 uint64_t OwnSteamId() {
     Api& api = TheApi();
     return api.names ? api.steamId(api.user) : 0;
+}
+
+// --- web API tickets ------------------------------------------------------------------------------------------------
+namespace {
+// GetTicketForWebApiResponse_t (Steamworks SDK isteamuser.h, k_iSteamUserCallbacks + 68): HAuthTicket at 0, EResult at
+// 4, m_cubTicket at 8, m_rgubTicket[k_nCubTicketMaxLength = 2560] at 12.
+constexpr int kWebTicketCallback = 168, kWebTicketSize = 12 + 2560;
+// Each plugin's own ticket: asked for under its own identity, answered only to it.
+struct Ticket {
+    std::string state = "idle", hex;
+    uint32_t handle = 0;                    // the ticket asked for (k_HAuthTicketInvalid = 0)
+};
+std::map<int, Ticket> gTickets;             // by plugin index
+
+// A CCallbackBase as Steam sees it: a table pointer, m_nCallbackFlags (uint8) at 8 and m_iCallback (int) at 12. The
+// table's first two entries are the two Run overloads (MSVC orders overloads in reverse, so Run(param, ioFailure, call)
+// comes first on Windows); both are pointed at the same function, which only reads `param`, so the order can't matter.
+// The third is GetCallbackSizeBytes.
+struct CallbackObject {
+    void* const* table;
+    uint8_t flags;
+    int32_t callback;
+};
+
+void TicketArrived(void*, void* param) {
+    if (!param) return;
+    const auto* p = static_cast<const uint8_t*>(param);
+    const uint32_t handle = At<uint32_t>(p, 0);
+    const int32_t result = At<int32_t>(p, 4), size = At<int32_t>(p, 8);
+    for (auto& [owner, t] : gTickets) {
+        if (!handle || t.handle != handle || t.state != "pending") continue;    // not this plugin's (or the game's own)
+        if (result != kResultOk || size <= 0 || size > 2560) {
+            t.state = "error: Steam answered " + std::to_string(result);
+            return;
+        }
+        static const char* digits = "0123456789abcdef";
+        t.hex.clear();
+        for (int i = 0; i < size; ++i) {
+            t.hex += digits[p[12 + i] >> 4];
+            t.hex += digits[p[12 + i] & 15];
+        }
+        t.state = "ready";
+        return;
+    }
+}
+void TicketRunWithCall(void* self, void* param, bool, uint64_t) { TicketArrived(self, param); }
+int TicketSize(void*) { return kWebTicketSize; }
+
+void* const gTicketTable[] = {reinterpret_cast<void*>(&TicketRunWithCall), reinterpret_cast<void*>(&TicketArrived),
+                              reinterpret_cast<void*>(&TicketSize)};
+CallbackObject gTicketCallback{gTicketTable, 0, 0};
+bool gTicketRegistered = false;
+
+using CancelFn = void (*)(void*, uint32_t);
+CancelFn CancelTicketFn() {
+    HMODULE dll = GetModuleHandleW(L"steam_api64.dll");
+    return dll ? reinterpret_cast<CancelFn>(reinterpret_cast<void*>(GetProcAddress(dll, "SteamAPI_ISteamUser_CancelAuthTicket"))) : nullptr;
+}
+}  // namespace
+
+std::string WebTicketIdentity(const std::string& pluginId) { return "ballest-plugin:" + pluginId; }
+
+bool RequestWebTicket(int owner, const std::string& pluginId) {
+    Ticket& t = gTickets[owner];
+    HMODULE dll = GetModuleHandleW(L"steam_api64.dll");
+    Api& api = TheApi();
+    if (!dll || !api.user) {
+        t.state = "error: Steam is not available";
+        return false;
+    }
+    using GetTicketFn = uint32_t (*)(void*, const char*);
+    using RegisterFn = void (*)(void*, int);
+    auto getTicket = reinterpret_cast<GetTicketFn>(reinterpret_cast<void*>(GetProcAddress(dll, "SteamAPI_ISteamUser_GetAuthTicketForWebApi")));
+    auto cancel = CancelTicketFn();
+    auto registerCallback = reinterpret_cast<RegisterFn>(reinterpret_cast<void*>(GetProcAddress(dll, "SteamAPI_RegisterCallback")));
+    if (!getTicket || !cancel || !registerCallback) {
+        t.state = "error: this Steam has no web API tickets";
+        return false;
+    }
+    if (!gTicketRegistered) {
+        registerCallback(&gTicketCallback, kWebTicketCallback);
+        gTicketRegistered = true;
+    }
+    if (t.handle) cancel(api.user, t.handle);
+    t.hex.clear();
+    const std::string identity = WebTicketIdentity(pluginId);
+    t.handle = getTicket(api.user, identity.c_str());
+    if (!t.handle) {
+        t.state = "error: Steam refused the ticket (a sandboxed test copy blocks it)";
+        return false;
+    }
+    t.state = "pending";
+    return true;
+}
+
+std::string WebTicketState(int owner) {
+    auto it = gTickets.find(owner);
+    return it == gTickets.end() ? "idle" : it->second.state;
+}
+std::string WebTicket(int owner) {
+    auto it = gTickets.find(owner);
+    return it != gTickets.end() && it->second.state == "ready" ? it->second.hex : std::string();
+}
+void ForgetWebTicket(int owner) {
+    auto it = gTickets.find(owner);
+    if (it == gTickets.end()) return;
+    Api& api = TheApi();
+    if (it->second.handle && api.user)
+        if (auto cancel = CancelTicketFn()) cancel(api.user, it->second.handle);
+    gTickets.erase(it);
 }
 
 uint32_t ItemState(uint64_t item) {

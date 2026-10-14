@@ -32,8 +32,42 @@ void TestScroll(float offset);                 // test hook: the rows scrolled t
 void TestToggleTab();                           // test hook: as if the rows' button (or, when open, world) were clicked
 int ExtraRowClicked();                          // the row clicked since last asked (not on its rank), or -1
 int ExtraRowPinClicked();                       // the row whose rank was clicked since last asked, or -1
+int ExtraRowGhostClicked();                     // the row whose ghost toggle (its right end) was clicked, or -1
+void TestGhostRow(int row);                     // test hook: as if that row's ghost toggle were clicked
+void TestHoverRow(int row);                     // test hook: as if the mouse were over that row's tile (-1: none)
 void TestClickRow(int row);                     // test hook: as if that row were clicked
 void TestPinRow(int row);                       // test hook: as if that row's rank were clicked
+// Hiscores from another source for one track: while the race's track key (race::CurrentTrack().key) is `trackKey`, the
+// in-map leaderboard shows these rows IN PLACE of the game's own list (world/friends), with no button to switch: the
+// same rows of the game's own kind as SetExtraRows builds (rank, name, time set as the game sets its own), the title
+// replaced. `ranks` (0 or missing: the row's position) lets a row stand apart from the list (the player's own, 57th);
+// `ghosts` (optional) sets each row's ghost toggle look (on/off); clicks on rows come through ExtraRowClicked. `highlight` marks one row (the lime bar and rank of a pinned row), -1 none. Empty `names` with the key set shows the
+// title alone (loading). The last plugin to set a source owns it; ClearSource gives the board back to the game.
+// Measured 2026-10-12 in a slot: a local map raced with Tracks::OpenLocal shows the in-map board (title "leaderboard",
+// world/friends buttons, five empty rows), so there is a board to fill.
+void SetSource(int owner, const std::string& trackKey, const std::string& title, const std::vector<std::string>& names,
+               const std::vector<double>& times, const std::vector<int>& ranks, int highlight,
+               const std::vector<bool>& ghosts = {});
+void ClearSource(int owner);
+// A source row's ghost as the game's own replay ghost (nativeghost.hpp): the replay is handed to the game's ghosts for
+// that player (a ghost session opened for the local map if the game has none), selected as the leaderboard's own
+// toggle selects one (ForceShow; the one selected before ForceHide), the row lit (its ghost toggle on, its background
+// the game's lime), and the race restarted the way the restart key restarts it (controller ManuallyRestartBall), so
+// the ghost runs from the start with the race clock. ClearRowGhost hides it again and restarts. Only while the
+// source applies (its track key is the race's); false otherwise or if the game refused the replay (`error`).
+bool SetRowGhost(int owner, int row, const std::string& steamId, const std::string& replayJson, std::string* error);
+bool ClearRowGhost(int owner);
+// A source row's replay in the game's replay mode, as the board's own row click (nativeghost::Watch): the replay handed
+// to the game's ghosts like SetRowGhost's, then the game's POV of that ghost, with every selected ghost still shown;
+// the row marked as watched (the game's POV row look, SetReplayIsActive) while it lasts. No restart. The game's own
+// exit from replay mode returns to the race (and restarts it, as the game does).
+bool WatchRowReplay(int owner, int row, const std::string& steamId, const std::string& replayJson, std::string* error);
+std::string RowGhost();                         // the Steam id whose ghost a source row shows now, or ""
+// The player's own best ghost on the source's track from a replay (e.g. their online best), as the game's own PB ghost:
+// the race's ghost session is opened (the game's own set-up) and the replay handed over under the player's own Steam
+// id, so the game shows it as their personal best (by their ghost settings), also in replay mode. "" removes it.
+bool SetOwnReplay(int owner, const std::string& replayJson, std::string* error);
+bool SourceShown();                             // the board on screen shows a plugin's source now
 void RemoveOwner(int owner);
 
 }  // namespace leaderboard

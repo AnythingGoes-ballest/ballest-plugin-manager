@@ -33,6 +33,9 @@ run() { if [ $DRY_RUN = 1 ]; then say "  (dry run) $*"; else "$@"; fi; }
 locate_game
 
 # --- what to install --------------------------------------------------------------------------------------------
+# A path as a PowerShell single-quoted string: a ' in it (a Windows user name like "Josh's PC") is doubled, or it
+# would end the string early.
+ps_path() { printf "'%s'" "$(cygpath -w "$1" | sed "s/'/''/g")"; }
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -52,7 +55,7 @@ else
   say "latest release: $tag"
   curl -fsSL -o "$WORK/release.zip" "$zip_url" || fail "download failed: $zip_url"
   mkdir -p "$WORK/release"
-  powershell -NoProfile -Command "Expand-Archive -LiteralPath '$(cygpath -w "$WORK/release.zip")' -DestinationPath '$(cygpath -w "$WORK/release")' -Force" \
+  powershell -NoProfile -Command "Expand-Archive -LiteralPath $(ps_path "$WORK/release.zip") -DestinationPath $(ps_path "$WORK/release") -Force" \
     || fail "could not unpack the release"
   [ -f "$WORK/release/version.dll" ] || fail "the release zip has no version.dll"
 

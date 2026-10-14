@@ -83,6 +83,20 @@ std::string PersonaName(uint64_t steamId);
 bool RequestPersona(uint64_t steamId);
 uint64_t OwnSteamId();
 
+// A Steam Web API auth ticket for this player, per plugin (ISteamUser::GetAuthTicketForWebApi), so the plugin's server can
+// check who is asking (ISteamUserAuth/AuthenticateUserTicket with the same identity). The identity is always
+// WebTicketIdentity(plugin id), "ballest-plugin:<id>": a plugin can't ask for a ticket meant for another service, and its
+// ticket is answered only to it. Read-only: Steam makes the ticket, nothing is uploaded or changed. The ticket comes in
+// Steam's GetTicketForWebApiResponse_t callback (168), received through SteamAPI_RegisterCallback (the game dispatches
+// callbacks with SteamAPI_RunCallbacks: its exe imports both). One per plugin; asking again cancels its last ticket
+// (CancelAuthTicket), and so does the plugin stopping (ForgetWebTicket). A sandboxed test copy blocks the call
+// (sandbox.cpp: GetAuthTicketForWebApi is one of its Steam blocks), so it ends in an error there.
+std::string WebTicketIdentity(const std::string& pluginId);
+bool RequestWebTicket(int owner, const std::string& pluginId);
+std::string WebTicketState(int owner);      // "idle", "pending", "ready", "error: ..."
+std::string WebTicket(int owner);           // the ticket as lowercase hex once ready, else ""
+void ForgetWebTicket(int owner);
+
 // A workshop item on this computer: EItemState flags (Subscribed 1, Installed 4, NeedsUpdate 8, Downloading 16,
 // DownloadPending 32), where it is installed ("" if it isn't), and asking Steam to download it (as the game's own
 // track browser does before playing one).

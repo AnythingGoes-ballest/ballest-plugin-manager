@@ -26,6 +26,7 @@ bool Pinned(int i);
 void SetPinned(int i, bool pinned);
 double Elapsed();                       // the run going on now: seconds since its start; -1 without one
 
+std::string ReplayText(int i);          // the run's replay file as written (the game's ghost JSON), "" if it can't be read
 int Ball(int owner, int i);             // a Draw id, or 0
 bool Place(int owner, int id, int i, double t);
 

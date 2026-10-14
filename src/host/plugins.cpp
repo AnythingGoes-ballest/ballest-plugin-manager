@@ -21,6 +21,9 @@
 #include "game.hpp"
 #include "editor.hpp"
 #include "leaderboard.hpp"
+#include "pluginnet.hpp"
+#include "steam.hpp"
+#include "splitref.hpp"
 #include "log.hpp"
 #include "registry.hpp"
 #include "settings.hpp"
@@ -36,6 +39,7 @@ struct Plugin {
     std::wstring dir;
     std::vector<std::string> files;
     std::vector<std::string> dependencies;      // ids of plugins that must be running first ([meta] dependencies)
+    std::vector<std::string> netDomains;        // the only hosts its Net:: requests may go to ([net] domains)
     int timeoutMs = 50;
     std::vector<ULONGLONG> overruns;            // when its recent callbacks ran out of time (see Run)
     bool essential = false;
@@ -143,6 +147,11 @@ bool ReadManifest(const std::wstring& dir, const std::string& id, Plugin& p) {
     p.essential = value("meta.essential", "false") == "true";
     p.files = kv.count("script.files") ? StringList(kv["script.files"]) : std::vector<std::string>{"main.as"};
     if (kv.count("meta.dependencies")) p.dependencies = StringList(kv["meta.dependencies"]);
+    if (kv.count("net.domains"))
+        for (const std::string& d : StringList(kv["net.domains"])) {
+            if (std::string why; pluginnet::DomainAllowed(d, &why)) p.netDomains.push_back(d);
+            else hostlog::Write("warn", id, "[net] domains: " + why + " is not a public host name; left out");
+        }
     if (kv.count("script.timeout")) p.timeoutMs = std::max(1, std::atoi(kv["script.timeout"].c_str()));
     // The plugin's own icon, else the default one the plugin manager ships.
     const std::string icon = value("meta.icon", "icon.png");
@@ -303,7 +312,7 @@ Plugin* Loaded(const std::string& id) {
     return nullptr;
 }
 
-Info InfoOf(const Plugin& p) { return {p.id, p.name, p.version, p.author, p.description, p.status, p.icon, p.essential}; }
+Info InfoOf(const Plugin& p) { return {p.id, p.name, p.version, p.author, p.description, p.status, p.icon, p.essential, p.netDomains}; }
 
 }  // namespace
 
@@ -476,6 +485,9 @@ void Release(size_t i) {
     draw::RemoveOwner(static_cast<int>(i));
     postprocess::RemoveOwner(static_cast<int>(i));
     hud::RemoveOwner(static_cast<int>(i));
+    pluginnet::RemoveOwner(static_cast<int>(i));
+    steam::ForgetWebTicket(static_cast<int>(i));
+    splitref::Clear(static_cast<int>(i));
 }
 
 // Plugins that depend on `id` lose their scripts before it does (their imported functions point into its module),
@@ -600,6 +612,12 @@ std::string IdAt(int index) {
 
 std::string NameAt(int index) {
     return index >= 0 && index < static_cast<int>(gPlugins.size()) ? gPlugins[static_cast<size_t>(index)].name : "";
+}
+
+std::vector<std::string> CurrentNetDomains() {
+    const int i = Current();             // the plugin whose code runs (an imported function: the plugin offering it)
+    if (i < 0 || i >= static_cast<int>(gPlugins.size())) return {};
+    return gPlugins[static_cast<size_t>(i)].netDomains;
 }
 
 std::wstring CurrentDir() {

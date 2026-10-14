@@ -73,6 +73,16 @@ bool NextClick(Click* out);
 
 std::vector<int> Pieces();              // every piece of the map
 std::string PieceClass(int id);         // its class name ("BP_Ramp_Curve1_C"), or ""
+// Pieces not drawn, their collision untouched (a component hidden in game gets no render proxy; its physics body
+// stays). HideByMaterial hides every primitive component of a placed piece that uses the material (a material path,
+// or any material instance whose parent chain reaches it) in any slot, in the editor, during its test run (the run
+// plays on the editor's own piece actors) and in a race of a map as a workshop map (its pieces are actors of the race's
+// own level, Map_TrackUGCPlayback), and returns how many pieces have such a component hidden. Pieces spawned
+// later (another map, a paste) are drawn until it is called again. ShowAll shows what `owner` hid (-1: everyone's)
+// and returns how many components; what a plugin hid is shown again when it stops.
+int HideByMaterial(int owner, const std::string& materialPath);
+int ShowAll(int owner);
+int HiddenCount();                      // test: components hidden by HideByMaterial that still exist
 std::string MapName();                  // the map open in the editor, or "" before it has a name
 bool Typing();                          // a text box of the game has keyboard focus
 

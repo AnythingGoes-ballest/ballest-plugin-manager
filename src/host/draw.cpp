@@ -1,6 +1,8 @@
 #include "draw.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -12,6 +14,7 @@
 #include "game.hpp"
 #include "log.hpp"
 #include "models.hpp"
+#include "race.hpp"
 
 namespace draw {
 namespace {
@@ -25,6 +28,8 @@ struct Shape {
     std::shared_ptr<models::Model> model;   // a model's (Model): what it is, and its parts built on the actor
     std::shared_ptr<models::Built> built;
     bool tube = false;                  // made by Tube (Retube sweeps only these again)
+    bool solid = false;                 // made solid by Collide
+    std::string solidNote;              // what Collide measured (tests)
 };
 std::map<int, Shape> gShapes;
 int gNextId = 1;
@@ -56,7 +61,7 @@ Obj Actor(int owner, int id) {
 int Keep(int owner, Obj actor) {
     if (!actor) return 0;
     const int id = gNextId++;
-    gShapes[id] = {owner, eng::MakeWeak(actor), {}, nullptr, nullptr, false};
+    gShapes[id] = {owner, eng::MakeWeak(actor), {}, nullptr, nullptr, false, false, {}};
     return id;
 }
 
@@ -84,6 +89,56 @@ void ViewThrough(Obj target) {
     eng::Invoke(controller, p);
 }
 
+
+bool gCollideAsync = false;
+
+// The dynamic mesh components of a model's meshes (its groups; animated frames are left out: one frame shows at a
+// time, and swapping solid meshes every frame would cook all the time).
+std::vector<Obj> MeshComponents(const Shape& shape) {
+    std::vector<Obj> out;
+    if (!shape.built) return out;
+    for (const auto& w : shape.built->actors)
+        if (Obj actor = eng::Get(w))
+            if (Obj c = eng::ReadObj(actor, "DynamicMeshComponent")) out.push_back(c);
+    return out;
+}
+
+// One mesh component made solid (complex as simple) or not. Its triangle count, or -1 if it has none.
+int SetSolid(Obj component, bool on) {
+    if (!on) {
+        eng::Call(component, "SetCollisionEnabled", uint8_t{0});
+        return 0;
+    }
+    Obj mesh = eng::Call(component, "GetDynamicMesh").ReturnObj();
+    const int32_t triangles = mesh ? eng::Call(mesh, "GetTriangleCount").ReturnAs<int32_t>(0) : 0;
+    if (triangles <= 0) return -1;
+    eng::WriteBool(component, "bUseAsyncCooking", gCollideAsync);
+    eng::Call(component, "SetCollisionObjectType", uint8_t{0});            // ECC_WorldStatic, as level geometry
+    eng::Call(component, "SetCollisionResponseToAllChannels", uint8_t{2}); // ECR_Block: the ball, the camera, traces
+    eng::Call(component, "SetCollisionEnabled", uint8_t{3});               // ECollisionEnabled::QueryAndPhysics
+    eng::Call(component, "SetComplexAsSimpleCollisionEnabled", uint8_t{1}, uint8_t{1});    // cooked now
+    return triangles;
+}
+
+double gSolidCheckedAt = -1;
+
+// Solid models stay solid only while the player's own unpublished map is open (checked twice a second).
+void CheckSolid(double now) {
+    if (now - gSolidCheckedAt < 0.5 && now >= gSolidCheckedAt) return;
+    gSolidCheckedAt = now;
+    bool any = false;
+    for (auto& [id, shape] : gShapes) any |= shape.solid;
+    if (!any) return;
+    std::string why;
+    if (race::OwnUnpublishedMapHere(&why)) return;
+    for (auto& [id, shape] : gShapes) {
+        if (!shape.solid) continue;
+        for (Obj c : MeshComponents(shape)) SetSolid(c, false);
+        shape.solid = false;
+        hostlog::Info("draw: model " + std::to_string(id) + " no longer solid: " + why);
+    }
+}
+
 }  // namespace
 
 void Frame() {
@@ -100,6 +155,7 @@ void Frame() {
     // Models' spinning groups and animations (no ball: as still).
     for (auto& [id, shape] : gShapes)
         if (shape.built && shape.model && eng::Get(shape.actor)) models::Animate(*shape.model, *shape.built, nullptr, game::Seconds());
+    CheckSolid(now);
     if (game::Generation() == gGeneration) return;
     gGeneration = game::Generation();
     gShapes.clear();                    // their actors went with the old map
@@ -211,6 +267,76 @@ bool Turn(int owner, int id, double pitch, double yaw, double roll) {
     p.Set("NewRotation", Rot{pitch, yaw, roll});
     p.Set("bTeleportPhysics", uint8_t{1});
     return eng::Invoke(a, p);
+}
+
+bool Collide(int owner, int id, bool on, std::string* why) {
+    auto it = gShapes.find(id);
+    if (it == gShapes.end() || it->second.owner != owner || !it->second.built) {
+        *why = "not a model of this plugin's";
+        return false;
+    }
+    Shape& shape = it->second;
+    const std::vector<Obj> components = MeshComponents(shape);
+    if (!on) {
+        for (Obj c : components) SetSolid(c, false);
+        shape.solid = false;
+        return true;
+    }
+    if (!race::OwnUnpublishedMapHere(why)) return false;
+    const auto started = std::chrono::steady_clock::now();
+    int meshes = 0;
+    long long triangles = 0;
+    for (Obj c : components) {
+        const int t = SetSolid(c, true);
+        if (t > 0) {
+            ++meshes;
+            triangles += t;
+        }
+    }
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+    if (meshes == 0) {
+        *why = "the model has no triangles";
+        return false;
+    }
+    shape.solid = true;
+    char note[200];
+    std::snprintf(note, sizeof note, "%d mesh(es), %lld triangles, collision %s in %.1f ms", meshes, triangles,
+                  gCollideAsync ? "cooking started (async)" : "cooked", ms);
+    shape.solidNote = note;
+    hostlog::Info("draw: model " + std::to_string(id) + " solid: " + note);
+    return true;
+}
+
+void SetCollideAsync(bool async) { gCollideAsync = async; }
+
+std::string CollideReport() {
+    std::string out;
+    for (auto& [id, shape] : gShapes) {
+        if (!shape.built) continue;
+        out += "model " + std::to_string(id) + (shape.solid ? " solid (" + shape.solidNote + ")" : " not solid");
+        for (Obj c : MeshComponents(shape)) {
+            const uint8_t type = eng::Call(c, "GetCollisionObjectType").ReturnAs<uint8_t>(255);
+            const uint8_t enabled = eng::Call(c, "GetCollisionEnabled").ReturnAs<uint8_t>(255);
+            const uint8_t toBall = eng::Call(c, "GetCollisionResponseToChannel", uint8_t{5}).ReturnAs<uint8_t>(255);
+            Obj body = eng::ReadObj(c, "MeshBodySetup");
+            uint8_t flag = 255;
+            int complex = -1, async = -1;
+            eng::ReadBytes(c, "CollisionType", &flag, 1);
+            bool b = false;
+            if (eng::ReadBool(c, "bEnableComplexCollision", &b)) complex = b;
+            if (eng::ReadBool(c, "bUseAsyncCooking", &b)) async = b;
+            Obj material = eng::Call(c, "GetMaterial", int32_t{0}).ReturnObj();
+            Obj physical = material ? eng::Call(material, "GetPhysicalMaterial").ReturnObj() : nullptr;
+            char line[700];
+            std::snprintf(line, sizeof line, " | type %d enabled %d ball-channel %d traceflag %d complex %d async %d body %s phys %s queue %d",
+                          type, enabled, toBall, flag, complex, async, body ? eng::ObjName(body).c_str() : "none",
+                          physical ? eng::PathOf(physical).c_str() : "none",
+                          static_cast<int>(eng::ReadObjArray(c, "AsyncBodySetupQueue").size()));
+            out += line;
+        }
+        out += "\n";
+    }
+    return out.empty() ? "no models" : out;
 }
 
 bool Scale(int owner, int id, double scale) {

@@ -98,7 +98,7 @@ plugin's GitHub repo and lists the SHA-256 of every file the game downloads:
 | `src/host/footer.cpp`, `windows.cpp` | Turning the UI model into live widgets, rebuilt whenever the game destroys them |
 | `src/host/plugins.*` | Plugin discovery, manifests, compilation, callbacks, time budgets, loading and unloading at runtime |
 | `src/host/registry.*` | registry.json, installs (download, verify, swap in, start) and removals |
-| `src/host/net.*`, `json.*` | HTTPS downloads and SHA-256 with what Windows ships; a small JSON reader |
+| `src/host/net.*`, `json.*` | HTTPS downloads and requests and SHA-256 with what Windows ships; a small JSON reader |
 | `src/host/settings.*` | `[Setting]` variables: read from the script's metadata, saved, edited, `OnSettingsChanged` |
 | `src/host/storage.*` | Per-plugin saved values |
 | `src/host/api.*` | The script API (all bindings in one file) |
@@ -113,12 +113,18 @@ plugin's GitHub repo and lists the SHA-256 of every file the game downloads:
 | `src/host/manager_cosmetics.inc` | The window's cosmetics page, included into `manager.cpp`: the plugins page's twin for cosmetic packs (the registry's cosmetic plugins): owned / explore, pack rows that open in place, folding sections, get / remove (a whole pack: its plugin). The earlier grid page with its details drawer only behind an advanced settings DEBUG test row |
 | `src/host/pmui.*` | Immediate-mode drawing for that window on ux's widgets: boxes, pictures, texts and text boxes asked for by key every frame, groups that clip, hover and clicks from the pointer |
 | `src/host/hoverfx.*` | The Customize page's slot hover effect (glow, smoke, thread, sparks) for other screens' side buttons, either direction |
-| `src/host/leaderboard.*` | The leaderboard inside a map: its player count (Steam's entry count) and a note after its title |
-| `src/host/draw.*` | Shapes plugins draw in the world (tubes, balls, glow and glass) and the camera a plugin takes |
+| `src/host/leaderboard.*` | The leaderboard inside a map: its player count (Steam's entry count), a note after its title, plugin rows, and a plugin's own source shown in place of the game's list for one track (rows, ghost toggles, replay mode) |
+| `src/host/nativeghost.*` | The game's own replay ghosts (BallestGhostWorldSubsystem) fed with replays a plugin hands over: a ghost session for a local map, rivals, selection, the game's replay mode |
+| `src/host/splitref.*` | A plugin's split reference in the race timer's delta box for one track |
+| `src/host/localrecords.*` | The game's own records of the player's never-published maps: read, cleared through the game's profile save, kept out of its records for a plugin that keeps them elsewhere |
+| `src/host/pluginnet.*` | `Net::` for plugins: HTTPS to the hosts a plugin declares in its info.toml only, with size, time and rate limits |
+| `src/host/menubutton.cpp` | Plugin entries in the main menu's own list (`UI::AddMenuButton`) |
+| `src/host/campaigns.*` | Custom campaigns: the "custom campaigns" tab in the play page's sidebar (a clone of the game's own tab widget), the campaign list and each campaign's screen in the play page's body, and the menu's back button and Escape stepping from a campaign back to the list |
+| `src/host/draw.*` | Shapes plugins draw in the world (tubes, balls, glow and glass), models made solid on the player's own never-published maps, and the camera a plugin takes |
 | `src/host/steam.*` | Steam's flat API: leaderboards, their entries and attached files (UGC), workshop search |
 | `src/host/ghostdata.*` | Replay JSON parsed into samples, looks and splits; positions and checkpoint orders |
 | `src/host/ghosts.*` | Loading a leaderboard's runs (paged, downloaded in parallel, parsed on worker threads), player balls, crowds |
-| `src/host/tracks.*` | The game's tracks and the workshop's, their titles and pictures, and opening them |
+| `src/host/tracks.*` | The game's tracks and the workshop's, their titles and pictures, and opening them; the player's own never-published map files raced as a race (alone or as a playlist) and maps a plugin ships installed into the player's maps folder |
 | `src/host/models.*` | Models: shapes described in text, built as Geometry Script dynamic meshes and attached to a ball or hat slot; mesh parts from model files, and their animations as a mesh per frame |
 | `src/host/meshfile.*` | 3D model files (glTF 2.0 and OBJ): read into triangles per material and posed, skinned meshes included. No engine code: `tools/tests/meshfile_test.cpp` checks it offline |
 | `src/host/testchannel.*` | Test and measurement commands, from the console and from the tools below |

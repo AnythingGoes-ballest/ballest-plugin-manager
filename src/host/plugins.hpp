@@ -8,7 +8,7 @@
 
 namespace plugins {
 
-constexpr const char* kHostVersion = "0.25.0";
+constexpr const char* kHostVersion = "0.26.4";
 
 void LoadAll(const std::wstring& pluginsDir);
 void Frame(float dt);
@@ -33,6 +33,7 @@ struct Info {
     std::string id, name, version, author, description, status;
     std::string icon;                       // an image file, or "" for none
     bool essential = false;                 // part of the host's own setup: cannot be removed
+    std::vector<std::string> netDomains;    // the hosts its Net:: requests may reach ([net] domains)
 };
 std::vector<Info> List();                   // loaded plugins, in load order
 bool Find(const std::string& id, Info* out);
@@ -46,6 +47,7 @@ std::string CallerId();                     // the plugin whose callback is runn
 std::string IdAt(int index);                // the plugin at an index (Current()'s kind), or ""
 std::string NameAt(int index);
 std::wstring CurrentDir();                  // the running plugin's folder, or "" outside plugin code
+std::vector<std::string> CurrentNetDomains();   // the running plugin's [net] domains from its info.toml
 
 // Wraps game work a plugin asked the host for (pasting and selecting track pieces: measured at about 4.5 ms and 3 ms a
 // piece, and 535 ms for a first copy of 15 new piece types), so the game's time is not charged to the plugin's

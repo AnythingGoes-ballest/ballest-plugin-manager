@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "campaigns.hpp"
 #include "cosmetics.hpp"
 #include "engine.hpp"
 #include "draw.hpp"
@@ -20,6 +21,9 @@
 #include "hud.hpp"
 #include "race.hpp"
 #include "input.hpp"
+#include "nativeghost.hpp"
+#include "splitref.hpp"
+#include "localrecords.hpp"
 #include "leaderboard.hpp"
 #include "log.hpp"
 #include "editor.hpp"
@@ -55,7 +59,7 @@ bool ReadOnlyCommand(const std::string& name) {
         "state", "fps", "soundstate", "checkpoints", "openstate", "functions", "instances", "props", "find", "struct",
         "viewtarget", "materials", "watch", "children", "fnbytes", "matparams", "race", "ballstate", "ballsave", "hud",
         "widgetpath", "strprop", "objprop", "listprop", "dumptypes", "objbytes", "membytes", "objarray", "cosmetics",
-        "skinmats", "sandbox", "sandboxtest", "fade"};
+        "skinmats", "sandbox", "sandboxtest", "splitref", "nghost", "nametags", "localrec", "ghostlook", "fade", "waitframes"};
     return kReadOnly.count(name) > 0;
 }
 
@@ -63,6 +67,7 @@ long long gHostFrames = 0;              // host frames so far, and where the las
 long long gFpsFrames = 0;
 double gFpsSince = -1;
 std::vector<std::pair<int, ULONGLONG>> gPostedUps;     // keys posted down, and when to let them go
+std::vector<std::pair<long long, std::string>> gFrameWaits;  // "waitframes": the frame to reply at, and the command
 
 std::vector<std::string> Words(const std::string& s) {
     std::vector<std::string> out;
@@ -405,6 +410,89 @@ void Run(const std::string& cmd) {
              gPostedUps.push_back({vk, GetTickCount64() + static_cast<ULONGLONG>(std::max(30, std::atoi(Arg(a, 2).c_str())))});
              Report(c + " -> ok");
          }},
+        {"splitref", [](const Args&, const std::string&) { Report(splitref::Status()); }},
+        {"nghost", [](const Args&, const std::string&) { Report(nativeghost::SessionDescription()); }},    // the game's ghost session and records
+        {"nghostload", [](const Args& a, const std::string&) {    // nghostload <steamid> <replay json file>: handed to the game's ghosts
+             std::string text, error;
+             if (FILE* f = _wfopen(eng::Widen(Arg(a, 2)).c_str(), L"rb")) {
+                 char b[65536];
+                 for (size_t n; (n = fread(b, 1, sizeof b, f)) > 0;) text.append(b, n);
+                 fclose(f);
+             }
+             Report("nghostload " + Arg(a, 1) + ": " + (text.empty() ? std::string("can't read the file") :
+                                                         nativeghost::Load(Arg(a, 1), text, &error) ? std::string("ok") : error));
+         }},
+        {"nghostopen", [](const Args& a, const std::string&) {    // nghostopen <board name>: a ghost session for this local map
+             std::string error;
+             Report("nghostopen: " + (nativeghost::OpenSession(Arg(a, 1), &error) ? nativeghost::SessionDescription() : error));
+         }},
+        {"nghostrival", [](const Args& a, const std::string&) {   // nghostrival <steamid> <replay json file>: as one of the game's rivals
+             std::string text, error;
+             if (FILE* f = _wfopen(eng::Widen(Arg(a, 2)).c_str(), L"rb")) {
+                 char b[65536];
+                 for (size_t n; (n = fread(b, 1, sizeof b, f)) > 0;) text.append(b, n);
+                 fclose(f);
+             }
+             Report("nghostrival " + Arg(a, 1) + ": " + (text.empty() ? std::string("can't read the file") :
+                                                          nativeghost::LoadAsRival(Arg(a, 1), text, &error) ? std::string("ok") : error));
+         }},
+        {"nghostsel", [](const Args& a, const std::string&) {     // nghostsel <steamid> <0 inherit|1 show|2 hide>
+             std::string error;
+             Report("nghostsel " + Arg(a, 1) + " " + Arg(a, 2) + ": " +
+                    (nativeghost::Select(Arg(a, 1), std::atoi(Arg(a, 2).c_str()), &error) ? std::string("ok") : error));
+         }},
+        {"rowhover", [](const Args& a, const std::string& c) {    // rowhover <i|-1>: as if the mouse were over row i's tile
+             leaderboard::TestHoverRow(std::atoi(Arg(a, 1).c_str()));
+             Report(c + " -> ok");
+         }},
+        {"rowtoggle", [](const Args& a, const std::string& c) {   // rowtoggle <i>: a click on the leaderboard row i's ghost toggle
+             leaderboard::TestGhostRow(std::atoi(Arg(a, 1).c_str()));
+             Report(c + " -> ok");
+         }},
+        {"tagname", [](const Args& a, const std::string&) { Report("tagname: " + nativeghost::RenameTags(Arg(a, 1), Arg(a, 2))); }},
+        {"localrec", [](const Args&, const std::string& c) {        // localrec <level name>: the game's record for it
+             const std::string level = c.size() > 9 ? c.substr(9) : "";
+             double best = 0;
+             int splits = 0, samples = 0;
+             const bool found = localrecords::Read(level, &best, &splits, &samples);
+             Report("localrec '" + level + "': " + (found ? "best " + std::to_string(best) + " s, " + std::to_string(splits) + " splits, " +
+                                                            std::to_string(samples) + " samples" : std::string("none")) + ", medal " + std::to_string(localrecords::Medal(level)));
+         }},
+        {"localclear", [](const Args&, const std::string& c) {      // localclear <level name>
+             std::string error;
+             Report("localclear: " + (localrecords::Clear(c.size() > 11 ? c.substr(11) : "", &error) ? std::string("ok") : error));
+         }},
+        {"savetest", [](const Args&, const std::string& c) {        // savetest <level>: the game's own Run Fixup Save of a 900 s record
+             const std::string level = c.size() > 9 ? c.substr(9) : "";
+             eng::Obj controller = game::PlayerController();
+             eng::Obj gi = controller ? eng::Call(eng::FindCdo("GameplayStatics"), "GetGameInstance", controller).ReturnObj() : nullptr;
+             eng::Params p(gi ? eng::FunctionOn(gi, "Run Fixup Save") : nullptr);
+             if (!p.Fn()) return Report("savetest: no Run Fixup Save");
+             std::vector<uint8_t> record(static_cast<size_t>(p.SizeOf("Highscore")), 0);
+             const std::wstring w = eng::Widen(level);
+             const eng::FString name{w.c_str(), static_cast<int32_t>(w.size() + 1), static_cast<int32_t>(w.size() + 1)};
+             std::memcpy(record.data(), &name, sizeof name);
+             const double best = 900.0;
+             std::memcpy(record.data() + 0x10, &best, sizeof best);
+             p.Set("Highscore", record.data(), record.size());
+             p.Set("LevelName", name);
+             Report(std::string("savetest: ") + (eng::Invoke(gi, p) ? "called" : "failed"));
+         }},
+        {"localsuppress", [](const Args&, const std::string& c) {   // localsuppress <level name>
+             std::string error;
+             Report("localsuppress: " + (localrecords::Suppress(c.size() > 14 ? c.substr(14) : "", &error) ? std::string("ok") : error));
+         }},
+        {"ghostlook", [](const Args&, const std::string&) { Report("ghostlook: " + nativeghost::Appearance()); }},
+        {"nametags", [](const Args&, const std::string&) { Report("nametags: " + nativeghost::NameTags()); }},
+        {"nghostwatch", [](const Args& a, const std::string&) {   // nghostwatch <steamid>: the game's replay mode for that ghost
+             std::string error;
+             Report("nghostwatch: " + (nativeghost::Watch(Arg(a, 1), &error) ? std::string("in replay mode") : error));
+         }},
+        {"nghostas", [](const Args& a, const std::string&) { Report("nghostas: " + nativeghost::DebugReopenAs(Arg(a, 1))); }},
+        {"povtest", [](const Args& a, const std::string&) { Report("povtest: " + nativeghost::DebugWatch(Arg(a, 1))); }},
+        {"stoppov", [](const Args&, const std::string& c) {         // the game's own exit from replay mode (PlayerWantsToStopPOV)
+             Report(c + (nativeghost::StopWatching() ? " -> ok" : " -> not in replay mode"));
+         }},
         {"rowclick", [](const Args& a, const std::string& c) {    // rowclick <i>: a click on the leaderboard's extra row i
              leaderboard::TestClickRow(std::atoi(Arg(a, 1).c_str()));
              Report(c + " -> ok");
@@ -565,6 +653,20 @@ void Run(const std::string& cmd) {
              }
          }},
         {"openstate", [](const Args&, const std::string&) { Report("openstate " + tracks::OpenState()); }},
+        {"openlocallist", [](const Args& a, const std::string& c) {  // openlocallist <index> <file>|<file>|...
+             std::vector<std::string> names;
+             const std::string rest = c.substr(c.find(' ', 14) + 1);
+             for (size_t at = 0; at <= rest.size();) {
+                 const size_t bar = rest.find('|', at);
+                 names.push_back(rest.substr(at, bar == std::string::npos ? std::string::npos : bar - at));
+                 if (bar == std::string::npos) break;
+                 at = bar + 1;
+             }
+             Report(c + (tracks::OpenLocalList(names, std::atoi(Arg(a, 1).c_str())) ? " -> ok" : " -> failed: " + tracks::OpenState()));
+         }},
+        {"openlocal", [](const Args&, const std::string& c) {     // openlocal <map file name>: a saved map raced (Tracks::OpenLocal)
+             Report(c + (tracks::OpenLocal(c.substr(10)) ? " -> ok" : " -> failed: " + tracks::OpenState()));
+         }},
         {"open", [](const Args& a, const std::string& c) { Report(c + (game::OpenLevel(Arg(a, 1)) ? " -> ok" : " -> failed")); }},
         {"functions", [](const Args& a, const std::string&) { Functions(Arg(a, 1)); }},
         {"instances", [](const Args& a, const std::string&) {
@@ -731,6 +833,67 @@ void Run(const std::string& cmd) {
              eng::Invoke(lib, p);
              Report(c + (p.ReturnObj() ? " -> spawned" : " -> failed"));
          }},
+        {"editmap", [](const Args&, const std::string& c) {    // editmap <full path of a .balledit>: straight into the editor
+             // What the Create page's entry does (WBP_TrackLibraryEntry.LoadMapForEdit: SKGMLEStatics.LoadMapFromFile,
+             // then the game instance's BeginLevelTransition(Map_LevelEditorMain, 2, the file's text, UserLevelName)),
+             // from anywhere (the editor too), for any file: no trip through the main menu, no restart for new files.
+             // The file's text, read by the game, is kept by its Params (a test slot's one-off, not freed).
+             const std::string path = c.size() > 8 ? c.substr(8) : "";
+             const size_t amp = path.find_last_of('&'), dot = path.rfind(".balledit");
+             if (path.empty() || amp == std::string::npos || dot == std::string::npos || dot < amp)
+                 return Report(c + " -> failed: give the full path of a Map_LevelEditorMain&<name>.balledit file");
+             const std::wstring wpath = eng::Widen(path), wlevel = eng::Widen(path.substr(amp + 1, dot - amp - 1));
+             const eng::FString fpath{wpath.c_str(), static_cast<int32_t>(wpath.size() + 1), static_cast<int32_t>(wpath.size() + 1)};
+             const eng::FString flevel{wlevel.c_str(), static_cast<int32_t>(wlevel.size() + 1), static_cast<int32_t>(wlevel.size() + 1)};
+             eng::Obj statics = eng::FindCdo("SKGMLEStatics");
+             const auto instances = Instances("BP_BallgameGameInstance_C", "");
+             if (!statics || instances.empty()) return Report(c + " -> failed: no SKGMLEStatics or game instance");
+             static std::vector<eng::Params> kept;           // the loaded text stays owned by these buffers
+             kept.emplace_back(eng::FunctionOn(statics, "LoadMapFromPath"));
+             eng::Params& load = kept.back();
+             load.SetArg(0, fpath);
+             if (!eng::Invoke(statics, load) || !load.ReturnBool()) return Report(c + " -> failed: the game couldn't read the file");
+             size_t textSize = 0;
+             const uint8_t* text = load.Get("OutString", &textSize);
+             const eng::Params name = eng::Call(eng::FindCdo("KismetStringLibrary"), "Conv_StringToName", eng::FString{L"Map_LevelEditorMain", 20, 20});
+             size_t nameSize = 0;
+             const uint8_t* fname = name.Return(&nameSize);
+             if (!text || !fname) return Report(c + " -> failed: no text or level name");
+             eng::Params go(eng::FunctionOn(instances.front(), "BeginLevelTransition"));
+             go.SetArg(0, fname, nameSize);
+             go.SetArg(1, uint8_t{2});                       // EGameModes 2: the editor (as LoadMapForEdit)
+             go.SetArg(2, text, textSize);
+             go.SetArg(3, flevel);
+             go.SetArg(4, static_cast<eng::Obj>(nullptr));
+             Report(c + (eng::Invoke(instances.front(), go) ? " -> ok" : " -> failed"));
+         }},
+        {"pose", [](const Args& a, const std::string& c) {       // pose <x> <y> <z> <pitch> <yaw> [roll]: the editor camera,
+             // as two callx did (pawn K2_SetActorLocation with teleport, controller SetControlRotation), in one frame
+             eng::Obj controller = game::PlayerController();
+             eng::Obj pawn = controller ? eng::Call(controller, "K2_GetPawn").ReturnObj() : nullptr;
+             if (!pawn || a.size() < 6) return Report(c + " -> failed: no pawn, or not pose x y z pitch yaw [roll]");
+             const double at[3] = {std::atof(Arg(a, 1).c_str()), std::atof(Arg(a, 2).c_str()), std::atof(Arg(a, 3).c_str())};
+             const double rot[3] = {std::atof(Arg(a, 4).c_str()), std::atof(Arg(a, 5).c_str()), std::atof(Arg(a, 6).c_str())};
+             eng::Params move(eng::FunctionOn(pawn, "K2_SetActorLocation"));
+             move.SetArg(0, at, sizeof at);
+             move.SetArg(1, uint8_t{0});                     // no sweep
+             move.SetArg(3, uint8_t{1});                     // teleport
+             const bool moved = eng::Invoke(pawn, move);
+             eng::Params turn(eng::FunctionOn(controller, "SetControlRotation"));
+             turn.SetArg(0, rot, sizeof rot);                // FRotator: pitch, yaw, roll
+             const bool turned = eng::Invoke(controller, turn);
+             Report(c + (moved && turned ? " -> ok" : " -> failed"));
+         }},
+        {"hidepieces", [](const Args& a, const std::string& c) {  // hidepieces <material path>: Editor::HideByMaterial
+             Report(c + " -> " + std::to_string(editor::HideByMaterial(-2, Arg(a, 1))) + " pieces, " +
+                    std::to_string(editor::HiddenCount()) + " components hidden");
+         }},
+        {"showpieces", [](const Args&, const std::string& c) {    // showpieces: Editor::ShowAll for everyone
+             Report(c + " -> " + std::to_string(editor::ShowAll(-1)) + " components shown");
+         }},
+        {"waitframes", [](const Args& a, const std::string& c) {  // waitframes <n>: replies once n more frames have run
+             gFrameWaits.push_back({gHostFrames + std::max(1, std::atoi(Arg(a, 1).c_str())), c});
+         }},
         {"openmap", [](const Args& a, const std::string& c) {     // openmap <file name fragment>: Create page entry -> editor
              for (eng::Obj o : Instances("WBP_TrackLibraryEntry_C", "Transient")) {
                  const eng::Prop p = eng::FindProp(eng::ClassOf(o), "AssociatedPath");
@@ -741,6 +904,10 @@ void Run(const std::string& cmd) {
          }},
         {"sandbox", [](const Args&, const std::string&) { Report("sandbox: " + sandbox::Status()); }},
         {"sandboxtest", [](const Args&, const std::string&) { Report("sandbox test: " + sandbox::SelfTest()); }},
+        {"campaigns", [](const Args&, const std::string& c) {      // campaigns [status] | tab | open <i> | pick <i> | back | show <id> | gametab <i> | hover [<card>]
+             const size_t sp = c.find(' ');
+             Report("campaigns: " + campaigns::Command(sp == std::string::npos ? std::string() : c.substr(sp + 1)));
+         }},
         {"hubopen", [](const Args&, const std::string& c) {        // the play page, then its hub tab (WBP_0_Play tab 2)
              for (eng::Obj manager : Instances("WBP_MainMenu_UIManager_C", "Transient")) {
                  eng::Call(manager, "DoPlay");
@@ -783,6 +950,61 @@ void Run(const std::string& cmd) {
                            race::OnTrack(), race::Active(), race::Complete(), race::RunId(), race::Restarts(), race::Practice(), race::Paused(),
                            t.key.c_str(), t.name.c_str(), t.author.c_str(), t.authorTime, t.custom, x, y, jump);
              Report(buf);
+         }},
+        {"drawcollide", [](const Args& a, const std::string& c) {   // drawcollide <0|1> [async]: every drawn model solid or not
+             draw::SetCollideAsync(Arg(a, 2) == "async");
+             std::string out;
+             for (int id = 1; id < 100000 && out.size() < 2000; ++id)
+                 for (int owner = 0; owner < static_cast<int>(plugins::List().size()); ++owner) {
+                     if (!draw::ActorOf(owner, id)) continue;
+                     std::string why;
+                     const bool ok = draw::Collide(owner, id, Arg(a, 1) != "0", &why);
+                     out += " model " + std::to_string(id) + (ok ? " ok" : " refused: " + why);
+                 }
+             Report(c + " ->" + (out.empty() ? " no models" : out));
+         }},
+        {"ballvel", [](const Args& a, const std::string& c) {   // ballvel <x> <y> <z>: the played ball's velocity (own maps)
+             Report(c + (race::SetBallVelocity(std::atof(Arg(a, 1).c_str()), std::atof(Arg(a, 2).c_str()), std::atof(Arg(a, 3).c_str()))
+                             ? " -> ok" : " -> refused"));
+         }},
+        {"collideinfo", [](const Args&, const std::string& c) { Report(c + " -> " + draw::CollideReport()); }},
+        {"trace", [](const Args& a, const std::string& c) {     // trace <x> <y> [top] [bottom]: a straight line down
+             eng::Obj controller = game::PlayerController();
+             eng::Obj library = eng::FindCdo("KismetSystemLibrary");
+             if (!controller || !library) return Report(c + " -> failed");
+             const double x = std::atof(Arg(a, 1).c_str()), y = std::atof(Arg(a, 2).c_str());
+             const double top = a.size() > 3 ? std::atof(Arg(a, 3).c_str()) : 200000, bottom = a.size() > 4 ? std::atof(Arg(a, 4).c_str()) : -200000;
+             eng::Obj pawn = eng::Call(controller, "K2_GetPawn").ReturnObj();
+             struct {
+                 eng::Obj* data;
+                 int32_t num, max;
+             } actors{&pawn, pawn ? 1 : 0, pawn ? 1 : 0};
+             const double start[3] = {x, y, top}, end[3] = {x, y, bottom};
+             eng::Params trace(eng::FunctionOn(library, "LineTraceSingle"));
+             trace.Set("WorldContextObject", controller);
+             trace.Set("Start", start, sizeof start);
+             trace.Set("End", end, sizeof end);
+             trace.Set("TraceChannel", uint8_t{0});              // Visibility
+             trace.Set("bTraceComplex", uint8_t{0});
+             trace.Set("ActorsToIgnore", actors);
+             trace.Set("bIgnoreSelf", uint8_t{1});
+             if (!eng::Invoke(library, trace)) return Report(c + " -> failed");
+             if (!trace.ReturnBool()) return Report(c + " -> no hit");
+             size_t size = 0;
+             const uint8_t* hit = trace.Get("OutHit", &size);
+             eng::Obj statics = eng::FindCdo("GameplayStatics");
+             eng::Params brk(eng::FunctionOn(statics, "BreakHitResult"));
+             if (!hit || !brk.Set("Hit", hit, size) || !eng::Invoke(statics, brk)) return Report(c + " -> hit, unreadable");
+             double at[3] = {0, 0, 0}, normal[3] = {0, 0, 0};
+             if (const uint8_t* l = brk.Get("Location")) std::memcpy(at, l, sizeof at);
+             if (const uint8_t* n = brk.Get("Normal")) std::memcpy(normal, n, sizeof normal);
+             eng::Obj actor = brk.GetObj("HitActor");
+             eng::Obj component = brk.GetObj("HitComponent");
+             char buf[400];
+             std::snprintf(buf, sizeof buf, " -> hit %.3f %.3f %.3f normal %.4f %.4f %.4f actor %s component %s", at[0], at[1], at[2], normal[0],
+                           normal[1], normal[2], actor ? eng::ObjName(eng::ClassOf(actor)).c_str() : "none",
+                           component ? eng::ObjName(eng::ClassOf(component)).c_str() : "none");
+             Report(c + buf);
          }},
         {"ballsave", [](const Args&, const std::string&) {
              gSavedBall = race::SaveBall();
@@ -986,6 +1208,14 @@ void Run(const std::string& cmd) {
 std::vector<std::string> gQueue;
 unsigned gFrames = 0;
 
+bool SandboxOn() {
+#ifdef HOST_HAS_SANDBOX
+    return sandbox::On();
+#else
+    return false;
+#endif
+}
+
 void PollFile() {
     const std::wstring path = hostlog::DataDir() + L"\\test_command.txt";
     HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
@@ -1019,7 +1249,17 @@ void Frame() {
     std::vector<std::string> queued;
     queued.swap(gQueue);            // a command that queues another runs it next frame
     for (const auto& cmd : queued) Run(cmd);
-    if (++gFrames % 30 == 0) PollFile();
+    for (auto it = gFrameWaits.begin(); it != gFrameWaits.end();) {
+        if (gHostFrames < it->first) {
+            ++it;
+            continue;
+        }
+        Report(it->second + " -> done");
+        it = gFrameWaits.erase(it);
+    }
+    // A sandboxed test copy reads its commands every frame (tools wait on the replies, not on fixed sleeps); any other
+    // game every 30 frames, as before.
+    if (++gFrames % (SandboxOn() ? 1 : 30) == 0) PollFile();
 }
 
 void Enqueue(const std::string& command) { gQueue.push_back(command); }

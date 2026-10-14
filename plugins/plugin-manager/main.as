@@ -29,6 +29,7 @@ const float WINDOW_R = 0.0052f, WINDOW_G = 0.0060f, WINDOW_B = 0.0086f;     // #
 const float CARD_R = 0.0116f, CARD_G = 0.0137f, CARD_B = 0.0194f;           // #1c1f26 cards, tabs
 const float BUTTON_R = 0.0232f, BUTTON_G = 0.0273f, BUTTON_B = 0.0382f;     // #2a2e37 secondary buttons
 const float PRIMARY_R = 0.0782f, PRIMARY_G = 0.2051f, PRIMARY_B = 0.0048f;  // #4f7d0f install, update, the open tab
+const string OWN_REPOS = "https://github.com/AnythingGoes-ballest/";       // the plugin manager's own GitHub account
 const float MUTED_R = 0.2582f, MUTED_G = 0.2747f, MUTED_B = 0.3185f;        // #8b8f99 versions, descriptions
 const float GOOD_R = 0.5647f, GOOD_G = 0.9047f, GOOD_B = 0.0319f;           // #c6f432 running
 const float WARN_R = 0.8879f, WARN_G = 0.5333f, WARN_B = 0.0762f;           // #f2c14e an update
@@ -459,11 +460,22 @@ void AddCardTop(const string &in icon, const string &in name, const string &in v
     Muted(menu.AddText(version, 16));
 }
 
-void AddCardDescription(const string &in description)
+void AddCardDescription(const string &in description, const array<string>@ domains = null)
 {
     menu.NewRow();
     menu.AddSpace(ICON_SIZE);
     Muted(menu.AddText(Shorten(description == "" ? "No description." : description, DESCRIPTION_LENGTH), 16));
+    if (domains !is null && domains.length() > 0)
+    {
+        // the servers the plugin may connect to ([net] domains in its info.toml)
+        string list = "";
+        for (uint i = 0; i < domains.length(); i++)
+            list += (i == 0 ? "" : ", ") + domains[i];
+        menu.NewRow();
+        menu.AddSpace(ICON_SIZE);
+        UI::Text@ net = menu.AddText(Shorten("connects to " + list, DESCRIPTION_LENGTH), 16);
+        net.SetColor(WARN_R, WARN_G, WARN_B, 1);
+    }
     menu.EndCard();
 }
 
@@ -518,7 +530,9 @@ void AddInstalledCard(uint p)
     }
     if (r >= 0)
         AddCardButton("github", "open:" + Registry::Page(r));
-    AddCardDescription(r >= 0 ? Registry::Description(r) : Plugins::Description(p));
+    // the maintainer's own plugins (registry repos under OWN_REPOS) don't list their servers; everyone else's do
+    bool own = r >= 0 && Registry::Page(r).findFirst(OWN_REPOS) == 0;
+    AddCardDescription(r >= 0 ? Registry::Description(r) : Plugins::Description(p), own ? null : Plugins::NetDomains(p));
 }
 
 void AddBrowseCard(uint r)

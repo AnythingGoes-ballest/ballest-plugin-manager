@@ -1,0 +1,56 @@
+name: release zip
+
+# Every release needs ballest-plugin-manager-<version>.zip next to its version.dll: install.sh downloads the latest
+# release's zip (LICENSE.txt, version.dll and the bundled plugins). The DLL is the one uploaded to the release (built by
+# the maintainer); this only packages it with the tag's plugins, and adds the zip when the release has none.
+# Run it by hand with a tag to add a missing zip to an older release.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (vX.Y.Z)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  zip:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Package and attach the zip
+        run: |
+          set -euo pipefail
+          zip="ballest-plugin-manager-${TAG#v}.zip"
+          assets() { gh release view "$TAG" --json assets -q '.assets[].name'; }
+          # gh release create uploads its files right after the release is published: give version.dll a moment
+          for i in $(seq 1 30); do assets | grep -qx version.dll && break; sleep 10; done
+          assets | grep -qx version.dll || { echo "::error::release $TAG has no version.dll"; exit 1; }
+          mkdir out
+          gh release download "$TAG" -p version.dll -D out
+          cp LICENSE out/LICENSE.txt
+          mkdir out/plugins
+          cp -r plugins/hello-world plugins/plugin-manager out/plugins/
+          (cd out && zip -r -X "../$zip" LICENSE.txt version.dll plugins)
+          unzip -l "$zip"
+          if assets | grep -qx "$zip"; then
+            echo "$TAG already has $zip; not replacing it"
+          else
+            gh release upload "$TAG" "$zip"
+            echo "attached $zip to $TAG"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-zip
+          path: ballest-plugin-manager-*.zip

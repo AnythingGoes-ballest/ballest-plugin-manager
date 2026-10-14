@@ -7,4 +7,8 @@ min_host = "0.16.0"
 
 [script]
 files = ["main.as"]
-assets = ["test.png", "cube.obj", "shapes.txt", "beep.wav", "ghosts_test.txt"]
+assets = ["test.png", "cube.obj", "shapes.txt", "beep.wav", "ghosts_test.txt", "Map_LevelEditorMain&apitest_AnythingGoes.balledit", "Map_LevelEditorMain&apitestpub_AnythingGoes.balledit", "apitest_as.balledit", "apitestpub_as.balledit"]
+
+[net]
+# Net:: tests: one GET of the reserved example domain (RFC 2606); the others must be left out when the plugin loads
+domains = ["example.com", "127.0.0.1", "localhost", "printer.local", "intranet"]

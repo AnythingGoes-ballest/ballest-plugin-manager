@@ -422,6 +422,7 @@ void Register()
     RegisterRace();
     RegisterWorkshop();
     RegisterEditor();
+    RegisterLocalMapsNetSources();
 }
 
 // --- core: Math, Log, Host, Plugins, Settings, Registry, Console, Storage, Input -----------------------------------------
@@ -1589,6 +1590,80 @@ void RegisterTracks()
                            Is(badged, "Hub::SetEntryBadge answered false for a map on screen")};
         return All(c);
     }, 40);
+    Add("tracks", "Custom campaigns tab and screens", "Campaigns::Register,Campaigns::AddCourse,Campaigns::SetCourseInfo,Campaigns::SetCourseDetail,Campaigns::SetNote,Campaigns::SetTheme,Campaigns::Show,Campaigns::Shown,Campaigns::Opened,Campaigns::Picked,Campaigns::ListShown,Campaigns::Remove", function() {
+        // A campaign makes the play page's "custom campaigns" tab; its screen is shown, a course chosen and the menu's
+        // back button pressed (the host's test commands, as the clicks would), then it is removed again.
+        if (step == 0)
+        {
+            id1 = Campaigns::Register("api test campaign", "", "a campaign of the API tests");
+            if (id1 <= 0)
+                return "Campaigns::Register answered " + id1;
+            array<string> c = {Is(Campaigns::AddCourse(id1, "first", "") == 0, "Campaigns::AddCourse didn't answer 0"),
+                               Is(Campaigns::AddCourse(id1 + 1000, "x", "") == -1, "Campaigns::AddCourse took an unknown id"),
+                               Is(Campaigns::SetCourseInfo(id1, 0, "1:00.000"), "Campaigns::SetCourseInfo answered false"),
+                               Is(!Campaigns::SetCourseInfo(id1, 5, "x"), "Campaigns::SetCourseInfo took a course that isn't there"),
+                               Is(Campaigns::SetCourseDetail(id1, 0, "detail"), "Campaigns::SetCourseDetail answered false"),
+                               Is(Campaigns::SetNote(id1, "note"), "Campaigns::SetNote answered false"),
+                               Is(Campaigns::SetTheme(id1, "card=#E60012 hover=#FFC20E text=#FFF3D6 accent=#FFC20E80"), "Campaigns::SetTheme refused a valid theme"),
+                               Is(!Campaigns::SetTheme(id1, "card=red"), "Campaigns::SetTheme took a colour that isn't #RRGGBB"),
+                               Is(!Campaigns::SetTheme(id1, "glow=#FFFFFF"), "Campaigns::SetTheme took an unknown key"),
+                               Is(!Campaigns::Shown(id1) && !Campaigns::Opened(id1) && Campaigns::Picked(id1) == -1, "the campaign looked open before it was"),
+                               Is(!Campaigns::Remove(id1 + 1000), "Campaigns::Remove took an unknown id")};
+            string r = All(c);
+            if (r != PASS)
+                return r;
+            Console::Run("hubopen");            // the play page
+            step = 1;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (step == 1)
+        {
+            if (Elapsed() < 2)
+                return WAIT;
+            if (!Campaigns::Show(id1))
+                return "Campaigns::Show answered false";
+            step = 2;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (step == 2)
+        {
+            if (!Campaigns::Shown(id1))
+                return Elapsed() > 10 ? "Campaigns::Shown still false 10 s after Campaigns::Show" : WAIT;
+            if (!Campaigns::Opened(id1))
+                return "Campaigns::Opened false with its screen shown";
+            Console::Run("campaigns pick 0");
+            step = 3;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (step == 3)
+        {
+            int picked = Campaigns::Picked(id1);
+            if (picked != 0)
+                return Elapsed() > 5 ? "Campaigns::Picked answered " + picked + " after a course was chosen" : WAIT;
+            Console::Run("campaigns back");     // the menu's own back button: the campaign list
+            step = 4;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (step == 4)
+        {
+            if (!Campaigns::ListShown())
+                return Elapsed() > 5 ? "Campaigns::ListShown still false after back on the campaign's screen" : WAIT;
+            if (Campaigns::Shown(id1))
+                return "Campaigns::Shown true on the list";
+            if (!Campaigns::Remove(id1))
+                return "Campaigns::Remove answered false";
+            step = 5;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (Campaigns::ListShown())             // the last campaign gone: no tab, no list
+            return Elapsed() > 5 ? "Campaigns::ListShown still true after the last campaign was removed" : WAIT;
+        return PASS;
+    }, 40);
     Add("tracks", "Ghosts load a leaderboard", "Ghosts::Load,Ghosts::State,Ghosts::Leaderboard,Ghosts::Entries,Ghosts::WithoutReplay,Ghosts::Count", function() {
         if (level == "")
             return "no level from Tracks::Official";
@@ -2588,4 +2663,313 @@ void RegisterEditor()
         array<string> c = {Is(Editor::IsTesting(), "Editor::IsTesting false in a test run"), Is(Race::BallPosition(x, y, z), "Race::BallPosition false in a test run")};
         return All(c);
     });
+}
+
+// --- host 0.26.0: local maps, ball velocity, solid models, hidden pieces, Net, Json, Steam identity, leaderboard
+// sources, split references, local records, replays as text ----------------------------------------------------------
+UI::FooterButton@ menuButton;
+
+void RegisterLocalMapsNetSources()
+{
+    Add("core", "Json reads values by path", "Json::Has,Json::String,Json::Number,Json::Bool,Json::Count,Json::Quote", function() {
+        const string j = '{"a":{"b":[10,{"c":"x"}],"t":true},"n":2.5,"s":"hi"}';
+        string q = Json::Quote('say "hi"\n');
+        array<string> c = {Is(Json::Has(j, "a.b.1.c") && !Json::Has(j, "a.z"), "Json::Has"),
+                           Is(Json::String(j, "a.b.1.c") == "x" && Json::String(j, "s") == "hi" && Json::String(j, "missing", "fb") == "fb", "Json::String"),
+                           Near(Json::Number(j, "n"), 2.5, "Json::Number"), Near(Json::Number(j, "a.b.0"), 10, "Json::Number (array item)"),
+                           Is(Json::Bool(j, "a.t") && Json::Bool(j, "x", true), "Json::Bool"),
+                           Is(Json::Count(j, "a.b") == 2 && Json::Count(j, "a") == 2 && Json::Count(j, "n") == -1, "Json::Count"),
+                           Is(q == '"say \\"hi\\"\\u000a"', "Json::Quote gave " + q),
+                           Is(!Json::Has("not json", ""), "Json::Has true for text that isn't JSON")};
+        return All(c);
+    });
+    Add("core", "Steam identity and web tickets", "Steam::OwnId,Steam::PersonaName,Steam::RequestWebTicket,Steam::WebTicketState,Steam::WebTicket,Steam::WebTicketIdentity", function() {
+        string own = Steam::OwnId();
+        if (own.length() < 15)
+            return "Steam::OwnId '" + own + "'";
+        if (step == 0)
+        {
+            Steam::PersonaName(own);            // asks Steam if it doesn't know yet
+            step = 1;
+            return WAIT;
+        }
+        if (Steam::PersonaName(own) == "")
+            return Elapsed() > 5 ? "Steam::PersonaName of the player is empty" : WAIT;
+        // In a sandboxed test copy Steam's ticket call is one of the blocks: refused, an error state, no ticket.
+        // The identity is always the plugin's own, whatever is asked for.
+        bool asked = Steam::RequestWebTicket("some-other-service");
+        string state = Steam::WebTicketState();
+        array<string> c = {Is(Steam::WebTicketIdentity() == "ballest-plugin:" + ME, "Steam::WebTicketIdentity '" + Steam::WebTicketIdentity() + "'"),
+                           Is(LogSince("ballest-plugin:" + ME) && !LogSince("'some-other-service'"), "Steam::RequestWebTicket: not asked for the plugin's own identity"),
+                           Is(asked ? (state == "pending" || state == "ready") : state.findFirst("error") == 0, "Steam::WebTicketState '" + state + "' after RequestWebTicket " + asked),
+                           Is(asked || Steam::WebTicket() == "", "Steam::WebTicket not empty after a refused request")};
+        return All(c);
+    });
+    Add("core", "Net: declared domains only", "Net::Get,Net::Post,Net::Refusal,Net::Domains,Net::Done,Net::Status,Net::Body,Net::Error,Net::Forget,Plugins::NetDomains", function() {
+        if (step == 0)
+        {
+            // info.toml also declares 127.0.0.1, localhost, printer.local and intranet: left out when the plugin loaded
+            array<string>@ d = Net::Domains();
+            array<string>@ listed = Plugins::NetDomains(MyPlugin());
+            array<string> c = {Is(d.length() == 1 && d[0] == "example.com", "Net::Domains (info.toml [net]) has " + d.length() + " hosts"),
+                               Is(listed.length() == 1 && listed[0] == "example.com", "Plugins::NetDomains of this plugin"),
+                               Is(Net::Get("https://127.0.0.1/") == 0 && Net::Get("https://localhost/") == 0, "Net::Get to the player's own computer"),
+                               Is(Net::Get("https://example.org/") == 0 && Net::Refusal().findFirst("example.org") >= 0, "Net::Get to an undeclared host: " + Net::Refusal()),
+                               Is(Net::Get("http://example.com/") == 0, "Net::Get over plain http"),
+                               Is(Net::Get("https://example.com:8443/") == 0, "Net::Get on another port"),
+                               Is(Net::Get("https://user@example.com/") == 0, "Net::Get with user info"),
+                               Is(Net::Get("https://sub.example.com/") == 0, "Net::Get to a subdomain"),
+                               Is(Net::Post("https://example.org/", "{}") == 0, "Net::Post to an undeclared host"),
+                               Is(Net::Get("https://example.com/", "bad token\r\nX: y") == 0, "Net::Get with a bearer that isn't a token"),
+                               Is(!Net::Done(999999) && Net::Status(999999) == 0 && Net::Body(999999) == "" && Net::Error(999999) == "no such request", "Net:: on an unknown id")};
+            string r = All(c);
+            if (r != PASS)
+                return r;
+            id1 = Net::Get("https://example.com/");
+            if (id1 <= 0)
+                return "Net::Get to the declared host refused: " + Net::Refusal();
+            step = 1;
+            return WAIT;
+        }
+        if (!Net::Done(id1))
+            return Elapsed() > 15 ? "Net::Done still false after 15 s" : WAIT;
+        int status = Net::Status(id1);
+        string body = Net::Body(id1), error = Net::Error(id1);
+        Net::Forget(id1);
+        array<string> c = {Is(status == 200, "Net::Status " + status + " (" + error + ")"),
+                           Is(body.findFirst("Example Domain") >= 0, "Net::Body without the page's text"),
+                           Is(Net::Error(id1) == "no such request", "Net::Forget kept the request")};
+        return All(c);
+    }, 25);
+    Add("core", "UI menu button", "UI::AddMenuButton,UI::MainMenuShown", function() {
+        if (@menuButton is null)
+            @menuButton = UI::AddMenuButton("api test entry");
+        if (@menuButton is null)
+            return "UI::AddMenuButton gave null";
+        if (!UI::MainMenuShown())
+            return Elapsed() > 5 ? "UI::MainMenuShown false on the main menu" : WAIT;
+        return Is(!menuButton.Clicked(), "the menu entry was clicked by nobody");
+    });
+    Add("core", "Tracks local maps: folder, install, refusals", "Tracks::LocalFolder,Tracks::InstallLocalMap,Tracks::InstallLocalMapAs,Tracks::OpenLocal,Tracks::OpenLocalList,Tracks::OpenState", function() {
+        string folder = Tracks::LocalFolder();
+        int first = Tracks::InstallLocalMap("Map_LevelEditorMain&apitest_AnythingGoes.balledit");
+        int again = Tracks::InstallLocalMap("Map_LevelEditorMain&apitest_AnythingGoes.balledit");
+        int published = Tracks::InstallLocalMap("Map_LevelEditorMain&apitestpub_AnythingGoes.balledit");
+        string pubState = Tracks::OpenState();
+        int notMap = Tracks::InstallLocalMap("shapes.txt");
+        int outside = Tracks::InstallLocalMap("../plugin-manager/info.toml");
+        int asNew = Tracks::InstallLocalMapAs("apitest_as.balledit", "Map_LevelEditorMain&apitest as_AnythingGoes.balledit");
+        int asAgain = Tracks::InstallLocalMapAs("apitest_as.balledit", "Map_LevelEditorMain&apitest as_AnythingGoes.balledit");
+        int asPublished = Tracks::InstallLocalMapAs("apitestpub_as.balledit", "Map_LevelEditorMain&apitest aspub_AnythingGoes.balledit");
+        int asBadTarget = Tracks::InstallLocalMapAs("apitest_as.balledit", "..\Map_LevelEditorMain&x_AnythingGoes.balledit");
+        int asNotMap = Tracks::InstallLocalMapAs("apitest_as.balledit", "notamap.txt");
+        bool missing = Tracks::OpenLocal("no such map of the api tests");
+        string missingState = Tracks::OpenState();
+        bool escaped = Tracks::OpenLocal("../Map_LevelEditorMain&x_AnythingGoes.balledit");
+        array<string> none = {"no such map of the api tests"};
+        bool listed = Tracks::OpenLocalList(none, 0);
+        bool badIndex = Tracks::OpenLocalList(none, 3);
+        array<string> c = {Is(folder.findFirst("UserSavedMaps") >= 0, "Tracks::LocalFolder '" + folder + "'"),
+                           Is(first >= 0 && again == 0, "Tracks::InstallLocalMap answered " + first + " then " + again + " (" + Tracks::OpenState() + ")"),
+                           Is(published == -1 && pubState.findFirst("published") >= 0, "Tracks::InstallLocalMap of a published map: " + published + " " + pubState),
+                           Is(notMap == -1 && outside == -1, "Tracks::InstallLocalMap of a file that isn't a map: " + notMap + ", " + outside),
+                           Is(asNew >= 0 && asAgain == 0, "Tracks::InstallLocalMapAs answered " + asNew + " then " + asAgain),
+                           Is(asPublished == -1 && asBadTarget == -1 && asNotMap == -1, "Tracks::InstallLocalMapAs refusals: " + asPublished + ", " + asBadTarget + ", " + asNotMap),
+                           Is(!missing && missingState.findFirst("error") == 0, "Tracks::OpenLocal of a missing map: " + missingState),
+                           Is(!escaped, "Tracks::OpenLocal took a path out of the maps folder"),
+                           Is(!listed && !badIndex, "Tracks::OpenLocalList of missing maps / a bad index answered true")};
+        return All(c);
+    });
+    Add("core", "Race local records and ball velocity off a map", "Race::LocalRecordTime,Race::ClearLocalRecord,Race::SuppressLocalRecords,Race::RunTainted,Race::BallVelocity,Race::AddBallVelocity", function() {
+        string why;
+        bool tainted = Race::RunTainted(why);
+        double vx, vy, vz;
+        array<string> c = {Is(Race::LocalRecordTime("no such level of the api tests") == -1, "Race::LocalRecordTime of an unknown level not -1"),
+                           Is(!Race::ClearLocalRecord("no such level of the api tests"), "Race::ClearLocalRecord took a level that isn't the player's own map"),
+                           Is(!Race::SuppressLocalRecords("apitestpub"), "Race::SuppressLocalRecords took a published map"),
+                           Is(!tainted || why != "", "Race::RunTainted true without a reason"),
+                           Is(!Race::BallVelocity(vx, vy, vz), "Race::BallVelocity true with no ball"),
+                           Is(!Race::AddBallVelocity(0, 0, 100), "Race::AddBallVelocity true with no ball")};
+        return All(c);
+    });
+
+    Add("race", "Race ball velocity refused on a live map", "Race::BallVelocity,Race::AddBallVelocity", function() {
+        double x, y, z;
+        if (!Race::BallVelocity(x, y, z))
+            return "Race::BallVelocity false in a race";
+        double nan = Math::sqrt(-1);
+        array<string> c = {Is(!Race::AddBallVelocity(0, 0, 500), "Race::AddBallVelocity pushed the ball on a published map"),
+                           Is(!Race::AddBallVelocity(0, 0, nan), "Race::AddBallVelocity took NaN")};
+        return All(c);
+    });
+    Add("race", "Draw::Collide refused on a live map", "Draw::Collide", function() {
+        int model = Draw::Model(Plugins::Folder() + "shapes.txt");
+        if (model <= 0)
+            return "Draw::Model(shapes.txt) " + model;
+        bool solid = Draw::Collide(model);
+        bool off = Draw::Collide(model, false);
+        bool notMine = Draw::Collide(model + 100000);
+        Draw::Remove(model);
+        array<string> c = {Is(!solid, "Draw::Collide made a model solid on a published map"), Is(off, "Draw::Collide(false) false"),
+                           Is(!notMine, "Draw::Collide took an id that isn't a model of this plugin's")};
+        return All(c);
+    });
+    Add("race", "Runs::Replay and replay balls", "Runs::Replay,Ghosts::ReplayBall,Ghosts::PlaceReplayBall,Ghosts::ReplayTime,Ghosts::ReplayName", function() {
+        if (Runs::Count() == 0)
+            return "no run kept";
+        string replay = Runs::Replay(0);
+        if (!Json::Has(replay, "locations"))
+            return "Runs::Replay(0) isn't the game's ghost JSON (" + replay.length() + " bytes)";
+        int id = Ghosts::ReplayBall(replay);
+        if (id <= 0)
+            return "Ghosts::ReplayBall " + id;
+        array<string> c = {Is(Runs::Replay(-1) == "" && Runs::Replay(100000) == "", "Runs::Replay of a run that isn't there"),
+                           Is(Ghosts::PlaceReplayBall(id, 0.5), "Ghosts::PlaceReplayBall false"),
+                           Is(Ghosts::ReplayTime(id) > 0, "Ghosts::ReplayTime " + Ghosts::ReplayTime(id)),
+                           Is(Ghosts::ReplayName(id) == Json::String(replay, "username"), "Ghosts::ReplayName '" + Ghosts::ReplayName(id) + "'"),
+                           Is(Ghosts::ReplayBall("not a replay") == 0, "Ghosts::ReplayBall took text that isn't a replay"),
+                           Is(Ghosts::ReplayTime(id + 100000) == -1, "Ghosts::ReplayTime of an unknown id")};
+        Draw::Remove(id);
+        return All(c);
+    });
+    Add("race", "Race split reference", "Race::SetSplitReference,Race::ClearSplitReference", function() {
+        if (step == 0)
+        {
+            array<double> splits = {5.0, 9.5};
+            Race::SetSplitReference(Race::TrackKey(), splits, 12.25);
+            mark = Log::LineCount();
+            Console::Run("splitref");
+            step = 1;
+            return WAIT;
+        }
+        if (step == 1)
+        {
+            if (!LogSince("12.25"))
+                return Elapsed() > 4 ? "Race::SetSplitReference: the host's splitref status doesn't show it" : WAIT;
+            Race::ClearSplitReference();
+            mark = Log::LineCount();
+            Console::Run("splitref");
+            step = 2;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (Elapsed() < 1.5)
+            return WAIT;
+        return Is(!LogSince("12.25"), "Race::ClearSplitReference: the host still shows the reference");
+    }, 10);
+    Add("race", "Leaderboard source refused on a live map", "Leaderboard::SetSource,Leaderboard::ClearSource,Leaderboard::SourceShown,Leaderboard::SetRowGhost,Leaderboard::ClearRowGhost,Leaderboard::RowGhost,Leaderboard::WatchRowReplay,Leaderboard::SetOwnReplay", function() {
+        // The test map is a published workshop map: a source never applies there (only the player's own
+        // never-published maps), so the game's own board and ghosts stay.
+        array<string> names = {"api source 1", "api source 2"};
+        array<double> times = {11.5, 13.25};
+        array<int> ranks = {1, 2};
+        array<bool> ghosts = {false, false};
+        if (step == 0)
+        {
+            mark = Log::LineCount();
+            Leaderboard::SetSource(Race::TrackKey(), "api tests", names, times, ranks, 1, ghosts);
+            array<string> c = {Is(!Leaderboard::SetOwnReplay(""), "Leaderboard::SetOwnReplay answered true on a published map"),
+                               Is(!Leaderboard::SetRowGhost(0, "76561190000000001", "{}"), "Leaderboard::SetRowGhost answered true on a published map"),
+                               Is(!Leaderboard::WatchRowReplay(0, "76561190000000001", "{}"), "Leaderboard::WatchRowReplay answered true on a published map"),
+                               Is(!Leaderboard::ClearRowGhost(), "Leaderboard::ClearRowGhost with no row ghost answered true"),
+                               Is(Leaderboard::RowGhost() == "", "Leaderboard::RowGhost '" + Leaderboard::RowGhost() + "' with none"),
+                               Is(LogSince("source refused"), "Leaderboard::SetSource: no refusal logged on a published map")};
+            string r = All(c);
+            if (r != PASS)
+            {
+                Leaderboard::ClearSource();
+                return r;
+            }
+            Console::Run("rowstab");
+            step = 1;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (step == 1)
+        {
+            if (Elapsed() < 2)
+                return WAIT;
+            bool shown = Leaderboard::SourceShown();
+            Leaderboard::ClearSource();
+            Console::Run("rowstab");
+            return Is(!shown, "Leaderboard::SourceShown true on a published map");
+        }
+        return PASS;
+    }, 15);
+    Add("race", "Editor::HideByMaterial refused in a race of a live map", "Editor::HideByMaterial", function() {
+        mark = Log::LineCount();
+        int hidden = Editor::HideByMaterial("/Game/Art/Materials/Masters/M_CheckpointLight");
+        return Is(hidden == 0, "Editor::HideByMaterial hid " + hidden + " pieces in a race of a published map");
+    });
+
+    Add("editor", "Draw::Collide on the player's own map", "Draw::Collide", function() {
+        int model = Draw::Model(Plugins::Folder() + "shapes.txt");
+        if (model <= 0)
+            return "Draw::Model(shapes.txt) " + model;
+        bool solid = Draw::Collide(model);
+        bool off = Draw::Collide(model, false);
+        Draw::Remove(model);
+        array<string> c = {Is(solid, "Draw::Collide false in the editor of an unpublished map"), Is(off, "Draw::Collide(false) false")};
+        return All(c);
+    });
+    Add("editor", "Editor pieces hidden by material", "Editor::HideByMaterial,Editor::ShowAll", function() {
+        if (Editor::HideByMaterial("/Game/NoSuch/M_NoSuch") != 0 || Editor::HideByMaterial("") != 0)
+            return "Editor::HideByMaterial hid pieces for a material no piece has";
+        // materials the game's own pieces use (checkpoint strips' lights and glow, the empty collision material)
+        array<string> candidates = {"/Game/Art/Materials/Masters/M_CheckpointLight", "/Game/Art/Materials/VFX/M_CheckpointPreGlow",
+                                    "/Game/Art/Materials/Masters/M_Empty"};
+        int hidden = 0;
+        string used = "";
+        for (uint i = 0; i < candidates.length() && hidden == 0; i++)
+        {
+            hidden = Editor::HideByMaterial(candidates[i]);
+            used = candidates[i];
+        }
+        if (hidden == 0)
+            return "SKIP: no piece of the editor's map uses any of the materials tried";
+        int shown = Editor::ShowAll();
+        array<string> c = {Is(shown > 0 && Editor::ShowAll() == 0, "Editor::ShowAll showed " + shown + " after " + hidden + " pieces were hidden (" + used + "), then not 0")};
+        return All(c);
+    });
+    Add("editor", "Race local records of the player's own map", "Race::LocalRecordTime,Race::ClearLocalRecord,Race::SuppressLocalRecords", function() {
+        string name = Editor::MapName();
+        if (name == "")
+            return "no map name";
+        array<string> c = {Is(Race::SuppressLocalRecords(name), "Race::SuppressLocalRecords('" + name + "') false for the player's own unpublished map"),
+                           Is(Race::ClearLocalRecord(name), "Race::ClearLocalRecord('" + name + "') false for the player's own unpublished map"),
+                           Is(Race::LocalRecordTime(name) <= 0, "Race::LocalRecordTime " + Race::LocalRecordTime(name) + " after ClearLocalRecord")};
+        return All(c);
+    });
+    Add("editortest", "Leaderboard source on the player's own map", "Leaderboard::SetSource,Leaderboard::SetOwnReplay,Leaderboard::SourceShown,Leaderboard::ExtraRowGhostClicked,Leaderboard::ClearSource", function() {
+        array<string> names = {"api source 1", "api source 2"};
+        array<double> times = {11.5, 13.25};
+        array<int> ranks = {1, 2};
+        array<bool> ghosts = {false, false};
+        Leaderboard::SetSource(Race::TrackKey(), "api tests", names, times, ranks, 1, ghosts);
+        bool own = Leaderboard::SetOwnReplay("");
+        bool clicked = Leaderboard::ExtraRowGhostClicked() == -1;
+        Leaderboard::ClearSource();
+        array<string> c = {Is(own, "Leaderboard::SetOwnReplay('') false in a test run of the player's own unpublished map"),
+                           Is(clicked, "Leaderboard::ExtraRowGhostClicked with no click"),
+                           Is(!Leaderboard::SourceShown(), "Leaderboard::SourceShown true after ClearSource")};
+        return All(c);
+    });
+    Add("editortest", "Race::AddBallVelocity in a test run", "Race::AddBallVelocity,Race::BallVelocity,Race::RunTainted", function() {
+        double x, y, z;
+        if (!Race::BallVelocity(x, y, z))
+            return "Race::BallVelocity false in a test run";
+        if (step == 0)
+        {
+            d1 = z;
+            if (!Race::AddBallVelocity(0, 0, 800))
+                return "Race::AddBallVelocity refused in a test run of the player's own unpublished map";
+            step = 1;
+            return WAIT;
+        }
+        if (z < d1 + 300)
+            return Elapsed() > 2 ? "Race::BallVelocity z " + z + " after a push of 800 (was " + d1 + ")" : WAIT;
+        string why;
+        bool tainted = Race::RunTainted(why);
+        return Is(!tainted || why.findFirst("pushed") < 0, "Race::RunTainted counts the plugin's own push: " + why);
+    }, 8);
 }

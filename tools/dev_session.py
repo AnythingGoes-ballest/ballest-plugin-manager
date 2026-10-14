@@ -16,6 +16,11 @@ commands.txt lines:
     wait <regex>          wait (up to 60 s) for a host.log line matching the regex (prints WAIT TIMED OUT if none)
     waitstate <regex>     ask `state` until its reply (every window's texts) matches, up to 30 s: e.g. that a key
                           press landed before a screenshot (prints WAITSTATE TIMED OUT if it never does)
+    waiteditor [N] [s]    ask `editor` until it's open with N pieces (or, without N, the same count and camera 5 times
+                          in a row), up to s seconds (default 300): a map opened with
+                          openmap or editmap is in (prints WAITEDITOR TIMED OUT if not). The game's loading screen
+                          stays up about 2 s longer
+    reply <command>       a command, then its "test:" reply waited for (instead of the fixed 1.5 s)
     shot <name>           screenshot to the host's data folder: <name>.png beside host.log (with --slot, the slot's)
     quick <command>       a command without the 1.5 s wait after it (to time a screenshot)
     anything else         written to the host's test_command.txt (see src/host/main.cpp)
@@ -191,6 +196,39 @@ def main():
                     time.sleep(0.5)
             if not matched:
                 print(f"  WAITSTATE TIMED OUT: no state matched {pattern!r} in 30 s")
+        elif line.startswith("reply "):
+            before = len(log_lines())
+            (DATA / "test_command.txt").write_text(line[6:], encoding="utf-8")
+            word = line[6:].split()[0]
+            end = time.time() + 120
+            while time.time() < end and not any(f"test: {word}" in l or "test: unknown" in l or "test: refused" in l
+                                                for l in log_lines()[before:]):
+                time.sleep(0.02)
+        elif line.startswith("waiteditor"):
+            parts = line.split()
+            want = int(parts[1]) if len(parts) > 1 else None
+            end = time.time() + (float(parts[2]) if len(parts) > 2 else 300)
+            last, same, done, first_cam = None, 0, False, None
+            while time.time() < end and not done:
+                before = len(log_lines())
+                (DATA / "test_command.txt").write_text("editor", encoding="utf-8")
+                reply = ""
+                while time.time() < end and not reply:
+                    reply = next((l for l in log_lines()[before:] if "test: editor=" in l), "")
+                    time.sleep(0.02)
+                m = re.search(r"editor=open pieces=(\d+).*?camera=([-\d.,]+)", reply)
+                if m:
+                    pieces, cam = int(m.group(1)), m.group(2)
+                    first_cam = first_cam or cam
+                    if want is not None:
+                        done = pieces == want
+                    else:
+                        same = same + 1 if (pieces, cam) == last and pieces > 0 else 0
+                        done = same >= 5
+                    last = (pieces, cam)
+                time.sleep(0.1)
+            if not done:
+                print(f"  WAITEDITOR TIMED OUT: last {last}")
         elif line.startswith("shot "):
             out = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SHOT),
                                   str(DATA / f"{line.split()[1]}.png")] + (["-GamePid", str(own_games()[0])] if own_games() else []),

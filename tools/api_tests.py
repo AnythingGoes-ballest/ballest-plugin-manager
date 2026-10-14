@@ -202,6 +202,10 @@ def main():
         if (backup / "storage").exists():
             shutil.rmtree(DATA / "storage", ignore_errors=True)
             shutil.copytree(backup / "storage", DATA / "storage")
+        # the map the Tracks::InstallLocalMap test installs (a stub from the test plugin), removed again if it is new
+        for installed in ("Map_LevelEditorMain&apitest_AnythingGoes.balledit", "Map_LevelEditorMain&apitest as_AnythingGoes.balledit"):
+            if not any(Path(k).name == installed for k in maps_before):
+                (SAVED / "UserSavedMaps" / installed).unlink(missing_ok=True)
         changed_saves = sorted(set(snapshot(SAVED / "SaveGames").items()) ^ set(saves_before.items()))
         changed_maps = [c for c in sorted(set(snapshot(SAVED / "UserSavedMaps").items()) ^ set(maps_before.items()))
                         if not c[0].endswith(".vdf")]              # Steam Cloud's own bookkeeping, not a map

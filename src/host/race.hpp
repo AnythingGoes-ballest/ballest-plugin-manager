@@ -23,6 +23,12 @@ bool Active();                  // a race is running
 // command that changes the game, the ball moved by the host, practice, or game time not at normal speed).
 bool RunTainted(std::string* why);
 void TaintRun(const std::string& why);  // from now until the next run
+// The same question for a plugin's OWN records of its own track (a plugin's hiscores server, never Steam): as RunTainted,
+// except that (a) a local map is fine (it has no Steam board, but it is exactly what a plugin's own board is for) and
+// (b) pushes by this same plugin through AddBallVelocity (its own track mechanic, only allowed on the player's own
+// never-published maps) don't count. Practice, test commands, the ball moved or frozen, game time not at normal
+// speed, and pushes by any OTHER plugin still do.
+bool RunTaintedForPlugin(int owner, std::string* why);
 int Restarts();                 // restarts from the beginning since the host started
 int Respawns();                 // respawns at a checkpoint from R (not falls) since the host started
 int Falls();                    // falls into a kill zone since the host started (each respawns at a checkpoint or the start)
@@ -33,10 +39,23 @@ int CurrentCheckpoint();        // the one a respawn goes to (its bCurrent), or 
 bool MoveBall(double x, double y, double z);    // tests only: teleports the ball being played
 bool CheckpointTrigger(int index, double* x, double* y, double* z);    // tests only: where a strip's trigger is
 bool BallPosition(double* x, double* y, double* z);     // the ball being played (also in the editor's test runs)
+bool BallVelocity(double* x, double* y, double* z);     // its physics body's linear velocity (cm/s)
+// Adds to the played ball's velocity (cm/s), only on the player's own never-published maps: raced from the file
+// (Tracks::OpenLocal, key "custom:local:...", the file's levelPublishedFileId -1) or test-played in the track editor
+// (the editor's map file never published). Refused elsewhere (logged once per track). The run is kept off any
+// leaderboard; practice is not turned on (the timer keeps running).
+// `owner` is the plugin pushing (-1: the host): its push is remembered as that plugin's mechanic (RunTaintedForPlugin);
+// for Steam it taints the run like any push (RunTainted).
+bool AddBallVelocity(double x, double y, double z, int owner = -1);
+// Whether what is open is the player's own never-published map: AddBallVelocity's rule, and also the track editor
+// while editing (its map's file never published). `why` says why not. Decided once per map (file reads).
+bool OwnUnpublishedMapHere(std::string* why);
+bool SetBallVelocity(double x, double y, double z);     // tests only: AddBallVelocity's rule, the velocity set (spin stopped)
 eng::Obj PlayedBallActor();                             // that ball's actor, or null
 bool EditorTesting();           // in the track editor, a test run is on (the camera is on the ball)
 int RunId();                    // the ball's RaceId: a new value for every new run, the same through respawns; -1 off track
-bool Complete();                // the run has been finished (the controller's bRaceComplete)
+bool Complete();                // the run has been finished (the controller's bRaceComplete, for the run that finished)
+void NoteFinish();              // the game took a finish (its finish snapshot): the run raced last is the finished one
 // What the player is steering with right now, as the ball reads it (BP_RollingBall_C InputAxes: x right, y forward,
 // -1..1; InputJump), whatever keys or controller they use. False off track.
 bool Input(double* x, double* y, bool* jump);
@@ -74,6 +93,7 @@ struct Track {
     std::string image;              // custom tracks: the .jpg beside the map file, if there is one
     double authorTime = 0;          // seconds, 0 if unknown
     bool custom = false;
+    std::string file;               // custom tracks: the map file the game loaded (its full path)
 };
 const Track& CurrentTrack();
 
