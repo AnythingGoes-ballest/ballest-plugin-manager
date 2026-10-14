@@ -559,13 +559,13 @@
       "description": "the Mushroom Cup as a custom campaign in the game's track selection (its own screen with its four courses), each course raced as a normal race with local best times and splits, and the original course models drawn as the solid track (tracks/: models, decals, mushroom bounce data).",
       "author": "AnythingGoes",
       "repo": "AnythingGoes-ballest/ballest-mk-campaign",
-      "version": "0.2.2",
-      "commit": "032ea8e6c7a332d3914af753e70eabda1cbd0b41",
-      "min_host": "0.26.1",
+      "version": "0.2.3",
+      "commit": "2e638098aceabb55f97a52ecb00f51acfd6c2557",
+      "min_host": "0.26.2",
       "icon": "",
       "dependencies": [],
       "files": {
-        "info.toml": "1ca4512510dd4fd32fa9e7b0ea3a095a2d7cfa4ada694a5b7773290c8eaa95b9",
+        "info.toml": "ffb00099819cc581ee117430e0e10f60446585cb019b854c5cfcee2222a2add5",
         "main.as": "1de63ca1764b3f098c8c75377643629bc8722eabf1a2a96324a783fab5aca822",
         "overlay.as": "866b3010785d44b7109201eb6f571ff2f92f9e64150c64ff2eb089b8b6914d3c",
         "hiscores.as": "3a35195b0001fe37adb3dea0b0bf7f9a66311ce407a0500c01fe9519326d3863",
@@ -797,11 +797,11 @@
     }
   ],
   "host": {
-    "version": "0.26.1",
+    "version": "0.26.2",
     "repo": "AnythingGoes-ballest/ballest-plugin-manager",
-    "commit": "09f19f9f4b77b9ea1b45cc8ebd8a8d4258e88596",
-    "dll": "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/download/v0.26.1/version.dll",
-    "dll_sha256": "23d377c32c8e9f80cbdcad7e37f865bd887b7258892360d52f3d81c3138ca361",
+    "commit": "c1806556a316fa135387036f7163bef65e9ac6e0",
+    "dll": "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/download/v0.26.2/version.dll",
+    "dll_sha256": "bedce23a9462c09f7f0decc37404218cb3fcaaf02280e65b2d0acb666cf00be7",
     "files": {
       "plugins/hello-world/info.toml": "5300e78277bc1e92d4d1626ce17ed15e938f37e692b2271b58c3c9c30b79be40",
       "plugins/hello-world/main.as": "24f510821cb3ea7825bfef6363d92e12fd493b9977038beb9e6c297a692fb23b",
