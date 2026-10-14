@@ -8,7 +8,7 @@
 
 namespace plugins {
 
-constexpr const char* kHostVersion = "0.26.1";
+constexpr const char* kHostVersion = "0.26.2";
 
 void LoadAll(const std::wstring& pluginsDir);
 void Frame(float dt);

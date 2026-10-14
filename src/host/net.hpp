@@ -6,7 +6,9 @@
 
 namespace net {
 
-constexpr size_t kMaxDownload = 8 * 1024 * 1024;
+// Registry files and host updates are pinned by hash, so this only stops a broken or endless download from filling
+// memory: big models and maps (10 MB and more) fit well inside it.
+constexpr size_t kMaxDownload = 256 * 1024 * 1024;
 
 // The body of a 200 response (or the file), up to kMaxDownload bytes; false with `error` otherwise.
 bool Fetch(const std::string& url, std::string& body, std::string& error);
