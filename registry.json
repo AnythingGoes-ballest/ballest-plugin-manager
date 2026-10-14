@@ -559,13 +559,13 @@
       "description": "the Mushroom Cup as a custom campaign in the game's track selection (its own screen with its four courses), each course raced as a normal race with local best times and splits, and the original course models drawn as the solid track (tracks/: models, decals, mushroom bounce data).",
       "author": "AnythingGoes",
       "repo": "AnythingGoes-ballest/ballest-mk-campaign",
-      "version": "0.2.4",
-      "commit": "fe3f6350f3c28de04b76c3539954e0096b87b9e4",
+      "version": "0.2.5",
+      "commit": "0cf2c918ba3e4380c43ca733ffd2812d04fcb43e",
       "min_host": "0.26.3",
-      "icon": "",
+      "icon": "icon.png",
       "dependencies": [],
       "files": {
-        "info.toml": "8fb730fb8a3752b13a5068ae461574b6bb532d3a169de3c63c3adbe1df61e0ec",
+        "info.toml": "89f410c478a61332397b112e216a9eeb4f61e447e363bb812d0fe867bb5ed81b",
         "main.as": "1de63ca1764b3f098c8c75377643629bc8722eabf1a2a96324a783fab5aca822",
         "overlay.as": "866b3010785d44b7109201eb6f571ff2f92f9e64150c64ff2eb089b8b6914d3c",
         "hiscores.as": "3a35195b0001fe37adb3dea0b0bf7f9a66311ce407a0500c01fe9519326d3863",
@@ -611,7 +611,8 @@
         "images/moo_moo_meadows.png": "1e0b1ef559d95152ca3823f00330508b9af63754187d4a8a87d0a73aed4b99bd",
         "images/mushroom_cup.png": "d05358a608b56aec17e31a4a030366e922e2f0ea602f7aca2c61f845d887a817",
         "images/mushroom_gorge.png": "6f5427501c22f47d070ef4d6decfa51e1b4e27eabada2c05b3ffabdc9d502886",
-        "images/toads_factory.png": "12ff041776c11a2775136d5160bffdcd5882971a8cdfc40290b025c879473676"
+        "images/toads_factory.png": "12ff041776c11a2775136d5160bffdcd5882971a8cdfc40290b025c879473676",
+        "icon.png": "d05358a608b56aec17e31a4a030366e922e2f0ea602f7aca2c61f845d887a817"
       }
     },
     {
