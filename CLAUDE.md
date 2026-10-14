@@ -33,3 +33,9 @@ Drive sandboxed test copies with `python tools/sandbox.py` (run bare first), rac
 ## Commits
 
 No `Co-Authored-By: Claude` or "Generated with Claude Code" lines in commits, pull requests or releases.
+
+## Releases
+
+`gh release create vX.Y.Z build/version.dll`, then `python tools/registry.py host vX.Y.Z build/version.dll`. The
+`release zip` workflow (`.github/workflows/release-zip.yml`) adds `ballest-plugin-manager-X.Y.Z.zip` (what `install.sh`
+downloads) to every published release; run it by hand with a tag if a release ever lacks one.
