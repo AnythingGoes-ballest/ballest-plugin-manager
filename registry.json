@@ -705,18 +705,18 @@
     }
   ],
   "host": {
-    "version": "0.25.0",
+    "version": "0.26.0",
     "repo": "AnythingGoes-ballest/ballest-plugin-manager",
-    "commit": "fbb92c5462942138e9c28a5e4565e90edec13559",
-    "dll": "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/download/v0.25.0/version.dll",
-    "dll_sha256": "5421f23504c16c465bcad60c49108f4b5a5fcab9db2a9fd43087325106367026",
+    "commit": "faaaf57de297b4f09900f42ab688363e430674d9",
+    "dll": "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/download/v0.26.0/version.dll",
+    "dll_sha256": "e6f4bd9b841baab870ff89e45753d99db7312328a8b01e7153aae79d9e51b68a",
     "files": {
       "plugins/hello-world/info.toml": "5300e78277bc1e92d4d1626ce17ed15e938f37e692b2271b58c3c9c30b79be40",
       "plugins/hello-world/main.as": "24f510821cb3ea7825bfef6363d92e12fd493b9977038beb9e6c297a692fb23b",
       "plugins/plugin-manager/default-icon.png": "304d27462febbf15c8645b64ae6b01624e4a59e29e0304ffac1f28313a3ba362",
       "plugins/plugin-manager/icon.png": "fb60df477ecffe4942dc7500d2f4f6cb8b65d017bde68b49b81541c29f8e144e",
-      "plugins/plugin-manager/info.toml": "d08b9dc72e63042a39ff3f029f06e650d48cd716881c5593ca57a4cccc103ac7",
-      "plugins/plugin-manager/main.as": "788e459012cb0e9cda2b2aa8e572b50c70da222eb8ab46b02e6e0b65de122946"
+      "plugins/plugin-manager/info.toml": "e1f61e407395df3a6071e79cd368f49e3ec79eafc61812a3e8099925f77b374c",
+      "plugins/plugin-manager/main.as": "b45d9eec7f3c457c3db4f2679c0ea4ac35e999db12c3ea06f8c8880c04a05980"
     }
   }
 }
