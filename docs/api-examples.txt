@@ -2618,6 +2618,15 @@ try again a moment later). Requires host 0.26.0.
 if (Tracks::InstallLocalMap("maps/Map_LevelEditorMain&My Map_AnythingGoes.balledit") >= 0)
     Tracks::OpenLocal("Map_LevelEditorMain&My Map_AnythingGoes.balledit");
 
+== Tracks::InstallLocalMapAs
+`InstallLocalMap` for a map file with any name ending in `.balledit`, installed into the maps folder as `target`: an
+editor map file name ("Map_LevelEditorMain&<name>_<type>.balledit", no folders). Use it for a plugin in the registry,
+whose file names may only hold letters, digits, `-`, `_` and `.`, so they can't be the map's own file name. The same
+answers and rules as `InstallLocalMap`. Requires host 0.26.1.
+--
+if (Tracks::InstallLocalMapAs("maps/my_map.balledit", "Map_LevelEditorMain&My Map_AnythingGoes.balledit") >= 0)
+    Tracks::OpenLocal("Map_LevelEditorMain&My Map_AnythingGoes.balledit");
+
 == Tracks::OpenLocalList
 Races map `index` of a list of the player's own saved maps, as `OpenLocal` does, with the list as the game's active
 playlist while they are raced, so the game's own "next track" goes on to the next map. The game's own playlist is

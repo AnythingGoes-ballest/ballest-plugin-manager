@@ -1557,6 +1557,12 @@ int TracksInstallLocalMap(const std::string& file) {
     plugins::GameWork work;
     return tracks::InstallLocalMap(path);
 }
+int TracksInstallLocalMapAs(const std::string& file, const std::string& target) {
+    const std::wstring path = OwnFile(file);
+    if (path.empty()) return -1;
+    plugins::GameWork work;
+    return tracks::InstallLocalMapAs(path, eng::Widen(target));
+}
 bool TracksOpenLocalList(const CScriptArray* files, int index) {
     std::vector<std::string> names;
     for (asUINT i = 0; files && i < files->GetSize(); ++i) names.push_back(*static_cast<const std::string*>(files->At(i)));
@@ -1791,6 +1797,7 @@ void RegisterGhosts() {
     Global("string OpenState()", asFUNCTION(TracksOpenState));
     Global("bool OpenLocal(const string &in)", asFUNCTION(TracksOpenLocal));
     Global("int InstallLocalMap(const string &in)", asFUNCTION(TracksInstallLocalMap));
+    Global("int InstallLocalMapAs(const string &in file, const string &in target)", asFUNCTION(TracksInstallLocalMapAs));
     Global("string LocalFolder()", asFUNCTION(TracksLocalFolder));
     Global("bool OpenLocalList(const array<string>@, int)", asFUNCTION(TracksOpenLocalList));
     e->SetDefaultNamespace("Draw");

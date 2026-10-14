@@ -56,6 +56,8 @@ std::string LocalMapsFolder();
 // A map file shipped with a plugin (full path) copied into the player's maps folder when missing or older there:
 // 1 copied, 0 already there (or the player's own newer copy, kept), -1 not done (OpenState: why).
 int InstallLocalMap(const std::wstring& source);
+// The same for a source with any .balledit name, installed under target (an editor map file name, no folders).
+int InstallLocalMapAs(const std::wstring& source, const std::wstring& target);
 // levelData.levelPublishedFileId of a map file (full path): > 0 once published, -1 never published, -2 unreadable.
 long long PublishedIdOfFile(const std::string& path);
 // The player's own map open in the track editor (its file in LocalMapsFolder, "Map_LevelEditorMain&<name>_*.balledit"),

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "tracks.hpp"
 
 #include <windows.h>
@@ -542,6 +543,13 @@ long long EditorMapPublishedId(const std::string& mapName) {
     return result == -3 ? -2 : result;
 }
 
+static bool EditorMapName(const std::wstring& file) {
+    return file.rfind(L"Map_LevelEditorMain&", 0) == 0 && file.size() >= 30 &&
+           file.compare(file.size() - 9, 9, L".balledit") == 0;
+}
+
+static int InstallLocalMapTo(const std::wstring& source, const std::wstring& file);
+
 // A map file shipped in a plugin's folder, copied into the player's own maps folder (the game opens local maps only
 // from there): when it isn't there yet, or the plugin's copy is newer than the one there. A copy the player edited
 // since (newer than the plugin's) is kept. Only an editor map file ("Map_LevelEditorMain&<name>_<type>.balledit")
@@ -550,11 +558,30 @@ long long EditorMapPublishedId(const std::string& mapName) {
 int InstallLocalMap(const std::wstring& source) {
     const size_t slash = source.find_last_of(L"/\\");
     const std::wstring file = slash == std::wstring::npos ? source : source.substr(slash + 1);
-    if (file.rfind(L"Map_LevelEditorMain&", 0) != 0 || file.size() < 30 ||
-        file.compare(file.size() - 9, 9, L".balledit") != 0) {
+    if (!EditorMapName(file)) {
         gOpenState = "error: not an editor map file (Map_LevelEditorMain&<name>_<type>.balledit)";
         return -1;
     }
+    return InstallLocalMapTo(source, file);
+}
+
+// The same for a plugin file with any name ending in .balledit (a registry plugin's files have plain names only),
+// installed as target: an editor map file name, no folders.
+int InstallLocalMapAs(const std::wstring& source, const std::wstring& target) {
+    if (source.size() < 9 || source.compare(source.size() - 9, 9, L".balledit") != 0) {
+        gOpenState = "error: not a map file (.balledit)";
+        return -1;
+    }
+    if (!EditorMapName(target) || target.size() > 200 || target.find(L"..") != std::wstring::npos ||
+        target.find_first_of(L"/\\:*?\"<>|") != std::wstring::npos ||
+        std::any_of(target.begin(), target.end(), [](wchar_t c) { return c < 32; })) {
+        gOpenState = "error: the target isn't an editor map file name (Map_LevelEditorMain&<name>_<type>.balledit)";
+        return -1;
+    }
+    return InstallLocalMapTo(source, target);
+}
+
+static int InstallLocalMapTo(const std::wstring& source, const std::wstring& file) {
     const long long published = PublishedIdOf(source);
     if (published == -2) {
         gOpenState = "error: the plugin's map file can't be read or doesn't say it was never published (levelPublishedFileId)";

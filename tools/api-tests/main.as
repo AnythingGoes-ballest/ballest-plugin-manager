@@ -2746,7 +2746,7 @@ void RegisterLocalMapsNetSources()
             return Elapsed() > 5 ? "UI::MainMenuShown false on the main menu" : WAIT;
         return Is(!menuButton.Clicked(), "the menu entry was clicked by nobody");
     });
-    Add("core", "Tracks local maps: folder, install, refusals", "Tracks::LocalFolder,Tracks::InstallLocalMap,Tracks::OpenLocal,Tracks::OpenLocalList,Tracks::OpenState", function() {
+    Add("core", "Tracks local maps: folder, install, refusals", "Tracks::LocalFolder,Tracks::InstallLocalMap,Tracks::InstallLocalMapAs,Tracks::OpenLocal,Tracks::OpenLocalList,Tracks::OpenState", function() {
         string folder = Tracks::LocalFolder();
         int first = Tracks::InstallLocalMap("Map_LevelEditorMain&apitest_AnythingGoes.balledit");
         int again = Tracks::InstallLocalMap("Map_LevelEditorMain&apitest_AnythingGoes.balledit");
@@ -2754,6 +2754,11 @@ void RegisterLocalMapsNetSources()
         string pubState = Tracks::OpenState();
         int notMap = Tracks::InstallLocalMap("shapes.txt");
         int outside = Tracks::InstallLocalMap("../plugin-manager/info.toml");
+        int asNew = Tracks::InstallLocalMapAs("apitest_as.balledit", "Map_LevelEditorMain&apitest as_AnythingGoes.balledit");
+        int asAgain = Tracks::InstallLocalMapAs("apitest_as.balledit", "Map_LevelEditorMain&apitest as_AnythingGoes.balledit");
+        int asPublished = Tracks::InstallLocalMapAs("apitestpub_as.balledit", "Map_LevelEditorMain&apitest aspub_AnythingGoes.balledit");
+        int asBadTarget = Tracks::InstallLocalMapAs("apitest_as.balledit", "..\Map_LevelEditorMain&x_AnythingGoes.balledit");
+        int asNotMap = Tracks::InstallLocalMapAs("apitest_as.balledit", "notamap.txt");
         bool missing = Tracks::OpenLocal("no such map of the api tests");
         string missingState = Tracks::OpenState();
         bool escaped = Tracks::OpenLocal("../Map_LevelEditorMain&x_AnythingGoes.balledit");
@@ -2764,6 +2769,8 @@ void RegisterLocalMapsNetSources()
                            Is(first >= 0 && again == 0, "Tracks::InstallLocalMap answered " + first + " then " + again + " (" + Tracks::OpenState() + ")"),
                            Is(published == -1 && pubState.findFirst("published") >= 0, "Tracks::InstallLocalMap of a published map: " + published + " " + pubState),
                            Is(notMap == -1 && outside == -1, "Tracks::InstallLocalMap of a file that isn't a map: " + notMap + ", " + outside),
+                           Is(asNew >= 0 && asAgain == 0, "Tracks::InstallLocalMapAs answered " + asNew + " then " + asAgain),
+                           Is(asPublished == -1 && asBadTarget == -1 && asNotMap == -1, "Tracks::InstallLocalMapAs refusals: " + asPublished + ", " + asBadTarget + ", " + asNotMap),
                            Is(!missing && missingState.findFirst("error") == 0, "Tracks::OpenLocal of a missing map: " + missingState),
                            Is(!escaped, "Tracks::OpenLocal took a path out of the maps folder"),
                            Is(!listed && !badIndex, "Tracks::OpenLocalList of missing maps / a bad index answered true")};
