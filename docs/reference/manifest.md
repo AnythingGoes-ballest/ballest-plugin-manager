@@ -42,7 +42,7 @@ timeout = 20
 
 | Key | Default | Meaning |
 |---|---|---|
-| `domains` | `[]` | The only hosts the plugin's `Net::Get` / `Net::Post` requests may reach: exact host names (no subdomains), https on port 443, redirects never followed. Public host names only: IP addresses, `localhost`, `*.local` and other local or single-label names are left out (with a warning). Without it, every `Net::` request is refused, and so is `Steam::RequestWebTicket`. The plugin manager shows these hosts on the plugin's card. A sandboxed test copy lets these hosts through too (only these), marked with the header `X-Ballest-Sandbox: 1`. Requires host 0.26.0. |
+| `domains` | `[]` | The only hosts the plugin's `Net::Get` / `Net::Post` requests may reach: exact host names (no subdomains), https on port 443, redirects never followed. Public host names only: IP addresses, `localhost`, `*.local` and other local or single-label names are left out (with a warning). Without it, every `Net::` request is refused, and so is `Steam::RequestWebTicket`. The plugin manager shows these hosts on the plugin's card (not for the plugin manager's own plugins, from AnythingGoes-ballest repos). A sandboxed test copy lets these hosts through too (only these), marked with the header `X-Ballest-Sandbox: 1`. Requires host 0.26.0. |
 
 ## The folder name is the id
 
