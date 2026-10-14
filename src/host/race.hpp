@@ -54,7 +54,8 @@ bool SetBallVelocity(double x, double y, double z);     // tests only: AddBallVe
 eng::Obj PlayedBallActor();                             // that ball's actor, or null
 bool EditorTesting();           // in the track editor, a test run is on (the camera is on the ball)
 int RunId();                    // the ball's RaceId: a new value for every new run, the same through respawns; -1 off track
-bool Complete();                // the run has been finished (the controller's bRaceComplete)
+bool Complete();                // the run has been finished (the controller's bRaceComplete, for the run that finished)
+void NoteFinish();              // the game took a finish (its finish snapshot): the run raced last is the finished one
 // What the player is steering with right now, as the ball reads it (BP_RollingBall_C InputAxes: x right, y forward,
 // -1..1; InputJump), whatever keys or controller they use. False off track.
 bool Input(double* x, double* y, bool* jump);

@@ -19,6 +19,7 @@
 #include "engine.hpp"
 #include "game.hpp"
 #include "layout.hpp"
+#include "localrecords.hpp"
 #include "log.hpp"
 #include "tracks.hpp"
 #include "widgets.hpp"
@@ -98,6 +99,13 @@ int gPushedRun = -2;
 int gPushedGeneration = -1;
 std::set<int> gPushers;
 int gTrackGeneration = -1;
+// The game leaves bRaceComplete set when a race is restarted after its finish (the restart key, ManuallyRestartBall,
+// a leaderboard row's ghost: measured on a local map, the next run reads active and complete with its own new run id,
+// until the map is loaded again), so a finish counts only for the run that crossed the line: the run raced last when
+// the game took its finish snapshot (localrecords' hook). Without the hook the flag is taken as it is.
+int gLiveRunId = -1;            // the run id last raced (the last pawn with an id)
+int gFinishedRunId = -1;        // that run's id when the game took a finish
+bool gFinishesWatched = false;
 
 Obj RaceUi() {
     Obj controller = game::PlayerController();
@@ -515,6 +523,8 @@ void Frame() {
     gActive = gComplete = false;
     if (gTrackGeneration != game::Generation()) {
         gTrackGeneration = game::Generation();
+        if (!gFinishesWatched) gFinishesWatched = localrecords::WatchFinishes(nullptr);
+        gLiveRunId = gFinishedRunId = -1;
         gTrack = Track{};
         gTrackDone = false;
         gNextTrackRead = 0;
@@ -544,6 +554,10 @@ void Frame() {
     int32_t runId = -1;
     if (pawn && eng::FindProp(eng::ClassOf(pawn), "RaceId")) eng::ReadBytes(pawn, "RaceId", &runId, sizeof runId);
     gRunId = runId;
+    // Complete only once the run raced last is the one the game took a finish for: a run after the finish isn't, nor
+    // is it while its ball is gone for a moment (a fall's respawn takes the pawn away too, measured).
+    if (runId >= 0) gLiveRunId = runId;
+    if (gComplete && gFinishesWatched && gLiveRunId != gFinishedRunId) gComplete = false;
     // The touched run's mark: carried into the run that starts after a touch made before it, cleared when a later run
     // starts (not when this one ends: the upload comes after the end).
     if (gTaintedRun == -1 && runId >= 0) gTaintedRun = runId;
@@ -843,6 +857,7 @@ bool EditorTesting() {
     return now;
 }
 int RunId() { return gRunId; }
+void NoteFinish() { gFinishedRunId = gLiveRunId; }
 bool Complete() { return gComplete; }
 const Track& CurrentTrack() { return gTrack; }
 

@@ -45,6 +45,7 @@ bool OwnUnpublished(const std::string& levelName, std::string* error) {
 // the game's own Blueprint-to-Blueprint calls; a native function's entry is).
 void HookedCapture(Obj context, uint8_t* frame, void* result) {
     gCaptureOriginal(context, frame, result);
+    race::NoteFinish();
     const race::Track& track = race::CurrentTrack();
     std::string why;
     // the name, and the map raced now is the player's own never-published one (not another track of the same name)
@@ -135,6 +136,8 @@ bool ClearNow(const std::string& levelName, std::string* error) {
 }
 
 }  // namespace
+
+bool WatchFinishes(std::string* error) { return WatchSaves(error); }
 
 bool Clear(const std::string& levelName, std::string* error) {
     if (!OwnUnpublished(levelName, error)) return false;

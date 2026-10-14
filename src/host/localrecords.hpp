@@ -33,5 +33,8 @@ void Unsuppress(const std::string& levelName);
 // The game's record for the level as the profile holds it now: best time (seconds, 0 none), whether found.
 bool Read(const std::string& levelName, double* best, int* splits, int* samples);
 int Medal(const std::string& levelName);        // the profile's medal for the level (Enum_MedalGranted), -1 none
+// The game's finish snapshots watched (each finish tells race::NoteFinish); suppressing a level needs it too. False if
+// the game's CaptureFinishPostingSnapshot isn't as measured.
+bool WatchFinishes(std::string* error);
 
 }  // namespace localrecords
