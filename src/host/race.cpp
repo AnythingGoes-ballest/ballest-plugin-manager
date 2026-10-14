@@ -7,6 +7,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <set>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -14,10 +15,12 @@
 #include <sstream>
 #include <vector>
 
+#include "editor.hpp"
 #include "engine.hpp"
 #include "game.hpp"
 #include "layout.hpp"
 #include "log.hpp"
+#include "tracks.hpp"
 #include "widgets.hpp"
 
 using eng::Obj;
@@ -89,6 +92,11 @@ double gNextTrackRead = 0;
 int gTaintedRun = -2;                   // the run the host touched (-1: before a run started, on this map)
 int gTaintedGeneration = -1;
 std::string gTaintWhy;
+// Pushes by plugins (AddBallVelocity) in the run, kept apart from the taint above so a plugin's own mechanic doesn't
+// spoil the plugin's own records (RunTaintedForPlugin); same carry-over rule as gTaintedRun.
+int gPushedRun = -2;
+int gPushedGeneration = -1;
+std::set<int> gPushers;
 int gTrackGeneration = -1;
 
 Obj RaceUi() {
@@ -142,6 +150,7 @@ void ReadTrack() {
         if (const size_t amp = file.find('&'); amp != std::string::npos) file = file.substr(amp + 1);
         if (const size_t dot = file.rfind('.'); dot != std::string::npos) file = file.substr(0, dot);
         t.key = file.empty() ? "" : "custom:" + id + ":" + file;
+        t.file = path;
         // The picture the game keeps beside the map ("<track>_<author>.jpg", measured in workshop folders; a local map
         // has one once it has been published).
         t.image = "";
@@ -539,6 +548,11 @@ void Frame() {
     // starts (not when this one ends: the upload comes after the end).
     if (gTaintedRun == -1 && runId >= 0) gTaintedRun = runId;
     else if (gTaintedRun >= 0 && runId >= 0 && runId != gTaintedRun) gTaintedRun = -2;
+    if (gPushedRun == -1 && runId >= 0) gPushedRun = runId;
+    else if (gPushedRun >= 0 && runId >= 0 && runId != gPushedRun) {
+        gPushedRun = -2;
+        gPushers.clear();
+    }
 #ifdef HOST_HAS_SANDBOX
     // A sandboxed test copy races live only on the user's own test map, the workshop map "stasis" (project rule, after
     // a teleported finish reached the real leaderboard from a test copy): on any other live track every run is practice
@@ -546,7 +560,8 @@ void Frame() {
     // unreleased maps, the rule's other half) keep their timer and checkpoints.
     static const char kTestMap[] = "custom:3805348161:";
     if (sandbox::On() && gActive && runId >= 0 && !gPractice && gTrack.key.rfind(kTestMap, 0) != 0 &&
-        !(gTrack.key.rfind("map:", 0) == 0 && gTrack.key.find("LevelEditor") != std::string::npos)) {
+        !(gTrack.key.rfind("map:", 0) == 0 && gTrack.key.find("LevelEditor") != std::string::npos) &&
+        gTrack.key.rfind("custom:local:", 0) != 0) {     // the user's own unpublished maps (not live) keep their timer
         hostlog::Info("sandbox: not the test map (" + (gTrack.key.empty() ? std::string("not read yet") : gTrack.key) +
                       "): this run is practice");
         StartPractice();
@@ -605,7 +620,9 @@ void TaintRun(const std::string& why) {
     gTaintWhy = why;
 }
 
-bool RunTainted(std::string* why) {
+namespace {
+// The checks both questions share: practice, the host's own touches, time dilation.
+bool TaintedCommon(std::string* why) {
     if (gPractice) {
         *why = "practice";
         return true;
@@ -622,6 +639,32 @@ bool RunTainted(std::string* why) {
             *why = "game time not at normal speed";
             return true;
         }
+    }
+    return false;
+}
+bool PushedThisRun() { return gPushedGeneration == game::Generation() && gPushedRun != -2 && !gPushers.empty(); }
+}  // namespace
+
+bool RunTainted(std::string* why) {
+    // A map file of the player's own raced as a workshop map (Tracks::OpenLocal): it was never published, so it has
+    // no leaderboard of its own, and its score must not reach one under some other name.
+    if (gTrack.key.rfind("custom:local:", 0) == 0) {
+        *why = "a local map, never published";
+        return true;
+    }
+    if (TaintedCommon(why)) return true;
+    if (PushedThisRun()) {
+        *why = "the ball was pushed by a plugin";
+        return true;
+    }
+    return false;
+}
+
+bool RunTaintedForPlugin(int owner, std::string* why) {
+    if (TaintedCommon(why)) return true;
+    if (PushedThisRun() && std::any_of(gPushers.begin(), gPushers.end(), [&](int p) { return p != owner; })) {
+        *why = "the ball was pushed by another plugin";
+        return true;
     }
     return false;
 }
@@ -680,6 +723,109 @@ bool BallPosition(double* x, double* y, double* z) {
     *x = at.x;
     *y = at.y;
     *z = at.z;
+    return true;
+}
+
+bool BallVelocity(double* x, double* y, double* z) {
+    Obj ball = PlayedBall();
+    Obj root = ball ? eng::Call(ball, "K2_GetRootComponent").ReturnObj() : nullptr;
+    if (!root) return false;
+    const Vec3 v = eng::Call(root, "GetPhysicsLinearVelocity", kNoBone).ReturnAs<Vec3>();
+    *x = v.x;
+    *y = v.y;
+    *z = v.z;
+    return true;
+}
+
+namespace {
+// Whether the ball may be pushed here: the player's own map that was never published (no leaderboard of its own,
+// nobody else's records), raced from its file or test-played in the editor. Decided once per track (file reads).
+bool LocalUnpublishedMap(std::string* why) {
+    static std::string decidedFor;
+    static bool allowed = false;
+    static std::string reason;
+    const bool testing = EditorTesting();
+    const std::string& key = gTrack.key;
+    std::string editorMap;
+    if (testing) editorMap = editor::MapName();
+    const std::string subject = testing ? "editor:" + editorMap : key;
+    if (subject != decidedFor) {
+        decidedFor = subject;
+        allowed = false;
+        if (testing) {
+            const long long id = tracks::EditorMapPublishedId(editorMap);
+            allowed = id == -1 || id == 0;
+            reason = id > 0 ? "the editor's map '" + editorMap + "' has been published"
+                            : "the editor's map '" + editorMap + "' has no saved file of the player's own";
+        } else if (key.rfind("custom:local:", 0) == 0) {
+            const long long id = gTrack.file.empty() ? -2 : tracks::PublishedIdOfFile(gTrack.file);
+            allowed = id == -1 || id == 0;
+            reason = id > 0 ? "this map has been published" : "this map's file can't be read";
+        } else {
+            reason = key.empty() ? "no track" : "not the player's own unpublished map (" + key + ")";
+        }
+    }
+    *why = reason;
+    return allowed;
+}
+}  // namespace
+
+bool OwnUnpublishedMapHere(std::string* why) {
+    if (editor::Open() && !EditorTesting()) {
+        static std::string decidedFor = "";
+        static bool allowed = false;
+        static std::string reason;
+        const std::string name = editor::MapName();
+        if (name != decidedFor) {
+            decidedFor = name;
+            const long long id = name.empty() ? -2 : tracks::EditorMapPublishedId(name);
+            allowed = id == -1 || id == 0;
+            reason = id > 0 ? "the editor's map '" + name + "' has been published"
+                            : "the editor's map '" + name + "' has no saved file of the player's own";
+        }
+        *why = reason;
+        return allowed;
+    }
+    return LocalUnpublishedMap(why);
+}
+
+bool SetBallVelocity(double x, double y, double z) {
+    std::string why;
+    Obj ball = PlayedBall();
+    Obj root = ball ? eng::Call(ball, "K2_GetRootComponent").ReturnObj() : nullptr;
+    if (!root || !LocalUnpublishedMap(&why)) return false;
+    TaintRun("the ball was pushed by the host");
+    eng::Call(root, "SetPhysicsLinearVelocity", Vec3{x, y, z}, uint8_t{0}, kNoBone);
+    eng::Call(root, "SetPhysicsAngularVelocityInDegrees", Vec3{0, 0, 0}, uint8_t{0}, kNoBone);
+    return true;
+}
+
+bool AddBallVelocity(double x, double y, double z, int owner) {
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return false;
+    Obj ball = PlayedBall();
+    if (!ball) return false;
+    std::string why;
+    static std::string refusedFor;
+    if (!LocalUnpublishedMap(&why)) {
+        const std::string subject = gTrack.key + "|" + why;
+        if (subject != refusedFor) {
+            refusedFor = subject;
+            hostlog::Warn("race: AddBallVelocity refused: " + why);
+        }
+        return false;
+    }
+    refusedFor.clear();
+    Obj root = eng::Call(ball, "K2_GetRootComponent").ReturnObj();
+    if (!root) return false;
+    if (gActive && gOnTrack) {
+        if (!(gPushedRun == gRunId && gPushedGeneration == game::Generation() && gPushers.count(owner)))
+            hostlog::Info("race: the ball was pushed by plugin " + std::to_string(owner) + " (its own mechanic: kept off Steam, fine for its own records)");
+        if (gPushedRun != gRunId || gPushedGeneration != game::Generation()) gPushers.clear();
+        gPushedRun = gRunId;
+        gPushedGeneration = game::Generation();
+        gPushers.insert(owner);
+    }
+    eng::Call(root, "SetPhysicsLinearVelocity", Vec3{x, y, z}, uint8_t{1}, kNoBone);    // bAddToCurrent
     return true;
 }
 

@@ -19,10 +19,12 @@
 #include <string>
 #include <utility>
 
+#include "campaigns.hpp"
 #include "cosmetics.hpp"
 #include "draw.hpp"
 #include "postprocess.hpp"
 #include "ghosts.hpp"
+#include "ghostdata.hpp"
 #include "tracks.hpp"
 #include "workshop.hpp"
 #include "hub.hpp"
@@ -31,6 +33,11 @@
 #include "input.hpp"
 #include "leaderboard.hpp"
 #include "log.hpp"
+#include "pluginnet.hpp"
+#include "splitref.hpp"
+#include "localrecords.hpp"
+#include "json.hpp"
+#include "steam.hpp"
 #include "plugins.hpp"
 #include "editor.hpp"
 #include "engine.hpp"
@@ -92,6 +99,7 @@ std::string PluginVersion(unsigned i) { return PluginAt(i).version; }
 std::string PluginStatus(unsigned i) { return PluginAt(i).status; }
 std::string PluginAuthor(unsigned i) { return PluginAt(i).author; }
 std::string PluginDescription(unsigned i) { return PluginAt(i).description; }
+CScriptArray* PluginNetDomains(unsigned i);       // below (StringArrayOf)
 std::string PluginIcon(unsigned i) { return PluginAt(i).icon; }
 bool PluginEssential(unsigned i) { return PluginAt(i).essential; }
 bool PluginInstalled(const std::string& id) { return plugins::Find(id, nullptr); }
@@ -192,6 +200,11 @@ bool TakeFlag(T* holder, bool T::*flag) {
     return was;
 }
 ui::FooterButton* AddFooterButton(const std::string& label) { return ui::AddFooterButton(plugins::Current(), label); }
+ui::FooterButton* AddMenuButton(const std::string& label) { return ui::AddMenuButton(plugins::Current(), label); }
+bool MainMenuShown() {
+    plugins::GameWork work;
+    return ui::menu::Shown();
+}
 bool FooterClicked(ui::FooterButton* b) { return TakeFlag(b, &ui::FooterButton::clickPending); }
 bool FooterHovered(ui::FooterButton* b) { return b->hovered; }
 void FooterLabel(ui::FooterButton* b, const std::string& s) { b->label = s; }
@@ -550,6 +563,14 @@ int EditorAddToolbarChoice(const std::string& icon, const CScriptArray* options,
     return list.empty() ? -1 : editor::AddToolbarChoice(plugins::Current(), IconPath(icon), list, selected);
 }
 bool EditorSetBudgetLimit(int limit) { return editor::SetBudgetLimit(plugins::Current(), limit); }
+int EditorHideByMaterial(const std::string& material) {
+    plugins::GameWork work;
+    return editor::HideByMaterial(plugins::Current(), material);
+}
+int EditorShowAll() {
+    plugins::GameWork work;
+    return editor::ShowAll(plugins::Current());
+}
 void EditorAddHotkey(const std::string& icon, const std::string& label, const std::string& second) {
     editor::AddHotkey(plugins::Current(), IconPath(icon), label, second.empty() ? "" : IconPath(second));
 }
@@ -605,6 +626,7 @@ void RegisterCore() {
     Global("string Status(uint)", asFUNCTION(PluginStatus));
     Global("string Author(uint)", asFUNCTION(PluginAuthor));
     Global("string Description(uint)", asFUNCTION(PluginDescription));
+    Global("array<string>@ NetDomains(uint)", asFUNCTION(PluginNetDomains));
     Global("string Icon(uint)", asFUNCTION(PluginIcon));
     Global("bool Essential(uint)", asFUNCTION(PluginEssential));
     Global("bool Enabled(uint)", asFUNCTION(PluginEnabled));
@@ -671,6 +693,8 @@ void RegisterUi() {
     Global("bool HasMovable(const string &in pluginId)", asFUNCTION(ui::HasMovable));
 
     Global("FooterButton@ AddFooterButton(const string &in)", asFUNCTION(AddFooterButton));
+    Global("FooterButton@ AddMenuButton(const string &in)", asFUNCTION(AddMenuButton));
+    Global("bool MainMenuShown()", asFUNCTION(MainMenuShown));
     Method("FooterButton", "bool Clicked()", asFUNCTION(FooterClicked));
     Method("FooterButton", "bool get_hovered() property", asFUNCTION(FooterHovered));
     Method("FooterButton", "void set_label(const string &in) property", asFUNCTION(FooterLabel));
@@ -836,6 +860,14 @@ void RegisterInput() {
 
 std::string RaceTrackKey() { return race::CurrentTrack().key; }
 bool RaceBallPosition(double& x, double& y, double& z) { return race::BallPosition(&x, &y, &z); }
+bool RaceBallVelocity(double& x, double& y, double& z) {
+    plugins::GameWork work;
+    return race::BallVelocity(&x, &y, &z);
+}
+bool RaceAddBallVelocity(double x, double y, double z) {
+    plugins::GameWork work;
+    return race::AddBallVelocity(x, y, z, plugins::Current());
+}
 bool RaceCheckpointPosition(int index, double& x, double& y, double& z) { return race::CheckpointPosition(index, &x, &y, &z); }
 std::string RaceTrackName() { return race::CurrentTrack().name; }
 std::string RaceTrackAuthor() { return race::CurrentTrack().author; }
@@ -923,6 +955,8 @@ void RegisterRace() {
     Global("void HideBall(bool)", asFUNCTION(RaceHideBall));
     Global("void FreezeBall(bool)", asFUNCTION(RaceFreezeBall));
     Global("bool BallPosition(double &out, double &out, double &out)", asFUNCTION(RaceBallPosition));
+    Global("bool BallVelocity(double &out, double &out, double &out)", asFUNCTION(RaceBallVelocity));
+    Global("bool AddBallVelocity(double, double, double)", asFUNCTION(RaceAddBallVelocity));
     Global("bool NextBounce(double &out strength, double &out x, double &out y, double &out z, double &out nx, double &out ny, "
            "double &out nz, bool &out ground)", asFUNCTION(RaceNextBounce));
 }
@@ -992,6 +1026,8 @@ void RegisterEditor() {
     Global("int BudgetLimit()", asFUNCTION(editor::BudgetLimit));
     Global("int BudgetUsed()", asFUNCTION(editor::BudgetUsed));
     Global("bool SetBudgetLimit(int)", asFUNCTION(EditorSetBudgetLimit));
+    Global("int HideByMaterial(const string &in)", asFUNCTION(EditorHideByMaterial));
+    Global("int ShowAll()", asFUNCTION(EditorShowAll));
 }
 
 // --- Cosmetics -----------------------------------------------------------------------------------------------------
@@ -1352,9 +1388,17 @@ bool DrawMove(int id, double x, double y, double z) { return draw::Move(plugins:
 int DrawModel(const std::string& file) {
     std::string text, error;
     if (!ModelText(file, &text)) return 0;
+    plugins::GameWork work;         // building the meshes (measured: 4 MB of glTF took over 50 ms) isn't the script's time
     const int id = draw::Model(plugins::Current(), text, &error);
     if (!id) hostlog::Write("warn", plugins::CurrentId(), "draw: " + file + ": the model is not valid (" + error + ")");
     return id;
+}
+bool DrawCollide(int id, bool on) {
+    plugins::GameWork work;         // cooking the collision of a whole track's triangles is the host's time
+    std::string why;
+    if (draw::Collide(plugins::Current(), id, on, &why)) return true;
+    hostlog::Write("warn", plugins::CurrentId(), "draw: Collide refused: " + why);
+    return false;
 }
 bool DrawTurn(int id, double pitch, double yaw, double roll) { return draw::Turn(plugins::Current(), id, pitch, yaw, roll); }
 bool DrawScale(int id, double scale) { return draw::Scale(plugins::Current(), id, scale); }
@@ -1459,6 +1503,7 @@ CScriptArray* StringArrayOf(const std::vector<std::string>& values) {
     for (asUINT k = 0; k < values.size(); ++k) *static_cast<std::string*>(array->At(k)) = values[k];
     return array;
 }
+CScriptArray* PluginNetDomains(unsigned i) { return StringArrayOf(PluginAt(i).netDomains); }
 CScriptArray* TracksOfficial() {
     plugins::GameWork work;
     std::vector<std::string> levels;
@@ -1501,6 +1546,23 @@ bool TracksOpenWorkshop(const std::string& id) {
     return tracks::OpenWorkshop(std::strtoull(id.c_str(), nullptr, 10));
 }
 std::string TracksOpenState() { return tracks::OpenState(); }
+bool TracksOpenLocal(const std::string& file) {
+    plugins::GameWork work;
+    return tracks::OpenLocal(file);
+}
+std::string TracksLocalFolder() { return tracks::LocalMapsFolder(); }
+int TracksInstallLocalMap(const std::string& file) {
+    const std::wstring path = OwnFile(file);
+    if (path.empty()) return -1;
+    plugins::GameWork work;
+    return tracks::InstallLocalMap(path);
+}
+bool TracksOpenLocalList(const CScriptArray* files, int index) {
+    std::vector<std::string> names;
+    for (asUINT i = 0; files && i < files->GetSize(); ++i) names.push_back(*static_cast<const std::string*>(files->At(i)));
+    plugins::GameWork work;
+    return tracks::OpenLocalList(names, index);
+}
 
 // --- Workshop ------------------------------------------------------------------------------------------------------
 uint64_t IdOf(const std::string& s) { return std::strtoull(s.c_str(), nullptr, 10); }
@@ -1727,6 +1789,10 @@ void RegisterGhosts() {
     Global("string ResultImage(int)", asFUNCTION(TracksResultImage));
     Global("bool OpenWorkshop(const string &in)", asFUNCTION(TracksOpenWorkshop));
     Global("string OpenState()", asFUNCTION(TracksOpenState));
+    Global("bool OpenLocal(const string &in)", asFUNCTION(TracksOpenLocal));
+    Global("int InstallLocalMap(const string &in)", asFUNCTION(TracksInstallLocalMap));
+    Global("string LocalFolder()", asFUNCTION(TracksLocalFolder));
+    Global("bool OpenLocalList(const array<string>@, int)", asFUNCTION(TracksOpenLocalList));
     e->SetDefaultNamespace("Draw");
     Global("int Tube(const array<double>@ path, double radius, float r, float g, float b, bool glow = false, float opacity = 1)", asFUNCTION(DrawTube));
     Global("bool Glow(int id, float r, float g, float b, float brightness)", asFUNCTION(DrawGlow));
@@ -1740,6 +1806,7 @@ void RegisterGhosts() {
     Global("void Clear()", asFUNCTION(DrawClear));
     Global("int Model(const string &in)", asFUNCTION(DrawModel));
     Global("bool Turn(int, double pitch, double yaw, double roll)", asFUNCTION(DrawTurn));
+    Global("bool Collide(int, bool on = true)", asFUNCTION(DrawCollide));
     Global("bool Scale(int, double)", asFUNCTION(DrawScale));
     Global("bool Effect(const string &in, double x, double y, double z, double scale = 1, double nx = 0, double ny = 0, double nz = 1)",
            asFUNCTION(DrawEffect));
@@ -1818,6 +1885,280 @@ bool LeaderboardExtraRowsShown() { return leaderboard::ExtraRowsShown(); }
 int LeaderboardExtraRowClicked() { return leaderboard::ExtraRowClicked(); }
 int LeaderboardExtraRowPinClicked() { return leaderboard::ExtraRowPinClicked(); }
 
+// --- Leaderboard sources, Net, Steam identity, plugin-record taint --------------------------------------------------
+void LeaderboardSetSource(const std::string& key, const std::string& title, const CScriptArray* names, const CScriptArray* times,
+                          const CScriptArray* ranks, int highlight, const CScriptArray* ghostsOn) {
+    plugins::GameWork work;
+    leaderboard::SetSource(plugins::Current(), key, title, VectorOf<std::string>(names), VectorOf<double>(times), VectorOf<int>(ranks), highlight,
+                           VectorOf<bool>(ghostsOn));
+}
+void LeaderboardClearSource() { leaderboard::ClearSource(plugins::Current()); }
+bool LeaderboardSetRowGhost(int row, const std::string& steamId, const std::string& replay) {
+    plugins::GameWork work;
+    std::string error;
+    const bool ok = leaderboard::SetRowGhost(plugins::Current(), row, steamId, replay, &error);
+    if (!ok) hostlog::Write("warn", plugins::CurrentId(), "Leaderboard::SetRowGhost: " + error);
+    return ok;
+}
+bool LeaderboardClearRowGhost() {
+    plugins::GameWork work;
+    return leaderboard::ClearRowGhost(plugins::Current());
+}
+std::string LeaderboardRowGhost() { return leaderboard::RowGhost(); }
+bool LeaderboardWatchRowReplay(int row, const std::string& steamId, const std::string& replay) {
+    plugins::GameWork work;
+    std::string error;
+    const bool ok = leaderboard::WatchRowReplay(plugins::Current(), row, steamId, replay, &error);
+    if (!ok) hostlog::Write("warn", plugins::CurrentId(), "Leaderboard::WatchRowReplay: " + error);
+    return ok;
+}
+int LeaderboardExtraRowGhostClicked() { return leaderboard::ExtraRowGhostClicked(); }
+bool LeaderboardSourceShown() { return leaderboard::SourceShown(); }
+
+int NetStart(const std::string& method, const std::string& url, const std::string& body, const std::string& bearer, int timeoutMs) {
+    return pluginnet::Start(plugins::Current(), plugins::CurrentId(), plugins::CurrentNetDomains(), method, url, body, bearer, timeoutMs);
+}
+int NetGet(const std::string& url, const std::string& bearer, int timeoutMs) { return NetStart("GET", url, "", bearer, timeoutMs); }
+int NetPost(const std::string& url, const std::string& json, const std::string& bearer, int timeoutMs) {
+    return NetStart("POST", url, json, bearer, timeoutMs);
+}
+bool NetDone(int id) { return pluginnet::Done(plugins::Current(), id); }
+int NetStatus(int id) { return pluginnet::Status(plugins::Current(), id); }
+std::string NetBody(int id) { return pluginnet::Body(plugins::Current(), id); }
+std::string NetError(int id) { return pluginnet::Error(plugins::Current(), id); }
+void NetForget(int id) { pluginnet::Forget(plugins::Current(), id); }
+std::string NetRefusal() { return pluginnet::LastRefusal(); }
+CScriptArray* NetDomains() { return StringArrayOf(plugins::CurrentNetDomains()); }
+
+std::string SteamOwnId() {
+    const uint64_t id = steam::OwnSteamId();
+    return id ? std::to_string(id) : std::string();
+}
+std::string SteamPersonaName(const std::string& id) {
+    const uint64_t n = std::strtoull(id.c_str(), nullptr, 10);
+    std::string name = steam::PersonaName(n);
+    if (name.empty() && n) steam::RequestPersona(n);
+    return name;
+}
+// The identity is always "ballest-plugin:<plugin id>" (whatever is passed; the parameter stays for scripts written
+// before), and only a plugin with [net] domains (a server to show the ticket to) may ask.
+bool SteamRequestWebTicket(const std::string&) {
+    const std::string id = plugins::CurrentId();
+    if (plugins::CurrentNetDomains().empty()) {
+        hostlog::Write("warn", id, "Steam::RequestWebTicket refused: the plugin declares no [net] domains (info.toml)");
+        return false;
+    }
+    const bool ok = steam::RequestWebTicket(plugins::Current(), id);
+    hostlog::Write(ok ? "info" : "warn", id, "Steam web API ticket for '" + steam::WebTicketIdentity(id) + "': " + steam::WebTicketState(plugins::Current()));
+    return ok;
+}
+std::string SteamWebTicketState() { return steam::WebTicketState(plugins::Current()); }
+std::string SteamWebTicket() { return steam::WebTicket(plugins::Current()); }
+std::string SteamWebTicketIdentity() { return steam::WebTicketIdentity(plugins::CurrentId()); }
+
+// Json: reading a value out of a JSON text by a dotted path ("entries.0.name"; array items by index). The last text
+// parsed is kept, so reading many values of one response parses it once.
+const json::Value* JsonAt(const std::string& text, const std::string& path) {
+    static std::string lastText;
+    static json::Value lastValue;
+    static bool lastOk = false;
+    if (text != lastText) {
+        lastText = text;
+        std::string error;
+        lastValue = json::Value{};
+        lastOk = json::Parse(text, lastValue, error);
+    }
+    if (!lastOk) return nullptr;
+    const json::Value* v = &lastValue;
+    size_t start = 0;
+    while (v && !path.empty() && start <= path.size()) {
+        const size_t dot = path.find('.', start);
+        const std::string key = path.substr(start, dot == std::string::npos ? std::string::npos : dot - start);
+        if (v->type == json::Value::Array) {
+            char* end = nullptr;
+            const unsigned long i = std::strtoul(key.c_str(), &end, 10);
+            v = !key.empty() && end && *end == 0 && i < v->items.size() ? &v->items[i] : nullptr;
+        } else if (v->type == json::Value::Object) {
+            v = v->Get(key);
+        } else {
+            v = nullptr;
+        }
+        if (dot == std::string::npos) break;
+        start = dot + 1;
+    }
+    return v;
+}
+bool JsonHas(const std::string& text, const std::string& path) { return JsonAt(text, path) != nullptr; }
+std::string JsonString(const std::string& text, const std::string& path, const std::string& fallback) {
+    const json::Value* v = JsonAt(text, path);
+    if (!v) return fallback;
+    if (v->type == json::Value::String) return v->string;
+    if (v->type == json::Value::Number) {
+        std::ostringstream ss;
+        ss.precision(17);
+        ss << v->number;
+        return ss.str();
+    }
+    if (v->type == json::Value::Bool) return v->boolean ? "true" : "false";
+    return fallback;
+}
+double JsonNumber(const std::string& text, const std::string& path, double fallback) {
+    const json::Value* v = JsonAt(text, path);
+    return v && v->type == json::Value::Number ? v->number : fallback;
+}
+bool JsonBool(const std::string& text, const std::string& path, bool fallback) {
+    const json::Value* v = JsonAt(text, path);
+    return v && v->type == json::Value::Bool ? v->boolean : fallback;
+}
+int JsonCount(const std::string& text, const std::string& path) {
+    const json::Value* v = JsonAt(text, path);
+    if (!v) return -1;
+    if (v->type == json::Value::Array) return static_cast<int>(v->items.size());
+    if (v->type == json::Value::Object) return static_cast<int>(v->members.size());
+    return -1;
+}
+// A string as a JSON string literal (quotes and escapes), for building request bodies.
+std::string JsonQuote(const std::string& s) {
+    std::string out = "\"";
+    for (unsigned char c : s) {
+        if (c == '"' || c == '\\') out += std::string("\\") + static_cast<char>(c);
+        else if (c < 0x20) {
+            char buf[8];
+            std::snprintf(buf, sizeof buf, "\\u%04x", c);
+            out += buf;
+        } else out += static_cast<char>(c);
+    }
+    return out + "\"";
+}
+
+// Replays handed over as text (a downloaded ghost): parsed once, kept by the ball's Draw id.
+struct HeldReplay {
+    int owner = -1;
+    ghostdata::Replay replay;
+};
+std::map<int, HeldReplay> gHeldReplays;
+std::string RunsReplay(int i) { return runs::ReplayText(i); }
+int GhostsReplayBall(const std::string& text, bool realSkin) {
+    plugins::GameWork work;
+    HeldReplay held;
+    held.owner = plugins::Current();
+    std::string error;
+    if (!ghostdata::Parse(text, &held.replay, &error) || held.replay.samples.empty()) {
+        hostlog::Write("warn", plugins::CurrentId(), "Ghosts::ReplayBall: not a replay (" + error + ")");
+        return 0;
+    }
+    // (an entry whose ball is gone is dropped the next time it is placed: PlaceReplayBall)
+    const int id = ghosts::PlayerBallFor(held.owner, held.replay, realSkin);
+    if (id) gHeldReplays[id] = std::move(held);
+    return id;
+}
+bool GhostsPlaceReplayBall(int id, double t) {
+    plugins::GameWork work;
+    auto it = gHeldReplays.find(id);
+    if (it == gHeldReplays.end() || it->second.owner != plugins::Current()) return false;
+    if (ghosts::PlaceBallFor(it->second.owner, id, it->second.replay, t)) return true;
+    gHeldReplays.erase(it);
+    return false;
+}
+double GhostsReplayTime(int id) {
+    auto it = gHeldReplays.find(id);
+    return it == gHeldReplays.end() || it->second.owner != plugins::Current() ? -1 : it->second.replay.time;
+}
+std::string GhostsReplayName(int id) {
+    auto it = gHeldReplays.find(id);
+    return it == gHeldReplays.end() || it->second.owner != plugins::Current() ? "" : it->second.replay.name;
+}
+
+void RaceSetSplitReference(const std::string& key, const CScriptArray* splits, double total) {
+    splitref::Set(plugins::Current(), key, VectorOf<double>(splits), total);
+}
+void RaceClearSplitReference() { splitref::Clear(plugins::Current()); }
+bool RaceClearLocalRecord(const std::string& level) {
+    plugins::GameWork work;
+    std::string error;
+    const bool ok = localrecords::Clear(level, &error);
+    if (!ok) hostlog::Write("warn", plugins::CurrentId(), "Race::ClearLocalRecord: " + error);
+    return ok;
+}
+bool RaceSuppressLocalRecords(const std::string& level) {
+    plugins::GameWork work;
+    std::string error;
+    const bool ok = localrecords::Suppress(level, &error);
+    if (!ok) hostlog::Write("warn", plugins::CurrentId(), "Race::SuppressLocalRecords: " + error);
+    return ok;
+}
+double RaceLocalRecordTime(const std::string& level) {
+    plugins::GameWork work;
+    double best = 0;
+    int splits = 0, samples = 0;
+    return localrecords::Read(level, &best, &splits, &samples) ? best : -1;
+}
+bool LeaderboardSetOwnReplay(const std::string& replay) {
+    plugins::GameWork work;
+    std::string error;
+    const bool ok = leaderboard::SetOwnReplay(plugins::Current(), replay, &error);
+    if (!ok) hostlog::Write("warn", plugins::CurrentId(), "Leaderboard::SetOwnReplay: " + error);
+    return ok;
+}
+
+bool RaceRunTainted(std::string& why) {
+    why.clear();
+    return race::RunTaintedForPlugin(plugins::Current(), &why);
+}
+
+void RegisterSources() {
+    e->SetDefaultNamespace("Leaderboard");
+    Global("void SetSource(const string &in trackKey, const string &in title, const array<string>@ names, const array<double>@ times, "
+           "const array<int>@ ranks = null, int highlight = -1, const array<bool>@ ghosts = null)",
+           asFUNCTION(LeaderboardSetSource));
+    Global("void ClearSource()", asFUNCTION(LeaderboardClearSource));
+    Global("bool SetRowGhost(int row, const string &in steamId, const string &in replayJson)", asFUNCTION(LeaderboardSetRowGhost));
+    Global("bool ClearRowGhost()", asFUNCTION(LeaderboardClearRowGhost));
+    Global("string RowGhost()", asFUNCTION(LeaderboardRowGhost));
+    Global("bool SetOwnReplay(const string &in replayJson)", asFUNCTION(LeaderboardSetOwnReplay));
+    Global("bool WatchRowReplay(int row, const string &in steamId, const string &in replayJson)", asFUNCTION(LeaderboardWatchRowReplay));
+    Global("int ExtraRowGhostClicked()", asFUNCTION(LeaderboardExtraRowGhostClicked));
+    Global("bool SourceShown()", asFUNCTION(LeaderboardSourceShown));
+    e->SetDefaultNamespace("Net");
+    Global("int Get(const string &in url, const string &in bearer = \"\", int timeoutMs = 10000)", asFUNCTION(NetGet));
+    Global("int Post(const string &in url, const string &in json, const string &in bearer = \"\", int timeoutMs = 10000)", asFUNCTION(NetPost));
+    Global("bool Done(int id)", asFUNCTION(NetDone));
+    Global("int Status(int id)", asFUNCTION(NetStatus));
+    Global("string Body(int id)", asFUNCTION(NetBody));
+    Global("string Error(int id)", asFUNCTION(NetError));
+    Global("void Forget(int id)", asFUNCTION(NetForget));
+    Global("string Refusal()", asFUNCTION(NetRefusal));
+    Global("array<string>@ Domains()", asFUNCTION(NetDomains));
+    e->SetDefaultNamespace("Json");
+    Global("bool Has(const string &in json, const string &in path)", asFUNCTION(JsonHas));
+    Global("string String(const string &in json, const string &in path, const string &in fallback = \"\")", asFUNCTION(JsonString));
+    Global("double Number(const string &in json, const string &in path, double fallback = 0)", asFUNCTION(JsonNumber));
+    Global("bool Bool(const string &in json, const string &in path, bool fallback = false)", asFUNCTION(JsonBool));
+    Global("int Count(const string &in json, const string &in path)", asFUNCTION(JsonCount));
+    Global("string Quote(const string &in text)", asFUNCTION(JsonQuote));
+    e->SetDefaultNamespace("Steam");
+    Global("string OwnId()", asFUNCTION(SteamOwnId));
+    Global("string PersonaName(const string &in steamId)", asFUNCTION(SteamPersonaName));
+    Global("bool RequestWebTicket(const string &in identity = \"\")", asFUNCTION(SteamRequestWebTicket));
+    Global("string WebTicketIdentity()", asFUNCTION(SteamWebTicketIdentity));
+    Global("string WebTicketState()", asFUNCTION(SteamWebTicketState));
+    Global("string WebTicket()", asFUNCTION(SteamWebTicket));
+    e->SetDefaultNamespace("Race");
+    Global("bool RunTainted(string &out why)", asFUNCTION(RaceRunTainted));
+    Global("void SetSplitReference(const string &in trackKey, const array<double>@ splits, double total)", asFUNCTION(RaceSetSplitReference));
+    Global("void ClearSplitReference()", asFUNCTION(RaceClearSplitReference));
+    Global("bool ClearLocalRecord(const string &in levelName)", asFUNCTION(RaceClearLocalRecord));
+    Global("bool SuppressLocalRecords(const string &in levelName)", asFUNCTION(RaceSuppressLocalRecords));
+    Global("double LocalRecordTime(const string &in levelName)", asFUNCTION(RaceLocalRecordTime));
+    e->SetDefaultNamespace("Runs");
+    Global("string Replay(int run)", asFUNCTION(RunsReplay));
+    e->SetDefaultNamespace("Ghosts");
+    Global("int ReplayBall(const string &in replay, bool realSkin = false)", asFUNCTION(GhostsReplayBall));
+    Global("bool PlaceReplayBall(int id, double time)", asFUNCTION(GhostsPlaceReplayBall));
+    Global("double ReplayTime(int id)", asFUNCTION(GhostsReplayTime));
+    Global("string ReplayName(int id)", asFUNCTION(GhostsReplayName));
+}
+
 void RegisterRuns() {
     e->SetDefaultNamespace("Leaderboard");
     Global("void SetExtraRows(const string &in title, const array<string>@ names, const array<double>@ times, const array<bool>@ ghosts, "
@@ -1843,6 +2184,52 @@ void RegisterRuns() {
     Global("bool PlaceBall(int id, int run, double time)", asFUNCTION(RunsPlace));
 }
 
+// --- Campaigns -----------------------------------------------------------------------------------------------------
+// A campaign's or course's picture: a game texture ("/Game/...") as it is; a file inside the plugins folder, given
+// from the plugin's own folder ("images/banner.png") or in full (Plugins::Folder() + ...); "" if it is neither.
+std::string CampaignImage(const std::string& image) {
+    if (image.empty() || image.rfind("/Game/", 0) == 0) return image;
+    const bool full = image.size() > 1 && (image[1] == ':' || image[0] == '\\' || image[0] == '/');
+    return IconPath(full ? image : PluginFolder() + image);
+}
+int CampaignsRegister(const std::string& title, const std::string& image, const std::string& description) {
+    return campaigns::Register(plugins::Current(), title, CampaignImage(image), description);
+}
+bool CampaignsRemove(int id) { return campaigns::Remove(plugins::Current(), id); }
+int CampaignsAddCourse(int id, const std::string& title, const std::string& image) {
+    return campaigns::AddCourse(plugins::Current(), id, title, CampaignImage(image));
+}
+bool CampaignsSetCourseInfo(int id, int course, const std::string& info) { return campaigns::SetCourseInfo(plugins::Current(), id, course, info); }
+bool CampaignsSetCourseDetail(int id, int course, const std::string& detail) {
+    return campaigns::SetCourseDetail(plugins::Current(), id, course, detail);
+}
+bool CampaignsSetTheme(int id, const std::string& theme) {
+    std::string error;
+    if (campaigns::SetTheme(plugins::Current(), id, theme, &error)) return true;
+    hostlog::Write("warn", plugins::CurrentId(), "campaigns: SetTheme refused: " + error);
+    return false;
+}
+bool CampaignsSetNote(int id, const std::string& note) { return campaigns::SetNote(plugins::Current(), id, note); }
+bool CampaignsOpened(int id) { return campaigns::TakeOpened(plugins::Current(), id); }
+int CampaignsPicked(int id) { return campaigns::TakePicked(plugins::Current(), id); }
+bool CampaignsShow(int id) { return campaigns::Show(plugins::Current(), id); }
+
+void RegisterCampaigns() {
+    e->SetDefaultNamespace("Campaigns");
+    Global("int Register(const string &in title, const string &in image, const string &in description)", asFUNCTION(CampaignsRegister));
+    Global("bool Remove(int id)", asFUNCTION(CampaignsRemove));
+    Global("int AddCourse(int id, const string &in title, const string &in image)", asFUNCTION(CampaignsAddCourse));
+    Global("bool SetCourseInfo(int id, int course, const string &in info)", asFUNCTION(CampaignsSetCourseInfo));
+    Global("bool SetCourseDetail(int id, int course, const string &in detail)", asFUNCTION(CampaignsSetCourseDetail));
+    Global("bool SetTheme(int id, const string &in theme)", asFUNCTION(CampaignsSetTheme));
+    Global("bool SetNote(int id, const string &in note)", asFUNCTION(CampaignsSetNote));
+    Global("bool Opened(int id)", asFUNCTION(CampaignsOpened));
+    Global("int Picked(int id)", asFUNCTION(CampaignsPicked));
+    Global("bool Show(int id)", asFUNCTION(CampaignsShow));
+    Global("bool Shown(int id)", asFUNCTION(campaigns::Shown));
+    Global("bool ListShown()", asFUNCTION(campaigns::ListShown));
+}
+
 void Register(asIScriptEngine* engine) {
     e = engine;
     RegisterCore();
@@ -1851,12 +2238,14 @@ void Register(asIScriptEngine* engine) {
     RegisterGhosts();
     RegisterWorkshop();
     RegisterRuns();
+    RegisterSources();
     RegisterRace();
     RegisterHud();
     RegisterEditor();
     RegisterReplay();
     RegisterCosmetics();
     RegisterLeaderboard();
+    RegisterCampaigns();
     e->SetDefaultNamespace("");
 }
 

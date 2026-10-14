@@ -31,6 +31,7 @@
 //   objbytes <object name> <bytes> | membytes <hex address> <bytes>   raw memory (layout measurements)
 //   race | ballsave | ballload [0: no momentum] | practice | pause 0|1    the race: track, run, practice; save states
 //   hud | hudset <key> <x> <y> <scale> <mode> | hudset <key> clear | hudtint <key> <part> <r> <g> <b> <a>|reset
+//   campaigns [status] | tab | open <i> | pick <i> | back | show <id> | gametab <i> | hover [<card>]   custom campaigns (campaigns.cpp)
 //   dumptypes                             every class/struct/enum: types\Ballest.usmap (for FModel), types.txt
 //   crash [plugin id]                     test the fault guard: fault in host code now, or in that plugin's next call
 //   callx <Class> <Function> [filter] | i:5 | f:1.5 | d:1.5 | u8:3 | b:1 | s:str | t:text | n:name | o:Class,filter | v:x,y,z

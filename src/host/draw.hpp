@@ -37,6 +37,16 @@ bool Fade(int owner, int id, float opacity);
 // shown and removed like a shape. Its spinning groups and animations play by themselves. 0 and `error` if it can't be.
 int Model(int owner, const std::string& text, std::string* error);
 bool Turn(int owner, int id, double pitch, double yaw, double roll);
+// A model (Model) made solid, or not: the ball rolls on its triangles themselves (the engine's complex-as-simple
+// collision of each of its meshes: one trimesh per mesh, exactly what is drawn, no seams), blocking every channel as
+// the game's own pieces do (the ball's PhysicsBody channel, the camera). Only on the player's own never-published map
+// (race::OwnUnpublishedMapHere): refused elsewhere, and taken back (collision off) as soon as something else is open.
+// False and `why` if refused or nothing was made solid.
+bool Collide(int owner, int id, bool on, std::string* why);
+// Tests only: cook the collision on a worker thread (the engine's async cooking) instead of in the frame.
+void SetCollideAsync(bool async);
+// Tests only: a line about every model (for measuring: triangles, cook time, the components' collision state).
+std::string CollideReport();
 bool Scale(int owner, int id, double scale);
 // One of the game's Niagara particle effects played once where it is put (it removes itself), `scale` times its size,
 // turned so its up points along (nx, ny, nz).

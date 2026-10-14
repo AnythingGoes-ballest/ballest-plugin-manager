@@ -17,6 +17,7 @@
 #include "ghosts.hpp"
 #include "json.hpp"
 #include "log.hpp"
+#include "steam.hpp"
 #include "race.hpp"
 
 namespace runs {
@@ -183,8 +184,15 @@ struct Look {
                 special = "None", prefs = "{\"bBasicBallTexture\":true,\"bBasicBallGloss\":true,\"basicBallTextureSliderValue\":0}";
 };
 
-Look NewestLook() {
+Look FileLook() {
     Look look;
+    // the player's own Steam id and name from Steam (exact: the ghost files' number is rounded, measured
+    // ...272 for ...271); a replay with result 0 is refused by the game's own ghosts ("invalid unsigned decimal Steam ID")
+    if (const uint64_t own = steam::OwnSteamId()) {
+        look.steamId = std::to_string(own);
+        const std::string name = steam::PersonaName(own);
+        if (!name.empty()) look.username = name;
+    }
     std::wstring dir = hostlog::DataDir();
     dir = dir.substr(0, dir.find_last_of(L'\\')) + L"\\Ghosts";
     WIN32_FIND_DATAW fd;
@@ -203,12 +211,13 @@ Look NewestLook() {
     std::string error;
     if (newest.empty() || !json::Parse(ReadFile(dir + L"\\" + newest), v, error)) return look;
     look.username = v.Str("username", look.username);
-    if (const json::Value* id = v.Get("steamId"))
-        if (const json::Value* r = id->Get("result"); r && r->type == json::Value::Number) {
-            char b[32];
-            std::snprintf(b, sizeof b, "%.0f", r->number);
-            look.steamId = b;
-        }
+    if (look.steamId == "0")
+        if (const json::Value* id = v.Get("steamId"))
+            if (const json::Value* r = id->Get("result"); r && r->type == json::Value::Number) {
+                char b[32];
+                std::snprintf(b, sizeof b, "%.0f", r->number);
+                look.steamId = b;
+            }
     look.skin = v.Str("skinMaterial", look.skin);
     look.ghostSkin = v.Str("ghostSkinMaterial", look.ghostSkin);
     look.accessory = v.Str("accessory", look.accessory);
@@ -221,6 +230,47 @@ Look NewestLook() {
                      (flag("bBasicBallGloss") ? "true" : "false") + ",\"basicBallTextureSliderValue\":" +
                      Number(slider && slider->type == json::Value::Number ? slider->number : 0) + "}";
     }
+    return look;
+}
+
+// "/Script/Engine.MaterialInstanceConstant'/Game/.../MI_X.MI_X'", as the game writes an object into its ghost JSON;
+// "None" for none.
+std::string Written(Obj o) { return o ? eng::PathOf(eng::ClassOf(o)) + "'" + eng::PathOf(o) + "'" : "None"; }
+
+// The player's PUBLIC look, as the game writes it into its own ghosts (BP_MyPlayerController "Try Generate Level High
+// Score": the ball's used skin and accessory data assets -> GetSkinMaterials (skin, ghost variant, special skin
+// class), GetAccessoryMesh, GetAccessoryGhostMaterial; the profile's BallerSkinPreferences). Read from the saved
+// profile's choice (BP_BallerProfile_Save DefaultBallSkin / DefaultAccessory), which the host's local cosmetics never
+// change (they keep the game's pick there and dress the ball at runtime only): a local-only look never goes out.
+// False without a profile (then the newest saved ghost's look is used, as before).
+bool PublicLook(Look* look) {
+    Obj controller = game::PlayerController();
+    Obj gi = controller ? eng::Call(eng::FindCdo("GameplayStatics"), "GetGameInstance", controller).ReturnObj() : nullptr;
+    if (!gi) return false;
+    eng::Params get(eng::FunctionOn(gi, "GetCleanBallerProfile"));
+    if (!get.Fn() || !eng::Invoke(gi, get)) return false;
+    Obj profile = get.GetObj("CleanProfile");
+    Obj skin = profile ? eng::ReadObj(profile, "DefaultBallSkin") : nullptr;
+    if (!skin) return false;
+    look->skin = Written(eng::ReadObj(skin, "SkinMaterial"));
+    look->ghostSkin = Written(eng::ReadObj(skin, "SkinGhostVariant"));
+    look->special = Written(eng::ReadObj(skin, "?SpecialSkinClass"));
+    Obj accessory = eng::ReadObj(profile, "DefaultAccessory");
+    look->accessory = Written(accessory ? eng::ReadObj(accessory, "AccessoryMesh") : nullptr);
+    look->accessoryGhost = Written(accessory ? eng::ReadObj(accessory, "AccessoryGhostMaterial") : nullptr);
+    struct Prefs {
+        uint8_t texture, gloss, pad[6];
+        double slider;
+    } prefs{};
+    if (eng::ReadBytes(profile, "BallerSkinPreferences", &prefs, sizeof prefs))
+        look->prefs = std::string("{\"bBasicBallTexture\":") + (prefs.texture ? "true" : "false") + ",\"bBasicBallGloss\":" +
+                      (prefs.gloss ? "true" : "false") + ",\"basicBallTextureSliderValue\":" + Number(prefs.slider) + "}";
+    return true;
+}
+
+Look NewestLook() {
+    Look look = FileLook();
+    if (!PublicLook(&look)) hostlog::Warn("runs: the profile's public look can't be read; the newest saved ghost's is used");
     return look;
 }
 
@@ -396,6 +446,12 @@ void SetPinned(int i, bool pinned) {
 }
 
 double Elapsed() { return gRecording ? gNow : -1; }
+
+std::string ReplayText(int i) {
+    Load();
+    if (i < 0 || i >= static_cast<int>(gRuns.size())) return "";
+    return ReadFile(Dir() + L"\\" + eng::Widen(gRuns[static_cast<size_t>(i)].file));
+}
 
 int Ball(int owner, int i) {
     const ghostdata::Replay* r = ReplayOf(i);

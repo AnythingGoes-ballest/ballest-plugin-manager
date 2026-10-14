@@ -46,4 +46,20 @@ std::string PreviewImage(uint64_t id, uint64_t preview);
 bool OpenWorkshop(uint64_t id);
 std::string OpenState();                                // "idle", "downloading", "opening", "open", "error: ..."
 
+// A map file of the player's own (a name in the game's UserSavedMaps folder; never published) opened as a normal
+// race, as the game opens a workshop map (OpenState tells how it went). LocalMapsFolder: that folder, or "".
+bool OpenLocal(const std::string& fileName);
+// The same, for map index of a list of such maps that becomes the game's active playlist while they are raced, so
+// the game's own "next track" goes to the next one; the game's own list is put back on the main menu.
+bool OpenLocalList(const std::vector<std::string>& fileNames, int index);
+std::string LocalMapsFolder();
+// A map file shipped with a plugin (full path) copied into the player's maps folder when missing or older there:
+// 1 copied, 0 already there (or the player's own newer copy, kept), -1 not done (OpenState: why).
+int InstallLocalMap(const std::wstring& source);
+// levelData.levelPublishedFileId of a map file (full path): > 0 once published, -1 never published, -2 unreadable.
+long long PublishedIdOfFile(const std::string& path);
+// The player's own map open in the track editor (its file in LocalMapsFolder, "Map_LevelEditorMain&<name>_*.balledit"),
+// as that file's published id: -1 never published, > 0 published, -2 no such file (or several that disagree).
+long long EditorMapPublishedId(const std::string& mapName);
+
 }  // namespace tracks

@@ -38,6 +38,12 @@ timeout = 20
 | `assets` | `[]` | Other files the plugin needs at runtime, such as images and model files, installed with it from the registry. Wildcards and one level of folders work: `["*.png", "models/*.txt"]`. |
 | `timeout` | `50` | The [time budget](../concepts.md#the-time-budget) for each callback, in milliseconds. |
 
+## `[net]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `domains` | `[]` | The only hosts the plugin's `Net::Get` / `Net::Post` requests may reach: exact host names (no subdomains), https on port 443, redirects never followed. Public host names only: IP addresses, `localhost`, `*.local` and other local or single-label names are left out (with a warning). Without it, every `Net::` request is refused, and so is `Steam::RequestWebTicket`. The plugin manager shows these hosts on the plugin's card. A sandboxed test copy lets these hosts through too (only these), marked with the header `X-Ballest-Sandbox: 1`. Requires host 0.26.0. |
+
 ## The folder name is the id
 
 The plugin's folder name is its **id**: how the registry, `Storage` and the log refer to it. Use lowercase with

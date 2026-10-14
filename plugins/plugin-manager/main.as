@@ -451,11 +451,22 @@ void AddCardTop(const string &in icon, const string &in name, const string &in v
     Muted(menu.AddText(version, 16));
 }
 
-void AddCardDescription(const string &in description)
+void AddCardDescription(const string &in description, const array<string>@ domains = null)
 {
     menu.NewRow();
     menu.AddSpace(ICON_SIZE);
     Muted(menu.AddText(Shorten(description == "" ? "No description." : description, DESCRIPTION_LENGTH), 16));
+    if (domains !is null && domains.length() > 0)
+    {
+        // the servers the plugin may connect to ([net] domains in its info.toml)
+        string list = "";
+        for (uint i = 0; i < domains.length(); i++)
+            list += (i == 0 ? "" : ", ") + domains[i];
+        menu.NewRow();
+        menu.AddSpace(ICON_SIZE);
+        UI::Text@ net = menu.AddText(Shorten("connects to " + list, DESCRIPTION_LENGTH), 16);
+        net.SetColor(WARN_R, WARN_G, WARN_B, 1);
+    }
     menu.EndCard();
 }
 
@@ -510,7 +521,7 @@ void AddInstalledCard(uint p)
     }
     if (r >= 0)
         AddCardButton("github", "open:" + Registry::Page(r));
-    AddCardDescription(r >= 0 ? Registry::Description(r) : Plugins::Description(p));
+    AddCardDescription(r >= 0 ? Registry::Description(r) : Plugins::Description(p), Plugins::NetDomains(p));
 }
 
 void AddBrowseCard(uint r)

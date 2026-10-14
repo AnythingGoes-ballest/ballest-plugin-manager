@@ -174,6 +174,12 @@ The plugin's one-line description, `description` in its `info.toml`.
 panel.AddLine(Plugins::Name(i));
 panel.AddLine(Plugins::Description(i));
 
+== Plugins::NetDomains
+The hosts a plugin may reach with `Net::` (`[net] domains` in its `info.toml`, public host names only); empty for
+none. The plugin manager shows them on the plugin's card. Requires host 0.26.0.
+--
+array<string>@ hosts = Plugins::NetDomains(i);
+
 == Plugins::Icon
 The full path of the plugin's icon image, or `""` if it has none. It can be passed straight to `AddImage`.
 --
@@ -552,6 +558,28 @@ UI::Panel@ panel = UI::CreatePanel();
 panel.title = "grind timer";
 panel.AddLine("0:42:17 on this track");
 UI::FooterButton@ resetButton = panel.AddButton("reset");
+
+== UI::AddMenuButton
+Adds an entry to the main menu's own list (play, create, customize, ...), under "play", in the game's menu button. It
+is the same type as a footer button: read its clicks with `Clicked()`. Requires host 0.26.0.
+--
+UI::FooterButton@ menuButton;
+
+void Main()
+{
+    @menuButton = UI::AddMenuButton("my campaign");
+}
+
+void Update(float dt)
+{
+    if (menuButton.Clicked())
+        page.visible = true;
+}
+
+== UI::MainMenuShown
+True while the main menu's list (play, create, ...) is on screen. Requires host 0.26.0.
+--
+page.visible = page.visible && UI::MainMenuShown();
 
 == UI::CreateWindow
 Creates a window: a box on screen that holds rows of widgets. It starts visible, centred at the bottom of the
@@ -1457,6 +1485,31 @@ double x, y, z;
 if (Race::BallPosition(x, y, z))
     path.insertLast(x);
 
+== Race::BallVelocity
+How fast the ball being played moves: its velocity in cm/s (x, y, z as in `BallPosition`). False when there's no
+ball. Requires host 0.26.0.
+--
+double vx, vy, vz;
+if (Race::BallVelocity(vx, vy, vz))
+    speedText.SetText(formatFloat(Math::sqrt(vx * vx + vy * vy) * 0.036, "", 0, 0) + " km/h");
+
+== Race::AddBallVelocity
+Adds to the ball's velocity this frame (cm/s, world axes): a conveyor belt, a wind, a booster of a map's own. Only on
+the player's own maps that were never published: one raced from its file (`Tracks::OpenLocal`) or test-played in the
+track editor. Anywhere else (the game's tracks, workshop maps, a published map) it does nothing and returns false, with
+one warning in the host log per track. A run it pushed doesn't go to a Steam leaderboard (a local map's never does),
+but it still counts for your own plugin's records (`Race::RunTainted` ignores your own pushes); its timer and
+checkpoints keep counting as usual. Call it every frame the push lasts, scaled by the frame's time.
+Requires host 0.26.0.
+--
+void Update(float dt)
+{
+    // a belt along +x at 400 cm/s: the ball is drawn towards its speed
+    double vx, vy, vz;
+    if (Race::BallVelocity(vx, vy, vz) && onBelt)
+        Race::AddBallVelocity((400 - vx) * (dt < 0.33 ? 3 * dt : 1.0), 0, 0);
+}
+
 == Race::NextBounce
 The next time the ball landed or hit a wall, oldest first; false when there are no more. Each plugin reads its own:
 the first call starts from now, and each bounce is given once. `strength` is how hard the hit was, from 0 (a small
@@ -1827,6 +1880,26 @@ how many pieces can be placed. Requires host 0.16.1.
 --
 Editor::SetBudgetLimit(1000);   // room for 1000 pieces
 Editor::SetBudgetLimit(0);      // the game's own again
+
+== Editor::HideByMaterial
+Stops drawing every piece of the map that uses this material (a material path such as
+`/Game/Art/Materials/Masters/M_Empty`, or any material instance made from it) in any of its slots, and returns how
+many pieces that is. Only the drawing stops: the pieces keep their collision, so the ball still rolls on them, and
+they can still be clicked in the editor. Works in the editor, during its test run (the run plays on the same
+pieces) and in a race of one of the player's own never-published maps (`Tracks::OpenLocal`), where its pieces are the
+race level's own; in a race of any other map (a live workshop map) it hides nothing and returns 0. One call goes through every piece natively (about 40,000 pieces in one go is fine). Pieces that appear later
+(another map opened, a paste, new pieces) are drawn until you call it again; calling it again for pieces already
+hidden costs little and counts them again. Everything a plugin hid is drawn again when it stops. Requires host 0.26.0.
+--
+// a map whose pieces are only collision, drawn over by a model of its own
+int hidden = Editor::HideByMaterial("/Game/Art/Materials/Masters/M_Empty");
+Log::Info(hidden + " pieces not drawn");
+
+== Editor::ShowAll
+Draws again every piece your plugin hid with `HideByMaterial`, and returns how many parts of pieces that was.
+Requires host 0.26.0.
+--
+Editor::ShowAll();
 
 == Editor::AddHotkey
 Adds a row to the editor's key list (the panel the info button shows), after the game's single-key rows: a key image
@@ -2524,6 +2597,40 @@ Tracks::OpenWorkshop(Tracks::ResultId(0));
 if (Tracks::OpenState().findFirst("error") == 0)
     statusText.text = Tracks::OpenState();
 
+== Tracks::OpenLocal
+Races one of the player's own saved maps (a file name in the game's maps folder, `Tracks::LocalFolder`) as a normal
+race, the way the game races a workshop map: the pre-race menu, countdown, timer, checkpoints, the finish screen and
+improve, not the editor's test run. A map that was never published has no leaderboard, and its runs never go to one.
+Only a map whose file says it was never published (`levelPublishedFileId` -1 or 0); a published map, or a file that
+doesn't say, is refused.
+False if it can't start; `OpenState` says why. Requires host 0.26.0.
+--
+Tracks::OpenLocal("Map_LevelEditorMain&My Map_AnythingGoes.balledit");
+
+== Tracks::InstallLocalMap
+Puts a map file that ships in your plugin's folder into the player's own maps folder, where the game opens local maps
+from (`Tracks::OpenLocal`). It copies when the map isn't there yet or your copy is newer; a copy the player edited since
+(newer than yours) is kept. Only an editor map file ("Map_LevelEditorMain&<name>_<type>.balledit") that was never
+published (its file must say `"levelPublishedFileId": -1`; a file that doesn't say is refused). 1 when copied, 0 when
+already there, -1 when not done: `OpenState` says why (the game may still be starting:
+try again a moment later). Requires host 0.26.0.
+--
+if (Tracks::InstallLocalMap("maps/Map_LevelEditorMain&My Map_AnythingGoes.balledit") >= 0)
+    Tracks::OpenLocal("Map_LevelEditorMain&My Map_AnythingGoes.balledit");
+
+== Tracks::OpenLocalList
+Races map `index` of a list of the player's own saved maps, as `OpenLocal` does, with the list as the game's active
+playlist while they are raced, so the game's own "next track" goes on to the next map. The game's own playlist is
+active again once the main menu is back. Requires host 0.26.0.
+--
+array<string> maps = {"Map_LevelEditorMain&Course 1_AnythingGoes.balledit", "Map_LevelEditorMain&Course 2_AnythingGoes.balledit"};
+Tracks::OpenLocalList(maps, 0);
+
+== Tracks::LocalFolder
+The game's folder of the player's own saved maps, or `""` when the game doesn't have it yet. Requires host 0.26.0.
+--
+Log::Info("maps are in " + Tracks::LocalFolder());
+
 @@ Workshop
 The workshop's maps, searched and listed the ways Steam can: by text, with any of Steam's rankings, by tags, and a
 player's own lists (played, favourites, subscriptions, likes, published). Every map a query returns is kept, so the
@@ -2844,6 +2951,16 @@ has a mistake (the log says which line). Requires host 0.20.0.
 int star = Draw::Model(Plugins::Folder() + "models/star.txt");
 Draw::Move(star, x, y, z + 80);
 
+== Draw::Collide
+Makes a model (`Draw::Model`) solid for the ball, or not again: the ball rolls on the model's own triangles, exactly
+what is drawn, as one continuous surface (no seams between pieces), and it blocks the camera as the game's pieces do.
+Only on the player's own map that was never published (in the editor, its test runs, or raced from its file with
+`Tracks::OpenLocal`); refused elsewhere (false, and the log says why), and taken back by itself when another map
+opens. Faces are solid from both sides. Requires host 0.26.0.
+--
+int track = Draw::Model(Plugins::Folder() + "tracks/" + Editor::MapName() + ".txt");
+Draw::Collide(track);
+
 == Draw::Turn
 Turns a shape: pitch, yaw and roll in degrees, as the engine's rotations are. Requires host 0.20.0.
 --
@@ -3026,3 +3143,403 @@ int whole = int(Math::floor(x));
 The whole number at or above.
 --
 int pages = int(Math::ceil(count / 10.0));
+
+== Leaderboard::SetSource
+Hiscores from your own source for one track, shown by the leaderboard inside the map in place of the game's own list:
+while the race's `Race::TrackKey()` is `trackKey`, the board shows these rows (the game's own row widgets: rank, name,
+time in seconds) under `title`, with no world/friends switching. `ranks` (optional) sets each row's rank (0: its place in
+the list), so the last row can be the player's own place below the top; `highlight` marks one row (a lime bar and rank),
+-1 none; `ghosts` (optional) sets each row's ghost toggle (on/off), and clicks on rows come through
+`Leaderboard::ExtraRowClicked`. With an empty `names` the board shows the title alone (loading). Call it again whenever the rows change; the
+last plugin to set a source owns the board. A source applies only on the player's own never-published maps (raced with
+`Tracks::OpenLocal`, or test-played in the editor): on an official or workshop track the game's own board and ghosts
+stay, and the log says why. The same goes for the row ghost, replay and own-best functions below. Requires host 0.26.0.
+--
+array<string> names = {"Alice", "Bob", "you"};
+array<double> times = {39.912, 40.5, 44.1};
+array<int> ranks = {1, 2, 17};
+array<bool> ghosts = {true, false, false};
+Leaderboard::SetSource(Race::TrackKey(), "online  17 players", names, times, ranks, 2, ghosts);
+
+== Leaderboard::ClearSource
+Gives the in-map leaderboard back to the game (your source no longer shows). Requires host 0.26.0.
+--
+Leaderboard::ClearSource();
+
+== Leaderboard::SourceShown
+Whether the board on screen shows your source now. Requires host 0.26.0.
+--
+if (Leaderboard::SourceShown())
+    Log::Info("our hiscores are up");
+
+== Net::Get
+Starts an HTTPS GET; returns its id (poll `Net::Done`), or 0 if refused (`Net::Refusal` says why). Only to the hosts
+your info.toml names (`[net] domains = ["example.workers.dev"]`, exact names, https on port 443, redirects not
+followed). Domains must be public host names: IP addresses, `localhost`, `*.local` and other local or single-label
+names are left out when the plugin loads (with a warning) and refused. `bearer` (optional) is sent as `Authorization: Bearer <bearer>`. The response may be up to 2 MB; the timeout is
+1 to 30 s. At most 4 requests under way and 30 a minute per plugin. A sandboxed test copy adds the header
+`X-Ballest-Sandbox: 1`, so your server can keep test traffic apart. Requires host 0.26.0.
+--
+int request = Net::Get("https://example.workers.dev/top?track=a&n=10");
+
+== Net::Post
+Starts an HTTPS POST of a JSON body (up to 1 MB, sent as `application/json`); otherwise as `Net::Get`. Requires host 0.26.0.
+--
+int request = Net::Post("https://example.workers.dev/submit", "{\"timeMs\":41805}", token);
+
+== Net::Done
+Whether a request has finished (with a response, or failed). Requires host 0.26.0.
+--
+if (Net::Done(request))
+    Log::Info("status " + Net::Status(request));
+
+== Net::Status
+The HTTP status of a finished request (any status, 200 or not), or 0 if no response came (`Net::Error` says why).
+Requires host 0.26.0.
+--
+bool ok = Net::Status(request) == 200;
+
+== Net::Body
+The response body of a finished request. Requires host 0.26.0.
+--
+string body = Net::Body(request);
+
+== Net::Error
+Why a finished request got no response ("" if it got one). Requires host 0.26.0.
+--
+if (Net::Status(request) == 0)
+    Log::Warn(Net::Error(request));
+
+== Net::Forget
+Drops a request's result (finished ones are dropped by themselves after 5 minutes). Requires host 0.26.0.
+--
+Net::Forget(request);
+
+== Net::Refusal
+Why the last `Net::Get` or `Net::Post` returned 0. Requires host 0.26.0.
+--
+if (Net::Get(url) == 0)
+    Log::Warn(Net::Refusal());
+
+== Net::Domains
+The hosts your info.toml lets `Net::` reach. Requires host 0.26.0.
+--
+array<string>@ hosts = Net::Domains();
+
+== Json::Has
+Whether a JSON text has a value at a dotted path (`"entries.0.name"`: object keys and array indices). Requires host 0.26.0.
+--
+if (Json::Has(body, "entry.rank"))
+    Log::Info("ranked");
+
+== Json::String
+The value at a path as text (numbers and true/false written out), or `fallback`. Requires host 0.26.0.
+--
+string name = Json::String(body, "entries.0.name", "?");
+
+== Json::Number
+The number at a path, or `fallback`. Requires host 0.26.0.
+--
+double ms = Json::Number(body, "entries.0.timeMs");
+
+== Json::Bool
+The true/false at a path, or `fallback`. Requires host 0.26.0.
+--
+bool ok = Json::Bool(body, "ok");
+
+== Json::Count
+How many items an array (or members an object) at a path has, -1 if there is none. Requires host 0.26.0.
+--
+for (int i = 0; i < Json::Count(body, "entries"); i++)
+    Log::Info(Json::String(body, "entries." + i + ".name"));
+
+== Json::Quote
+A text as a JSON string (quoted, escaped), for building request bodies. Requires host 0.26.0.
+--
+string body = "{\"track\":" + Json::Quote(track) + "}";
+
+== Steam::OwnId
+The player's 64-bit Steam ID as text ("" if Steam isn't there). Names change; this doesn't. Requires host 0.26.0.
+--
+string me = Steam::OwnId();
+
+== Steam::PersonaName
+A Steam user's name as Steam shows it to this player, "" until Steam has it (asking starts the request). Requires host 0.26.0.
+--
+string name = Steam::PersonaName(Steam::OwnId());
+
+== Steam::RequestWebTicket
+Asks Steam for a Web API auth ticket (GetAuthTicketForWebApi) for your plugin, so your server can check the player's
+Steam ID with ISteamUserAuth/AuthenticateUserTicket. The ticket's identity is always `ballest-plugin:<your plugin id>`
+(`Steam::WebTicketIdentity`), whatever is passed: your server checks the ticket with that identity. Only for a plugin
+that declares `[net] domains` in its info.toml (false otherwise). Each plugin has its own ticket; asking again replaces
+yours. Read-only: nothing is uploaded. Poll `Steam::WebTicketState`. A sandboxed test copy blocks tickets, so there it
+ends in an error. Requires host 0.26.0.
+--
+Steam::RequestWebTicket();      // server side: AuthenticateUserTicket with identity "ballest-plugin:my-plugin"
+
+== Steam::WebTicketIdentity
+The identity your plugin's tickets are made for: `ballest-plugin:` and your plugin's id (its folder name without
+`ballest-`). Your server passes it to AuthenticateUserTicket. Requires host 0.26.0.
+--
+Log::Info("tickets for " + Steam::WebTicketIdentity());
+
+== Steam::WebTicketState
+"idle", "pending", "ready" or "error: ...". Requires host 0.26.0.
+--
+if (Steam::WebTicketState() == "ready")
+    Log::Info("ticket ready");
+
+== Steam::WebTicket
+The ticket as hex once ready, else "". Requires host 0.26.0.
+--
+string ticket = Steam::WebTicket();
+
+== Race::RunTainted
+Whether the run (going on, or just finished) must not count for your plugin's own records, and why: practice, a test
+command that changed the game, the ball moved or frozen by the host or a plugin, game time not at normal speed, or the
+ball pushed by another plugin. Your own `Race::AddBallVelocity` pushes (a track mechanic of your own map) don't count.
+Check it at the finish, before sending a time anywhere. Requires host 0.26.0.
+--
+string why;
+if (Race::RunTainted(why))
+    Log::Info("not sent: " + why);
+
+== Race::ClearLocalRecord
+Replaces the game's own record of one of the player's own never-published maps (`levelName` as `Race::TrackName`
+shows it) with an empty one: no best time, medal, splits or PB ghost. The game itself writes and saves it, through its
+own profile save (no save file is touched by the host). For a plugin whose records live elsewhere (its own server).
+It is done while that map is raced (the game files records by name only, so the map raced must be the player's own
+never-published one): at once if it is raced now, else the next time it is. True if cleared, queued or there was
+nothing to clear; false if the map isn't one of the player's own unpublished maps.
+Requires host 0.26.0.
+--
+if (Race::ClearLocalRecord("My Track"))
+    Log::Info("the game's own record cleared");
+
+== Race::SuppressLocalRecords
+From now on (this game session) the game saves no record for that map: each finish there is marked practice-only in
+the game's own finish snapshot, so the game keeps it out of its records (time, medal, splits, PB ghost). Only for
+the player's own never-published maps; false otherwise. A finish is kept out only when the map raced is that
+never-published map (a track of the same name elsewhere keeps its records). Call it again each game session. Requires host 0.26.0.
+--
+Race::SuppressLocalRecords("My Track");
+
+== Race::LocalRecordTime
+The game's own best time (seconds) for a map as the profile holds it now; 0 for an empty record, -1 for none.
+Requires host 0.26.0.
+--
+double t = Race::LocalRecordTime("My Track");
+
+== Runs::Replay
+A kept run's replay as the host recorded it: the game's own ghost JSON (locations, elapsedTime, rotations,
+velocities, the player's look), "" if it can't be read. For sending a run somewhere (a plugin's own server). The game
+writes no ghost file of its own for a local map raced with `Tracks::OpenLocal`; this is the run's replay there.
+Requires host 0.26.0.
+--
+if (Runs::Count() > 0 && Runs::IsFinished(0))
+    string replay = Runs::Replay(0);
+
+== Ghosts::ReplayBall
+A ghost's ball from replay text (the game's ghost JSON, e.g. downloaded from a plugin's own server): the game's
+player ball dressed as that replay's player, with their name tag, in the game's rival-ghost look (`realSkin`: their
+own skin at full opacity). A Draw id (remove it with `Draw::Remove`), or 0 if the text isn't a replay. Place it with
+`PlaceReplayBall`. Requires host 0.26.0.
+--
+int ghost = Ghosts::ReplayBall(Net::Body(request));
+
+== Ghosts::PlaceReplayBall
+Puts a replay ball where its run was at time `t` (seconds), turning as it turned: call it every frame with the race's
+clock (`Runs::Elapsed()`) to race against it. False once the ball is gone (a new map, or removed). Requires host 0.26.0.
+--
+double t = Runs::Elapsed();
+Ghosts::PlaceReplayBall(ghost, t < 0 ? 0 : t);
+
+== Ghosts::ReplayTime
+A replay ball's run time (its bestTime, seconds), -1 for no such ball. Requires host 0.26.0.
+--
+Log::Info("ghost time " + Ghosts::ReplayTime(ghost));
+
+== Ghosts::ReplayName
+The player name in a replay ball's replay. Requires host 0.26.0.
+--
+Log::Info("racing " + Ghosts::ReplayName(ghost));
+
+@@ Campaigns
+Custom campaigns: your own series of tracks inside the game's track selection. As soon as any plugin registers a
+campaign, the play page's sidebar gets a **custom campaigns** tab under the game's own (circuit, trials, hub,
+collabs). It is the game's own tab widget, so it hovers, highlights and sounds like them; with no campaign registered
+it isn't there. The tab lists every registered campaign as a card (picture, title, description). Choosing one opens
+that campaign's own screen in the same place: its title as the page header, a bar back to the list, an optional note,
+and its courses as numbered cards with a picture, a title, a line under the title and a text on the right (a best
+time, say). The game's back button and Escape go from a campaign's screen back to the list, and from the list back
+where the player came from.
+
+The host draws these screens; your plugin supplies what's on them and decides what a course does. When the player
+chooses a course, `Campaigns::Picked` tells you which, and you open it (for example a saved map with
+`Tracks::OpenLocalList`). Pictures are PNG or JPG files in your plugin's folder (`"images/banner.png"`, or a full path
+from `Plugins::Folder()`), or a game texture (`"/Game/..."`). A campaign goes away with the plugin that registered
+it. Requires host 0.26.0.
+
+== Campaigns::Register
+Registers a campaign and returns its id (above 0), which the other functions take. The first one registered makes the
+custom campaigns tab appear. Call it once, in `Main`.
+--
+int campaign;
+
+void Main()
+{
+    campaign = Campaigns::Register("Summer Series", "images/summer_series.png", "Four courses, one series: race each for your best time.");
+    Campaigns::AddCourse(campaign, "Harbour Run", "images/harbour_run.png");
+    Campaigns::AddCourse(campaign, "Cliff Loop", "images/cliff_loop.png");
+}
+
+== Campaigns::Remove
+Removes one of your campaigns. When the last campaign of every plugin is gone, so is the tab.
+--
+Campaigns::Remove(campaign);
+
+== Campaigns::AddCourse
+Adds a course to the end of a campaign's screen and returns its index (0 for the first), or -1 for an id that isn't
+one of yours.
+--
+for (uint i = 0; i < files.length(); i++)
+    Campaigns::AddCourse(campaign, titles[i], "images/" + pictures[i]);
+
+== Campaigns::SetCourseInfo Campaigns::SetCourseDetail
+The texts on a course's card: `SetCourseInfo` on the right (a best time, "no time yet"), `SetCourseDetail` on a line
+under its title (a record, a hint). Setting the text it already has costs nothing, so they can be called every time
+your numbers might have changed.
+--
+Campaigns::SetCourseInfo(campaign, i, best < 0 ? "no time yet" : FormatTime(best));
+Campaigns::SetCourseDetail(campaign, i, "world record 1:02.345");
+
+== Campaigns::SetTheme
+The campaign's colours, for its card on the list and the course cards on its own screen (without a theme they use the
+game's dark cards and its blue when hovered). A list of `key=#RRGGBB` (or `#RRGGBBAA`) pairs, separated by spaces;
+colours as in any paint program (sRGB). Keys:
+
+| key | what it colours | if not given |
+|---|---|---|
+| `card` | a card's background | the game's dark card |
+| `hover` | a card under the mouse | the game's blue |
+| `pressed` | a card held down | `hover`, darker |
+| `text` | titles and the right-hand text | white |
+| `body` | the description and the line under a course's title | light grey |
+| `hovertext` | all of a card's text while it's hovered or held | `text` and `body` |
+| `accent` | a rim around every card | no rim |
+| `number` | the course numbers | `text` |
+| `coursecard`, `coursehover` | the course cards only, if they should differ from the list card | `card`, `hover` |
+
+False (with the reason in the log) for an unknown key or a colour that isn't `#RRGGBB` / `#RRGGBBAA`; the theme it
+had stays. Each call replaces the whole theme; `""` goes back to the game's colours. Pictures on the cards keep their
+proportions, fitted and centred in their box.
+--
+// Deep teal cards, white lettering, an orange rim; orange with dark lettering under the mouse
+Campaigns::SetTheme(campaign, "card=#0F4C5C hover=#F28C28 text=#FFFFFF body=#CFE3E8 hovertext=#1A1A1A accent=#F28C28 number=#F28C28");
+
+== Campaigns::SetNote
+A line under the campaign screen's back bar: a total, a status, or why a course couldn't be opened. "" for none.
+--
+Campaigns::SetNote(campaign, "series total  " + FormatTime(total));
+
+== Campaigns::Opened
+True once each time the player opens the campaign's screen (from the list, or by `Campaigns::Show`). A good moment to
+load your records and fill in the cards.
+--
+if (Campaigns::Opened(campaign))
+    RefreshCards();
+
+== Campaigns::Picked
+The course the player chose on the campaign's screen (its index), once; -1 when none was. Open it yourself.
+--
+int course = Campaigns::Picked(campaign);
+if (course >= 0)
+    Tracks::OpenLocalList(files, course);
+
+== Campaigns::Show
+Opens the game's play page at the campaign's screen, from the main menu: for example when the player comes back from
+one of the campaign's races. False for an id that isn't one of yours.
+--
+// Back at the main menu after one of our races: our screen again
+if (raced && UI::MainMenuShown() && !Race::OnTrack())
+{
+    raced = false;
+    Campaigns::Show(campaign);
+}
+
+== Campaigns::Shown Campaigns::ListShown
+`Shown` is true while the campaign's screen is on screen, `ListShown` while the list of campaigns is.
+--
+if (Campaigns::Shown(campaign))
+    RefreshOnlineRecords();
+
+== Race::SetSplitReference
+Your own split reference for one track: while the race's `Race::TrackKey()` is `trackKey`, the delta box under the
+race timer compares each checkpoint against `splits` (cumulative seconds from the start, one per checkpoint, in the
+order they're taken) instead of the player's saved record, and the finish against `total` (seconds). An empty
+`splits` shows no checkpoint deltas, and a `total` of 0 no finish delta. Nothing is saved: the game's own record stays
+as it was, and other tracks are untouched. Call it again to change it. Requires host 0.26.0.
+--
+array<double> splits = {10.0, 20.0, 30.0};
+Race::SetSplitReference(Race::TrackKey(), splits, 41.805);
+
+== Race::ClearSplitReference
+Gives the delta box back to the game's own record. Requires host 0.26.0.
+--
+Race::ClearSplitReference();
+
+== Leaderboard::SetRowGhost
+Races a source row's player as the game's own leaderboard ghost: `replayJson` (the game's ghost JSON, e.g. downloaded
+from your server) is handed to the game's ghosts for `steamId`, selected the way the board's own ghost toggle selects
+one (any ghost selected this way before is hidden), the row lit (ghost toggle on, the game's lime row), and the race
+restarted the way the restart key restarts it, so the ghost runs from the start with the race clock. The game moves,
+dresses and name-tags it. On a local map, which has no leaderboard of its own, the host opens the game's ghost session
+for it. Only while your `SetSource` applies (on the player's own never-published maps); false (and a warning in the
+log) otherwise or if the game refused the replay. Requires host 0.26.0.
+--
+if (Leaderboard::SetRowGhost(0, "76561198000000000", Net::Body(request)))
+    Log::Info("racing the record's ghost");
+
+== Leaderboard::SetOwnReplay
+Uses `replayJson` (the game's ghost JSON, e.g. the player's best downloaded from your server) as the player's own
+best on the current track while your `SetSource` applies: the game's PB ghost and the own row's replay come from it
+instead of the game's local record. Only on the player's own never-published maps, like `SetSource`. False (and a
+warning in the log) if it can't be used. Requires host 0.26.0.
+--
+if (Leaderboard::SetOwnReplay(Net::Body(request)))
+    Log::Info("PB ghost from the online best");
+
+== Leaderboard::ClearRowGhost
+Hides the ghost `SetRowGhost` showed and restarts the race, as the board's own toggle turning a ghost off. False if
+none is shown. Requires host 0.26.0.
+--
+Leaderboard::ClearRowGhost();
+
+== Leaderboard::RowGhost
+The Steam id whose ghost a source row shows now, or "". Requires host 0.26.0.
+--
+if (Leaderboard::RowGhost() != "")
+    Log::Info("a ghost is on");
+
+== Leaderboard::WatchRowReplay
+Shows a source row's run in the game's replay mode, as the board's own row click does: the replay camera follows that
+run, the ghost raced now (`SetRowGhost`) and the player's own best (shown or hidden as in the race) play beside it,
+the watched row is lit as the game lights a watched row, and the game's own exit from replay mode returns to the race
+and restarts it. The game's replay camera follows only the ghost session's own ghost (measured), so the host opens the
+session again with the watched player as its local player for replay mode (and gives the watched ghost's name tag the
+name in its replay: the game would name it after the local player), and the race's own session again when the game
+leaves it. Replay mode starts once the game has parsed the replay; the host's replay tools (`Replay::` time, seek,
+camera modes) see it as a replay. Only while your `SetSource` applies (on the player's own never-published maps);
+false (and a warning in the log) otherwise.
+Requires host 0.26.0.
+--
+Leaderboard::WatchRowReplay(0, "76561198000000000", Net::Body(request));
+
+== Leaderboard::ExtraRowGhostClicked
+The row whose ghost toggle (the switch at the row's right end) was clicked since you last asked, or -1. A click
+there isn't also reported by `ExtraRowClicked`, which is the rest of the row (the tile). Requires host 0.26.0.
+--
+int row = Leaderboard::ExtraRowGhostClicked();
+if (row >= 0)
+    Log::Info("toggle " + row);

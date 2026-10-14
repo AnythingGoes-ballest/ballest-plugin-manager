@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 
@@ -155,7 +156,10 @@ bool Open(uint64_t id) {
 
 }  // namespace
 
+void LocalFrame();
+
 void Frame() {
+    LocalFrame();
     if (!gOpening) return;
     const uint32_t state = steam::ItemState(gOpening);
     if ((state & steam::kItemInstalled) && !(state & (steam::kItemDownloading | steam::kItemDownloadPending))) {
@@ -329,5 +333,333 @@ bool OpenWorkshop(uint64_t id) {
 }
 
 std::string OpenState() { return gOpenState; }
+
+namespace {
+Obj LevelManager() {
+    Obj instance = GameInstance();
+    Obj get = instance ? eng::FindFunction(eng::ClassOf(instance), "GetLevelManager") : nullptr;
+    if (!get) return nullptr;
+    eng::Params p(get);
+    return eng::Invoke(instance, p) ? p.GetObj("LevelManager") : nullptr;
+}
+
+// The game's folder of the player's own maps (O_LevelManager.GetCustomMapDirectory: Saved + the editor's
+// MapsFolderDirectory, "...\Saved\UserSavedMaps/"), or "".
+std::string CustomMapDirectory() {
+    Obj manager = LevelManager();
+    Obj fn = manager ? eng::FindFunction(eng::ClassOf(manager), "GetCustomMapDirectory") : nullptr;
+    if (!fn) return "";
+    eng::Params p(fn);
+    if (!eng::Invoke(manager, p)) return "";
+    const uint8_t* r = p.Return();
+    return r ? FString(r) : "";
+}
+
+// levelData.levelPublishedFileId of a map file: > 0 once it has been published (then it races on the workshop
+// map's live leaderboard, so it isn't opened as a local map), -1 (or 0) never published. -2 if the file can't be read
+// or doesn't say (no levelPublishedFileId in its head, or not a number): unknown counts as not the player's own
+// never-published map (fail closed).
+long long PublishedIdOf(const std::wstring& path) {
+    FILE* f = _wfopen(path.c_str(), L"rb");
+    if (!f) return -2;
+    std::string head(65536, '\0');
+    head.resize(fread(head.data(), 1, head.size(), f));
+    fclose(f);
+    const size_t at = head.find("\"levelPublishedFileId\"");
+    if (at == std::string::npos) return -2;
+    const size_t colon = head.find(':', at);
+    if (colon == std::string::npos) return -2;
+    char* end = nullptr;
+    const long long id = std::strtoll(head.c_str() + colon + 1, &end, 10);
+    if (end == head.c_str() + colon + 1) return -2;                 // not a number
+    return id;
+}
+std::map<std::string, eng::Weak> gLocalData;    // map file path -> the level data the game made for it
+eng::Weak gCupList, gCupPrevious;               // the plugin's list of local maps while it is the active one
+bool gCupActive = false;
+bool gCupLeftMenu = false;                     // its first map has loaded (the main menu was left)
+
+// "My Track_AnythingGoes" (or the full file name) -> the full path in the game's maps folder, or "".
+std::string LocalPath(const std::string& name) {
+    const std::string dir = CustomMapDirectory();
+    if (dir.empty()) {
+        gOpenState = "error: the game's level manager isn't there";
+        return "";
+    }
+    std::string file = name;
+    for (char& c : file)
+        if (c == '\\') c = '/';
+    if (file.find('/') != std::string::npos || file.find("..") != std::string::npos) {
+        gOpenState = "error: only a map file name in the game's own maps folder";
+        return "";
+    }
+    if (file.find('&') == std::string::npos) file = "Map_LevelEditorMain&" + file;
+    if (file.size() < 9 || file.compare(file.size() - 9, 9, ".balledit") != 0) file += ".balledit";
+    std::string path = dir;
+    if (!path.empty() && path.back() != '/' && path.back() != '\\') path += "/";
+    path += file;
+    const long long published = PublishedIdOf(eng::Widen(path));
+    if (published == -2) {
+        gOpenState = "error: no such map, or its file doesn't say it was never published: " + path;
+        return "";
+    }
+    if (published > 0) {
+        gOpenState = "error: this map has been published (workshop " + std::to_string(published) + "): open it from the workshop";
+        return "";
+    }
+    return path;
+}
+
+// The game's level data for a map file of the player's own: O_LevelManager.AddRuntimeLevelData(path) reads the
+// file's worldSettings into new level data (bIsUGC, the map path, UGCDirectory = GetCustomMapDirectory, its
+// levelPublishedFileId), files it in the game instance's AllLevelAssets and lists it in the level manager's UGC list.
+// Its OutLevelData is never set (it hands back its unset local "Data", measured: always None), so the new entry of
+// the game instance's AddedLevelDatas is the one, checked by its map path. Made once per file while it lives.
+Obj LocalLevelData(const std::string& path) {
+    if (Obj cached = eng::Get(gLocalData[path])) return cached;
+    Obj manager = LevelManager();
+    Obj add = manager ? eng::FindFunction(eng::ClassOf(manager), "AddRuntimeLevelData") : nullptr;
+    Obj instance = GameInstance();
+    if (!add || !instance) {
+        gOpenState = "error: the game can't open map files here";
+        return nullptr;
+    }
+    eng::Params made(add);
+    std::wstring keepPath;
+    eng::FString fpath{};
+    MakeFString(path, &keepPath, &fpath);
+    made.Set("Path", fpath);
+    const size_t before = eng::ReadObjArray(instance, "AddedLevelDatas").size();
+    Obj data = nullptr;
+    if (eng::Invoke(manager, made)) {
+        data = made.GetObj("OutLevelData");
+        const auto added = eng::ReadObjArray(instance, "AddedLevelDatas");
+        if (!data && added.size() > before) {
+            uint8_t mapPath[16] = {};
+            eng::ReadBytes(added.back(), "? UGCMap Path", mapPath, sizeof mapPath);
+            if (FString(mapPath) == path) data = added.back();
+            else hostlog::Warn("tracks: new level data is for " + FString(mapPath) + ", not " + path);
+        }
+    }
+    if (!data) {
+        gOpenState = "error: the game couldn't read the map file";
+        hostlog::Warn("tracks: AddRuntimeLevelData failed for " + path);
+        return nullptr;
+    }
+    int64_t fileId = 0;
+    eng::ReadBytes(data, "Level Published File ID", &fileId, sizeof fileId);
+    if (fileId > 0) {
+        gOpenState = "error: the game reads this map as published (" + std::to_string(fileId) + ")";
+        return nullptr;
+    }
+    gLocalData[path] = eng::MakeWeak(data);
+    return data;
+}
+
+// The map's levelData.levelDisplayName ("My Track"): the key the game files its level data under
+// (AddRuntimeLevelData: AllLevelAssets[LevelDisplayName], read from its bytecode) and the active level's name in its
+// race (GameInstance.ActiveLevel, measured), which its playlists are searched by. Not the level data's
+// OptionalDescriptiveName, which is the userLevelName ("My Track_AnythingGoes", measured).
+std::string DisplayName(const std::string& path) {
+    FILE* f = _wfopen(eng::Widen(path).c_str(), L"rb");
+    if (!f) return "";
+    std::string head(65536, ' ');
+    head.resize(fread(head.data(), 1, head.size(), f));
+    fclose(f);
+    const size_t at = head.find("\"levelDisplayName\"");
+    const size_t open = at == std::string::npos ? at : head.find('"', head.find(':', at) + 1);
+    const size_t close = open == std::string::npos ? open : head.find('"', open + 1);
+    return close == std::string::npos ? "" : head.substr(open + 1, close - open - 1);
+}
+
+// GameInstance.TryEnterLevelByString(path, data, "Map_LevelEditorMain"): reads the map (LoadMapFromFile with the part
+// after '&'), resolves its baseline level and, for a map never published (id 0 or -1: no hub claim), begins the level
+// transition in game mode 1, the workshop race (BeginLevelTransition(level, 1, map JSON, title, data)).
+bool EnterLocal(const std::string& path, Obj data) {
+    Obj instance = GameInstance();
+    Obj enter = instance ? eng::FindFunction(eng::ClassOf(instance), "TryEnterLevelByString") : nullptr;
+    if (!enter) {
+        gOpenState = "error: the game can't enter levels here";
+        return false;
+    }
+    eng::Params p(enter);
+    std::wstring keepPath, keepOverride;
+    eng::FString fpath{}, override{};
+    MakeFString(path, &keepPath, &fpath);
+    MakeFString("Map_LevelEditorMain", &keepOverride, &override);
+    p.Set("LevelPathOrName", fpath);
+    p.Set("LevelData", data);
+    p.Set("OverrideLevelName", override);
+    if (!eng::Invoke(instance, p)) {
+        gOpenState = "error: the game didn't open the map";
+        return false;
+    }
+    const uint8_t* entered = p.Get("bSuccessful");
+    const uint8_t* message = p.Get("Message");
+    const std::string said = message ? FString(message) : "";
+    hostlog::Info("tracks: opening local map " + path + " as a race: " + (entered && *entered ? "ok" : "refused") +
+                  (said.empty() ? "" : " - " + said));
+    if (!entered || !*entered) {
+        gOpenState = "error: " + (said.empty() ? std::string("the game refused to open it") : said);
+        return false;
+    }
+    gOpenState = "open";
+    return true;
+}
+
+bool SetActiveList(Obj list, const char* why) {
+    Obj instance = GameInstance();
+    Obj fn = instance ? eng::FindFunction(eng::ClassOf(instance), "SetActiveLevelList") : nullptr;
+    if (!fn) return false;
+    eng::Params p(fn);
+    std::wstring keep;
+    eng::FString message{};
+    MakeFString(why, &keep, &message);
+    p.Set("?NewList", list);
+    p.Set("DebugMessage", message);
+    return eng::Invoke(instance, p);
+}
+}  // namespace
+
+std::string LocalMapsFolder() { return CustomMapDirectory(); }
+
+long long PublishedIdOfFile(const std::string& path) { return PublishedIdOf(eng::Widen(path)); }
+
+long long EditorMapPublishedId(const std::string& mapName) {
+    std::string dir = CustomMapDirectory();
+    if (dir.empty() || mapName.empty() || mapName.find_first_of("/\\*?") != std::string::npos) return -2;
+    if (dir.back() != '/' && dir.back() != '\\') dir += "/";
+    const std::wstring pattern = eng::Widen(dir + "Map_LevelEditorMain&" + mapName + "_*.balledit");
+    WIN32_FIND_DATAW found;
+    HANDLE h = FindFirstFileW(pattern.c_str(), &found);
+    if (h == INVALID_HANDLE_VALUE) return -2;
+    long long result = -3;
+    do {
+        const long long id = PublishedIdOf(eng::Widen(dir) + found.cFileName);
+        result = result == -3 ? id : (result == id ? id : -2);
+    } while (FindNextFileW(h, &found));
+    FindClose(h);
+    return result == -3 ? -2 : result;
+}
+
+// A map file shipped in a plugin's folder, copied into the player's own maps folder (the game opens local maps only
+// from there): when it isn't there yet, or the plugin's copy is newer than the one there. A copy the player edited
+// since (newer than the plugin's) is kept. Only an editor map file ("Map_LevelEditorMain&<name>_<type>.balledit")
+// that was never published. 1 copied, 0 already there (up to date, or the player's newer one), -1 not done
+// (OpenState says why; the game's level manager may not be up yet: try again later).
+int InstallLocalMap(const std::wstring& source) {
+    const size_t slash = source.find_last_of(L"/\\");
+    const std::wstring file = slash == std::wstring::npos ? source : source.substr(slash + 1);
+    if (file.rfind(L"Map_LevelEditorMain&", 0) != 0 || file.size() < 30 ||
+        file.compare(file.size() - 9, 9, L".balledit") != 0) {
+        gOpenState = "error: not an editor map file (Map_LevelEditorMain&<name>_<type>.balledit)";
+        return -1;
+    }
+    const long long published = PublishedIdOf(source);
+    if (published == -2) {
+        gOpenState = "error: the plugin's map file can't be read or doesn't say it was never published (levelPublishedFileId)";
+        return -1;
+    }
+    if (published > 0) {
+        gOpenState = "error: a published map isn't installed as a local map";
+        return -1;
+    }
+    std::string dir = CustomMapDirectory();
+    if (dir.empty()) {
+        gOpenState = "error: the game's level manager isn't there yet";
+        return -1;
+    }
+    if (dir.back() != '/' && dir.back() != '\\') dir += "/";
+    const std::wstring target = eng::Widen(dir) + file;
+    WIN32_FILE_ATTRIBUTE_DATA from{}, to{};
+    if (!GetFileAttributesExW(source.c_str(), GetFileExInfoStandard, &from)) {
+        gOpenState = "error: the plugin's map file isn't there";
+        return -1;
+    }
+    if (GetFileAttributesExW(target.c_str(), GetFileExInfoStandard, &to) &&
+        CompareFileTime(&from.ftLastWriteTime, &to.ftLastWriteTime) <= 0)
+        return 0;
+    CreateDirectoryW(eng::Widen(dir).c_str(), nullptr);
+    if (!CopyFileW(source.c_str(), target.c_str(), FALSE)) {          // (keeps the plugin copy's time: no repeat)
+        gOpenState = "error: copying into the maps folder failed (" + std::to_string(GetLastError()) + ")";
+        return -1;
+    }
+    hostlog::Info("tracks: map installed into the player's maps folder: " + eng::Narrow(file.c_str(), static_cast<int>(file.size())));
+    return 1;
+}
+
+bool OpenLocal(const std::string& name) {
+    const std::string path = LocalPath(name);
+    if (path.empty()) return false;
+    Obj data = LocalLevelData(path);
+    return data && EnterLocal(path, data);
+}
+
+// The maps as the active playlist (a PDA_LevelList_C of their display names, as the game makes its own lists), so the
+// game's own "next track" goes through them in order (TryGoToNextLevel: the next name of ActiveLevelPlaylist, its
+// level data from AllLevelAssets, entered with TryEnterLevelByString). The list the game had is put back when the
+// main menu is up again (LocalFrame), so its own playlists (the circuit's track tiles enter by index in the active
+// list) are never left pointing at these maps.
+bool OpenLocalList(const std::vector<std::string>& names, int index) {
+    if (index < 0 || index >= static_cast<int>(names.size())) {
+        gOpenState = "error: no such map in the list";
+        return false;
+    }
+    std::vector<std::string> paths;
+    std::vector<Obj> datas;
+    for (const auto& n : names) {
+        const std::string path = LocalPath(n);
+        Obj data = path.empty() ? nullptr : LocalLevelData(path);
+        if (!data) return false;
+        paths.push_back(path);
+        datas.push_back(data);
+    }
+    Obj instance = GameInstance();
+    Obj cls = eng::FindClass("PDA_LevelList_C");
+    Obj list = cls && instance ? eng::Call(eng::FindCdo("GameplayStatics"), "SpawnObject", cls, instance).ReturnObj() : nullptr;
+    Obj addFn = list ? eng::FindFunction(cls, "AddLevelToPlaylist") : nullptr;
+    if (addFn) {
+        for (const auto& path : paths) {
+            eng::Params p(addFn);
+            std::wstring keep;
+            eng::FString level{};
+            MakeFString(DisplayName(path), &keep, &level);
+            p.Set("LevelName", level);
+            p.Set("LevelIndexOrAppendType", int32_t{-1});
+            eng::Invoke(list, p);
+        }
+        eng::Call(list, "SetListAsUGCList");
+        Obj current = eng::ReadObj(instance, "ActiveLevelPlaylist");
+        if (!gCupActive || current != eng::Get(gCupList)) gCupPrevious = eng::MakeWeak(current);
+        if (SetActiveList(list, "plugin list of local maps")) {
+            gCupList = eng::MakeWeak(list);
+            gCupActive = true;
+            gCupLeftMenu = false;
+            hostlog::Info("tracks: " + std::to_string(datas.size()) + " local maps are the active playlist");
+        }
+    } else {
+        hostlog::Warn("tracks: couldn't make a playlist of the local maps; opening the map alone");
+    }
+    return EnterLocal(paths[static_cast<size_t>(index)], datas[static_cast<size_t>(index)]);
+}
+
+void LocalFrame() {
+    if (!gCupActive) return;
+    Obj controller = game::PlayerController();
+    Obj world = controller ? eng::OuterOf(eng::OuterOf(controller)) : nullptr;
+    if (!world) return;
+    if (eng::ObjName(world) != "Map_MainMenu") {
+        gCupLeftMenu = true;
+        return;
+    }
+    if (!gCupLeftMenu) return;                                  // still on the way out to the first map
+    Obj instance = GameInstance();
+    Obj current = instance ? eng::ReadObj(instance, "ActiveLevelPlaylist") : nullptr;
+    gCupActive = false;
+    if (!current || current != eng::Get(gCupList)) return;      // the game has chosen another list itself
+    Obj previous = eng::Get(gCupPrevious);
+    if (previous && SetActiveList(previous, "the list before the plugin's local maps"))
+        hostlog::Info("tracks: the game's playlist is active again");
+}
 
 }  // namespace tracks

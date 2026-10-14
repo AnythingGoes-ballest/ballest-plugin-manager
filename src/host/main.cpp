@@ -27,6 +27,8 @@
 #include "log.hpp"
 #include "plugins.hpp"
 #include "race.hpp"
+#include "splitref.hpp"
+#include "localrecords.hpp"
 #include "runs.hpp"
 #include "registry.hpp"
 #include "replay.hpp"
@@ -107,6 +109,8 @@ void HostFrame(float dt) {
     editor::Frame();
     race::Frame();
     runs::Frame();                  // the player's own recent runs (after race: it reads the run)
+    localrecords::Frame();          // the game's records cleared for a plugin, once their map is raced
+    splitref::Frame();              // a plugin's split reference in the timer's delta box (after runs: the finish)
     steam::Frame();
     ghosts::Frame();
     draw::Frame();

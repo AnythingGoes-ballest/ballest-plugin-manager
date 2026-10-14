@@ -5,15 +5,23 @@
 #include <cstring>
 #include <utility>
 #include <vector>
+#include <map>
 
 #include "engine.hpp"
 #include "cosmetics.hpp"
 #include "game.hpp"
 #include "hub.hpp"
 #include "log.hpp"
+#include "nativeghost.hpp"
+#include "ghostdata.hpp"
+#include "race.hpp"
+#include "steam.hpp"
 #include "widgets.hpp"
 
 namespace leaderboard {
+void RestoreRaceSession();                    // back from replay mode (below)
+void ApplyOwnReplay();                        // the own-best replay into the open session (below)
+std::string OwnId();
 namespace {
 
 using eng::Obj;
@@ -175,15 +183,58 @@ struct ExtraRow {
     std::string name;
     double time = 0;
     bool ghost = false, pinned = false;
+    int rank = 0;                               // 0: its position in the list
+    bool lit = false;                           // its ghost is the game's ghost now (SetRowGhost): lime background
+    bool operator!=(const ExtraRow& o) const { return name != o.name || time != o.time || ghost != o.ghost || pinned != o.pinned || rank != o.rank || lit != o.lit; }
 };
+// A plugin's hiscores for one track (SetSource), shown in place of the game's list while that track is raced.
+std::vector<ExtraRow> gSourceRows;
+std::string gSourceKey, gSourceTitle;
+int gSourceOwner = -1;
+bool gSourceShown = false;
+int gGhostRow = -1;                             // the source row whose ghost the game shows (SetRowGhost)
+int gWatchRow = -1;                             // the source row watched in the game's replay mode (WatchRowReplay)
+std::string gWatchPending;                      // its player, until the game has parsed the replay
+double gWatchAskedAt = 0;
+bool gWatchSession = false;                     // the ghost session is the replay-mode one (local player: the watched)
+bool gWatchEntered = false;                     // the game went into replay mode in it
+int gOwnBestPending = 0;
+int gOwnBestRaceOverride = 0;                   // the own best's toggle in the race's session, put back after replay mode
+std::string gWatchId, gWatchName;
+std::string gOwnReplay;                         // the player's own best as a replay (SetOwnReplay), "" for the game's
+std::map<std::string, std::string> gHanded;     // Steam id -> replay JSON handed over on this track (to load again)
+std::string gGhostId;
+std::string gSourceRefusedFor;
+// A plugin's source applies while its track is raced, and only on the player's own never-published map (raced from its
+// file or test-played in the editor): never on an official or workshop track, whose board and ghosts stay the game's.
+bool SourceApplies(std::string* why = nullptr) {
+    if (gSourceOwner < 0 || gSourceKey.empty() || !race::OnTrack() || race::CurrentTrack().key != gSourceKey) {
+        if (why) *why = "the source's track isn't the one raced";
+        return false;
+    }
+    std::string reason;
+    if (!race::OwnUnpublishedMapHere(&reason)) {
+        if (const std::string subject = gSourceKey + "|" + reason; subject != gSourceRefusedFor) {
+            gSourceRefusedFor = subject;
+            hostlog::Warn("leaderboard: a plugin's source refused on " + gSourceKey + ": " + reason +
+                          " (only on the player's own never-published maps)");
+        }
+        if (why) *why = "not the player's own never-published map: " + reason;
+        return false;
+    }
+    return true;
+}
 std::vector<ExtraRow> gRows;
 std::string gRowsTitle;
-int gRowsOwner = -1, gClicked = -1, gPinClicked = -1;
+int gRowsOwner = -1, gClicked = -1, gPinClicked = -1, gGhostClicked = -1, gTestHover = -1;
 
 struct BuiltRow {
-    eng::Weak entry, hit, pinHit, pinBar;
+    eng::Weak entry, hit, pinHit, pinBar, ghostHit;      // ghostHit: over the ghost toggle at the row's right end
+    eng::Weak background;                       // EntryBG's own material before it was lit
     ExtraRow shown;
-    bool fresh = true, wasPressed = false, pinWasPressed = false;
+    bool fresh = true, wasPressed = false, pinWasPressed = false, ghostWasPressed = false;
+    bool watching = false;                      // shown as the row being watched (SetReplayIsActive)
+    bool hovered = false;                       // the tile shown hovered (the entry's own hover handlers)
 };
 std::vector<BuiltRow> gBuilt;
 std::wstring gIconFile;                 // the tab button's icon (a plugin's image), or the game's list icon
@@ -356,12 +407,27 @@ void SetEntry(BuiltRow& row, int index, const ExtraRow& want) {
         // the name clipped by the list's scroll box like the rest of the row (measured: below the box's edge only the
         // name still drew, its own clipping ignoring its parents')
         if (Obj name = eng::ReadObj(entry, "CT_Username")) eng::Call(name, "SetClipping", uint8_t{1});
-        w::SetText(eng::ReadObj(entry, "Rank"), std::to_string(index + 1));
     }
+    if (row.fresh || want.rank != row.shown.rank) w::SetText(eng::ReadObj(entry, "Rank"), std::to_string(want.rank > 0 ? want.rank : index + 1));
     if (row.fresh || want.name != row.shown.name) w::SetText(eng::ReadObj(entry, "CT_Username"), want.name);
     if (row.fresh || want.time != row.shown.time)
         if (Obj time = eng::ReadObj(entry, "TimeText_v2")) eng::Call(time, "SetRaceScore", static_cast<int32_t>(want.time * 100000 + 0.5));   // hundred-thousandths (measured: 27.184 s = 2718409)
     if (row.fresh || want.ghost != row.shown.ghost) eng::Call(entry, "SetGhostIsActive", static_cast<uint8_t>(want.ghost));
+    if (row.fresh || want.lit != row.shown.lit) {
+        // lit: the game's lime row material (MI_UI_Metal_Lime, one of WBP_LeaderboardEntry's EntryBG materials); off:
+        // the material it had before
+        Obj bg = eng::ReadObj(entry, "EntryBG");
+        eng::Prop res;
+        const int at = bg ? eng::NestedOffset(eng::ClassOf(bg), {"Brush", "ResourceObject"}, &res) : -1;
+        if (row.fresh && at >= 0 && res.size == 8) {
+            Obj before = nullptr;
+            std::memcpy(&before, bg + at, sizeof before);
+            row.background = eng::MakeWeak(before);
+        }
+        Obj material = want.lit ? cosmetics::LoadAsset(L"/Game/UI/UIMaterialLab/Widgets/ComponentMaterials/MI_UI_Metal_Lime.MI_UI_Metal_Lime")
+                                : eng::Get(row.background);
+        if (bg && material) eng::Call(bg, "SetBrushFromMaterial", material);
+    }
     if (row.fresh || want.pinned != row.shown.pinned) {
         const ui::Color lime{0.55f, 0.85f, 0.0f, 1}, white{1, 1, 1, 1};
         w::SetTextColor(eng::ReadObj(entry, "Rank"), want.pinned ? lime : white);
@@ -372,9 +438,31 @@ void SetEntry(BuiltRow& row, int index, const ExtraRow& want) {
 }
 
 void RowsFrame() {
-    Obj board = gRows.empty() && !eng::Get(gTab) ? nullptr : InMapBoard();
+    const bool source = SourceApplies();
+    if (source != gSourceShown) {               // the source starts or stops applying: the view is built again for it
+        gSourceShown = source;
+        RemoveTab();
+    }
+    static std::vector<ExtraRow> sourceShown;   // the source's rows with the game's ghost row lit
+    if (source) {
+        sourceShown = gSourceRows;
+        for (size_t i = 0; i < sourceShown.size(); ++i)
+            if (static_cast<int>(i) == gGhostRow) sourceShown[i].lit = sourceShown[i].ghost = true;
+    }
+    if (!source && (gGhostRow >= 0 || gWatchSession)) {   // left the track: the game's ghost session went with it
+        gWatchSession = gWatchEntered = false;
+        gWatchPending.clear();
+        gHanded.clear();
+        gOwnReplay.clear();
+        gWatchRow = -1;
+        gGhostRow = -1;
+        gGhostId.clear();
+    }
+    const std::vector<ExtraRow>& rows = source ? sourceShown : gRows;
+    const std::string& rowsTitle = source ? gSourceTitle : gRowsTitle;
+    Obj board = !source && gRows.empty() && !eng::Get(gTab) ? nullptr : InMapBoard();
     if (!board) return;
-    if (gRows.empty()) {
+    if (!source && gRows.empty()) {
         RemoveTab();
         return;
     }
@@ -383,7 +471,12 @@ void RowsFrame() {
         if (!BuildTab(board)) return;
     }
     const bool toggled = std::exchange(gTestToggle, false);
-    if (Released(eng::Get(gTab), &gTabWasPressed) || (toggled && !gTabOpen)) OpenTab(board);
+    if (source) {
+        // no switching: the tab button stays hidden and the view open, whatever the world/friends buttons do
+        if (Obj tab = eng::Get(gTab))
+            if (eng::Call(tab, "GetVisibility").ReturnAs<uint8_t>(0) != w::kCollapsed) w::SetVisibility(tab, w::kCollapsed);
+        if (!gTabOpen) OpenTab(board);
+    } else if (Released(eng::Get(gTab), &gTabWasPressed) || (toggled && !gTabOpen)) OpenTab(board);
     else if (toggled) {
         // closed without a click on world or friends (which light themselves): the one the board was on lit again
         CloseTab();
@@ -392,7 +485,7 @@ void RowsFrame() {
     }
     const bool globalClicked = Released(eng::ReadObj(board, "WBP_GlobalFilter"), &gGlobalWasPressed);
     const bool friendClicked = Released(eng::ReadObj(board, "WBP_FriendFilter"), &gFriendWasPressed);
-    if (globalClicked || friendClicked) CloseTab();
+    if ((globalClicked || friendClicked) && !source) CloseTab();
     if (!gTabOpen) return;
     // kept so while open: the game shows its list and its buttons again whenever it refreshes the board
     for (const Hidden& h : gHidden)
@@ -404,44 +497,111 @@ void RowsFrame() {
         if (button && eng::ReadBool(button, "Active", &active) && active) eng::Call(button, "SetIsActive", uint8_t{0});
     }
     if (Obj title = eng::Get(gTitleShown))
-        if (w::ReadText(title) != gRowsTitle) w::SetText(title, gRowsTitle);
+        if (w::ReadText(title) != rowsTitle) w::SetText(title, rowsTitle);
     Obj list = eng::Get(gList);
     Obj entryClass = eng::FindClass("WBP_LeaderboardEntry_C");
     if (!list || !entryClass) return;
     // as many rows as wanted: the game's own row widget, under a see-through button that takes the clicks
-    while (gBuilt.size() > gRows.size()) {
+    while (gBuilt.size() > rows.size()) {
         if (Obj o = eng::Get(gBuilt.back().hit)) eng::Call(eng::Call(o, "GetParent").ReturnObj(), "RemoveFromParent");
         gBuilt.pop_back();
     }
     Obj tree = eng::ReadObj(board, "WidgetTree");
-    while (gBuilt.size() < gRows.size()) {
+    while (gBuilt.size() < rows.size()) {
         Obj entry = eng::Call(eng::FindCdo("WidgetBlueprintLibrary"), "Create", board, entryClass, game::PlayerController()).ReturnObj();
         Obj over = w::Spawn("Overlay", tree), hit = w::Spawn("Button", tree), pinBox = w::Spawn("SizeBox", tree),
-            pinHit = w::Spawn("Button", tree);
+            pinHit = w::Spawn("Button", tree), ghostBox = w::Spawn("SizeBox", tree), ghostHit = w::Spawn("Button", tree);
         Obj pinBar = w::Block(tree, 4, 1, ui::Color{0.55f, 0.85f, 0.0f, 1});
-        if (!entry || !over || !hit || !pinBox || !pinHit || !pinBar) return;
-        for (Obj b : {hit, pinHit}) {
+        if (!entry || !over || !hit || !pinBox || !pinHit || !pinBar || !ghostBox || !ghostHit) return;
+        for (Obj b : {hit, pinHit, ghostHit}) {
             w::Unfocusable(b);
             w::Transparent(b);
         }
         eng::Call(pinBox, "SetWidthOverride", 64.0f);              // the rank's end of the row
         w::AddChild(pinBox, pinHit);
+        eng::Call(ghostBox, "SetWidthOverride", 56.0f);            // the ghost toggle's end of the row (BTN_Ghost)
+        w::AddChild(ghostBox, ghostHit);
         w::AddToOverlay(over, entry, w::kAlignFill, w::kAlignFill, {0, 0, 0, 0});
         w::AddToOverlay(over, pinBar, w::kAlignLeft, w::kAlignFill, {0, 0, 0, 0});
         w::AddToOverlay(over, hit, w::kAlignFill, w::kAlignFill, {0, 0, 0, 0});
         w::AddToOverlay(over, pinBox, w::kAlignLeft, w::kAlignFill, {0, 0, 0, 0});
+        w::AddToOverlay(over, ghostBox, w::kAlignEnd, w::kAlignFill, {0, 0, 0, 0});
         if (Obj slot = eng::Call(list, "AddChildToVerticalBox", over).ReturnObj()) eng::Call(slot, "SetPadding", Margin4{0, 4, 0, 0});
         BuiltRow row;
         row.entry = eng::MakeWeak(entry);
         row.hit = eng::MakeWeak(hit);
         row.pinHit = eng::MakeWeak(pinHit);
         row.pinBar = eng::MakeWeak(pinBar);
+        row.ghostHit = eng::MakeWeak(ghostHit);
         gBuilt.push_back(row);
     }
+    if (gOwnBestPending && source) {
+        const uint64_t own = steam::OwnSteamId();
+        if (own && nativeghost::Ready(std::to_string(own))) {
+            nativeghost::Select(std::to_string(own), gOwnBestPending, nullptr);
+            gOwnBestPending = 0;
+        }
+    }
+    if (!gWatchPending.empty() && source) {
+        if (nativeghost::Ready(gWatchPending)) {
+            std::string error;
+            if (nativeghost::Watch(gWatchPending, &error)) {
+                gWatchEntered = true;
+                gWatchPending.clear();
+            } else {
+                hostlog::Warn("leaderboard: replay mode refused: " + error);
+                RestoreRaceSession();
+            }
+        } else if (game::Seconds() - gWatchAskedAt > 10) {
+            hostlog::Warn("leaderboard: the game never got the replay of " + gWatchPending + " ready");
+            RestoreRaceSession();
+        }
+    } else if (gWatchSession && gWatchEntered && source && !nativeghost::Watching()) {
+        RestoreRaceSession();                   // the game left replay mode (its own exit restarts the race)
+    } else if (gWatchSession && gWatchEntered && source) {
+        nativeghost::NameWatchedTag(gWatchId, gWatchName);
+    }
     for (size_t i = 0; i < gBuilt.size(); ++i) {
-        SetEntry(gBuilt[i], static_cast<int>(i), gRows[i]);
+        SetEntry(gBuilt[i], static_cast<int>(i), rows[i]);
+        const bool watched = source && static_cast<int>(i) == gWatchRow;
+        if (watched != gBuilt[i].watching)
+            if (Obj entry = eng::Get(gBuilt[i].entry)) {
+                eng::Call(entry, "SetReplayIsActive", static_cast<uint8_t>(watched));
+                gBuilt[i].watching = watched;
+            }
         Obj hit = eng::Get(gBuilt[i].hit);
         if (!hit) continue;
+        {
+            // The tile's hover as the game's own row shows it: our see-through button covers the entry's HitBox, so its
+            // OnHovered/OnUnhovered handlers are run from here (WBP_LeaderboardEntry: hovered = EntryBG white
+            // MI_UI_MetalNone, or lime while it's the watched row, AnimHover forward; unhovered = back, reverse). The
+            // ghost toggle's own button sits on top, so pointing at the toggle isn't a tile hover (as in the game).
+            Obj ghostHit = eng::Get(gBuilt[i].ghostHit);
+            const bool tile = (eng::Call(hit, "IsHovered").ReturnBool() && !(ghostHit && eng::Call(ghostHit, "IsHovered").ReturnBool())) ||
+                              gTestHover == static_cast<int>(i);
+            Obj entry = eng::Get(gBuilt[i].entry);
+            if (entry && tile != gBuilt[i].hovered) {
+                gBuilt[i].hovered = tile;
+                // as the entry's own hover handlers do (WBP_LeaderboardEntry BndEvt..Hitbox..OnButtonHoverEvent 1/2); they
+                // can't be run themselves for our rows (they bail out unless the row's EntryUsername, set only by the
+                // game's own Setup from a Steam id, differs from the owner's): hovered EntryBG MI_UI_MetalNone (white),
+                // or MI_UI_Metal_Lime for the watched row (bPOVGhost); unhovered MI_UI_Metal_Lime for the watched row,
+                // else MI_UI_InactiveElement; AnimHover forward / reverse. A raced row (lit) keeps its lime, as the
+                // watched one does.
+                const bool lime = rows[i].lit || gBuilt[i].watching;
+                const wchar_t* path = lime ? L"/Game/UI/UIMaterialLab/Widgets/ComponentMaterials/MI_UI_Metal_Lime.MI_UI_Metal_Lime"
+                                      : tile ? L"/Game/UI/UIMaterialLab/Widgets/ComponentMaterials/MI_UI_MetalNone.MI_UI_MetalNone"
+                                             : L"/Game/UI/UIMaterialLab/Widgets/ComponentMaterials/MI_UI_InactiveElement.MI_UI_InactiveElement";
+                if (Obj bg = eng::ReadObj(entry, "EntryBG"))
+                    if (Obj material = cosmetics::LoadAsset(path)) eng::Call(bg, "SetBrushFromMaterial", material);
+                if (Obj anim = eng::ReadObj(entry, "AnimHover")) {
+                    eng::Params play(eng::FunctionOn(entry, tile ? "PlayAnimationForward" : "PlayAnimationReverse"));
+                    play.Set("InAnimation", anim);
+                    play.Set("PlaybackSpeed", 1.0f);
+                    eng::Invoke(entry, play);
+                }
+            }
+        }
         const bool pressed = eng::Call(hit, "IsPressed").ReturnBool();
         {   // DEBUG: where the mouse is, and presses
             static std::string lastSeen;
@@ -457,6 +617,11 @@ void RowsFrame() {
         }
         if (gBuilt[i].wasPressed && !pressed && eng::Call(hit, "IsHovered").ReturnBool()) gClicked = static_cast<int>(i);
         gBuilt[i].wasPressed = pressed;
+        if (Obj g = eng::Get(gBuilt[i].ghostHit)) {
+            const bool ghostPressed = eng::Call(g, "IsPressed").ReturnBool();
+            if (gBuilt[i].ghostWasPressed && !ghostPressed && eng::Call(g, "IsHovered").ReturnBool()) gGhostClicked = static_cast<int>(i);
+            gBuilt[i].ghostWasPressed = ghostPressed;
+        }
         if (Obj pin = eng::Get(gBuilt[i].pinHit)) {
             const bool pinPressed = eng::Call(pin, "IsPressed").ReturnBool();
             if (gBuilt[i].pinWasPressed && !pinPressed && eng::Call(pin, "IsHovered").ReturnBool()) gPinClicked = static_cast<int>(i);
@@ -480,8 +645,8 @@ void RowsFrame() {
     double offset = std::clamp(static_cast<double>(eng::Call(scroller, "GetScrollOffset").ReturnAs<float>(0)), 0.0, end);
     // scrolled: on to the next whole row the way it went (a wheel step smaller than a row still moves one)
     if (std::abs(offset - gSnapped) > 0.5) {
-        const double rows = offset / rowHeight;
-        offset = std::min(end, (offset > gSnapped ? std::ceil(rows - 0.01) : std::floor(rows + 0.01)) * rowHeight);
+        const double whole = offset / rowHeight;
+        offset = std::min(end, (offset > gSnapped ? std::ceil(whole - 0.01) : std::floor(whole + 0.01)) * rowHeight);
         eng::Call(scroller, "SetScrollOffset", static_cast<float>(offset));
         gSnapped = offset;
     }
@@ -505,6 +670,14 @@ void SetExtraRows(int owner, const std::string& title, const std::vector<std::st
         gRows.push_back({names[i], i < times.size() ? times[i] : 0, i < ghosts.size() && ghosts[i], i < pinned.size() && pinned[i]});
 }
 
+int ExtraRowGhostClicked() {
+    const int c = gGhostClicked;
+    gGhostClicked = -1;
+    return c;
+}
+void TestGhostRow(int row) { gGhostClicked = row; }
+void TestHoverRow(int row) { gTestHover = row; }
+
 int ExtraRowPinClicked() {
     const int c = gPinClicked;
     gPinClicked = -1;
@@ -515,6 +688,196 @@ void TestPinRow(int row) { gPinClicked = row; }
 
 void ClearRowsOf(int owner) {
     if (owner == gRowsOwner) gRows.clear();
+    ClearSource(owner);
+}
+
+void SetSource(int owner, const std::string& trackKey, const std::string& title, const std::vector<std::string>& names,
+               const std::vector<double>& times, const std::vector<int>& ranks, int highlight,
+               const std::vector<bool>& ghosts) {
+    gSourceOwner = owner;
+    gSourceKey = trackKey;
+    gSourceTitle = title;
+    gSourceRows.clear();
+    for (size_t i = 0; i < names.size(); ++i) {
+        ExtraRow row;
+        row.name = names[i];
+        row.time = i < times.size() ? times[i] : 0;
+        row.rank = i < ranks.size() ? ranks[i] : 0;
+        row.pinned = static_cast<int>(i) == highlight;
+        row.ghost = i < ghosts.size() && ghosts[i];
+        gSourceRows.push_back(row);
+    }
+}
+
+void ClearSource(int owner) {
+    if (owner != gSourceOwner) return;
+    if (!gGhostId.empty()) {
+        if (SourceApplies()) nativeghost::Select(gGhostId, 2, nullptr);     // (elsewhere the game's ghosts stay as they are)
+        gGhostRow = -1;
+        gGhostId.clear();
+    }
+    gSourceOwner = -1;
+    gSourceKey.clear();
+    gSourceRows.clear();
+}
+
+bool SourceShown() { return gSourceShown && gTabOpen; }
+
+namespace {
+void RestartRace() {
+    // as the restart key does (BP_MyPlayerController InpActEvt_IA_RestartLevel -> ManuallyRestartBall: refused by the
+    // game itself while restarting isn't allowed, e.g. before the race has started)
+    if (Obj controller = game::PlayerController()) eng::Call(controller, "ManuallyRestartBall");
+}
+}  // namespace
+
+// Back from replay mode: the race's own ghost session again (the game's set-up), the raced ghost loaded and shown.
+void RestoreRaceSession() {
+    gOwnBestPending = 0;
+    gWatchSession = gWatchEntered = false;
+    gWatchPending.clear();
+    gWatchRow = -1;
+    nativeghost::CloseSession();
+    std::string error;
+    if (!nativeghost::OpenSession("", &error)) {
+        hostlog::Warn("leaderboard: the race's ghost session didn't open again: " + error);
+        return;
+    }
+    ApplyOwnReplay();
+    if (!gGhostId.empty() && gHanded.count(gGhostId)) {
+        std::string why;
+        if (!nativeghost::LoadAsRival(gGhostId, gHanded[gGhostId], &why)) nativeghost::Load(gGhostId, gHanded[gGhostId], &why);
+        nativeghost::Select(gGhostId, 1, nullptr);
+    }
+    gOwnBestPending = gOwnBestRaceOverride;      // the own best's toggle as it was (0: the game's settings decide)
+    hostlog::Info("leaderboard: back from replay mode; the race's ghosts again");
+}
+
+bool SetRowGhost(int owner, int row, const std::string& steamId, const std::string& replayJson, std::string* error) {
+    if (owner != gSourceOwner) {
+        if (error) *error = "not this plugin's source";
+        return false;
+    }
+    if (!SourceApplies(error)) return false;
+    if (row < 0 || row >= static_cast<int>(gSourceRows.size())) {
+        if (error) *error = "no such row";
+        return false;
+    }
+    if (gWatchSession) {
+        if (error) *error = "in replay mode";
+        return false;
+    }
+    gHanded[steamId] = replayJson;
+    const bool hadSession = nativeghost::HasSession();
+    nativeghost::SetRealSkins(true);            // a plugin's ghosts in the players' real, opaque looks
+    if (!nativeghost::OpenSession("", error)) return false;
+    if (!hadSession) ApplyOwnReplay();
+    if (!nativeghost::HasReplay(steamId)) {
+        // as one of the game's rivals (its record then carries the rival flag the replay camera wants), else as a
+        // one-off replay
+        std::string why;
+        if (!nativeghost::LoadAsRival(steamId, replayJson, &why)) {
+            hostlog::Info("leaderboard: not as a rival (" + why + "); handing the replay over directly");
+            if (!nativeghost::Load(steamId, replayJson, error)) return false;
+        }
+    }
+    if (!gGhostId.empty() && gGhostId != steamId) nativeghost::Select(gGhostId, 2, nullptr);
+    if (!nativeghost::Select(steamId, 1, error)) return false;
+    gGhostRow = row;
+    gGhostId = steamId;
+    hostlog::Info("leaderboard: row " + std::to_string(row) + " races the game's ghost of " + steamId + "; restarting");
+    RestartRace();
+    return true;
+}
+
+bool ClearRowGhost(int owner) {
+    if (owner != gSourceOwner || gGhostId.empty()) return false;
+    if (SourceApplies()) nativeghost::Select(gGhostId, 2, nullptr);
+    hostlog::Info("leaderboard: ghost of " + gGhostId + " off; restarting");
+    gGhostRow = -1;
+    gGhostId.clear();
+    if (SourceApplies()) RestartRace();
+    return true;
+}
+
+std::string RowGhost() { return gGhostId; }
+
+std::string OwnId() {
+    const uint64_t own = steam::OwnSteamId();
+    return own ? std::to_string(own) : std::string();
+}
+// the own-best replay into the open session (after the game's own set-up loaded whatever it keeps)
+void ApplyOwnReplay() {
+    const std::string own = OwnId();
+    if (gOwnReplay.empty() || own.empty()) return;
+    std::string why;
+    if (!nativeghost::Load(own, gOwnReplay, &why)) hostlog::Warn("leaderboard: own best replay refused: " + why);
+}
+
+bool SetOwnReplay(int owner, const std::string& replayJson, std::string* error) {
+    if (owner != gSourceOwner) {
+        if (error) *error = "not this plugin's source";
+        return false;
+    }
+    if (!SourceApplies(error)) return false;
+    if (replayJson == gOwnReplay) return true;
+    gOwnReplay = replayJson;
+    nativeghost::SetRealSkins(true);
+    if (gWatchSession) return true;             // applied when the race's session opens again
+    if (!nativeghost::OpenSession("", error)) return false;
+    ApplyOwnReplay();
+    hostlog::Info("leaderboard: the player's own best ghost from a replay (" + std::to_string(replayJson.size()) + " bytes)");
+    return true;
+}
+
+bool WatchRowReplay(int owner, int row, const std::string& steamId, const std::string& replayJson, std::string* error) {
+    if (owner != gSourceOwner) {
+        if (error) *error = "not this plugin's source";
+        return false;
+    }
+    if (!SourceApplies(error)) return false;
+    if (row < 0 || row >= static_cast<int>(gSourceRows.size())) {
+        if (error) *error = "no such row";
+        return false;
+    }
+    gHanded[steamId] = replayJson;
+    nativeghost::SetRealSkins(true);
+    // the player's own best is in the race's session as the game set it up (shown or not by their settings): kept
+    // the same in replay mode, where it is just another ghost (the session's local player is the watched one)
+    const uint64_t own = steam::OwnSteamId();
+    const std::string ownId = own ? std::to_string(own) : std::string();
+    const bool ownBestShown = !ownId.empty() && nativeghost::OwnBestWanted(ownId);
+    gOwnBestRaceOverride = ownId.empty() ? 0 : nativeghost::Override(ownId);
+    // the game's replay camera follows only the session's own ghost: a session whose local player is the watched
+    // player, its replay, and the ghost raced now (if another) shown beside it
+    if (!nativeghost::OpenAsLocal(steamId, error)) {
+        RestoreRaceSession();
+        return false;
+    }
+    gWatchSession = true;
+    gWatchEntered = false;
+    if (!nativeghost::Load(steamId, replayJson, error)) {
+        RestoreRaceSession();
+        return false;
+    }
+    if (!gGhostId.empty() && gGhostId != steamId && gHanded.count(gGhostId)) {
+        std::string why;
+        if (nativeghost::Load(gGhostId, gHanded[gGhostId], &why)) nativeghost::Select(gGhostId, 1, nullptr);
+    }
+    if (!ownId.empty() && ownId != steamId &&
+        (gOwnReplay.empty() ? nativeghost::LoadOwnBest() : nativeghost::Load(ownId, gOwnReplay, nullptr)))
+        gOwnBestPending = ownBestShown ? 1 : 2;     // shown or hidden once the game has loaded it
+    gWatchRow = row;
+    gWatchId = steamId;
+    {
+        ghostdata::Replay replay;
+        std::string why;
+        gWatchName = ghostdata::Parse(replayJson, &replay, &why) ? replay.name : "";
+    }
+    gWatchPending = steamId;                    // replay mode once the game has parsed it (RowsFrame)
+    gWatchAskedAt = game::Seconds();
+    hostlog::Info("leaderboard: row " + std::to_string(row) + " to be watched in the game's replay mode");
+    return true;
 }
 
 void TestClickRow(int row) { gClicked = row; }

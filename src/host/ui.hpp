@@ -56,6 +56,8 @@ struct Panel {
 };
 
 FooterButton* AddFooterButton(int owner, const std::string& label);
+// An entry in the main menu's own list (under "play"), in the game's menu button: menubutton.cpp.
+FooterButton* AddMenuButton(int owner, const std::string& label);
 Panel* CreatePanel(int owner);
 FooterButton* AddPanelButton(Panel* panel, const std::string& label);
 
@@ -237,6 +239,14 @@ std::string Status();
 double Height();                        // the footer bar's height on screen (UI units), 0 when there is none
 const std::vector<std::unique_ptr<FooterButton>>& Buttons();     // every footer entry, for a screen to draw
 }  // namespace footer
+
+namespace menu {
+void Frame();
+bool Shown();                           // the main menu's list (play, create, ...) is on screen
+void RemoveOwner(int owner);
+bool SimulateClick(const std::string& label);
+std::string Status();
+}  // namespace menu
 
 namespace windows {
 void Frame();

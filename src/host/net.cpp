@@ -27,6 +27,7 @@ struct WinHttp {
     decltype(&WinHttpReadData) readData = nullptr;
     decltype(&WinHttpCloseHandle) closeHandle = nullptr;
     decltype(&WinHttpSetTimeouts) setTimeouts = nullptr;
+    decltype(&WinHttpSetOption) setOption = nullptr;
     bool ok = false;
 };
 
@@ -51,6 +52,7 @@ const WinHttp& Http() {
         Resolve(dll, "WinHttpReadData", h.readData);
         Resolve(dll, "WinHttpCloseHandle", h.closeHandle);
         Resolve(dll, "WinHttpSetTimeouts", h.setTimeouts);
+        Resolve(dll, "WinHttpSetOption", h.setOption);
         h.ok = h.open && h.crackUrl && h.connect && h.openRequest && h.sendRequest && h.receiveResponse && h.queryHeaders &&
                h.readData && h.closeHandle && h.setTimeouts;
     });
@@ -139,6 +141,70 @@ bool FetchHttps(const std::string& url, std::string& body, std::string& error) {
 }
 
 }  // namespace
+
+bool Send(const Request& r, int& status, std::string& body, std::string& error) {
+    status = 0;
+    body.clear();
+    const WinHttp& http = Http();
+    if (!http.ok || !http.setOption) {
+        error = "WinHTTP unavailable";
+        return false;
+    }
+    std::wstring wide = eng::Widen(r.url);
+    URL_COMPONENTS parts{};
+    parts.dwStructSize = sizeof parts;
+    wchar_t host[256] = {}, path[2048] = {}, extra[2048] = {};
+    parts.lpszHostName = host;
+    parts.dwHostNameLength = 256;
+    parts.lpszUrlPath = path;
+    parts.dwUrlPathLength = 2048;
+    parts.lpszExtraInfo = extra;            // the query string
+    parts.dwExtraInfoLength = 2048;
+    if (!http.crackUrl(wide.c_str(), 0, 0, &parts) || parts.nScheme != INTERNET_SCHEME_HTTPS) {
+        error = "not an https URL";
+        return false;
+    }
+    const std::wstring target = std::wstring(path) + extra;
+    const std::wstring agent = eng::Widen(std::string("BallestPluginHost/") + plugins::kHostVersion);
+    Handle session{http.open(agent.c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
+    if (!session.h) {
+        error = "WinHttpOpen failed (" + std::to_string(GetLastError()) + ")";
+        return false;
+    }
+    const int t = r.timeoutMs;
+    http.setTimeouts(session.h, t, t, t, t);
+    DWORD never = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+    http.setOption(session.h, WINHTTP_OPTION_REDIRECT_POLICY, &never, sizeof never);
+    Handle connection{http.connect(session.h, host, parts.nPort, 0)};
+    const std::wstring verb = eng::Widen(r.method);
+    Handle request{connection.h ? http.openRequest(connection.h, verb.c_str(), target.c_str(), nullptr, WINHTTP_NO_REFERER,
+                                                  WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)
+                                : nullptr};
+    if (request.h) http.setOption(request.h, WINHTTP_OPTION_REDIRECT_POLICY, &never, sizeof never);
+    const std::wstring headers = eng::Widen(r.headers);
+    if (!request.h ||
+        !http.sendRequest(request.h, headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str(), headers.empty() ? 0 : static_cast<DWORD>(-1L),
+                          r.body.empty() ? WINHTTP_NO_REQUEST_DATA : const_cast<char*>(r.body.data()), static_cast<DWORD>(r.body.size()),
+                          static_cast<DWORD>(r.body.size()), 0) ||
+        !http.receiveResponse(request.h, nullptr)) {
+        error = "request failed (" + std::to_string(GetLastError()) + ")";
+        return false;
+    }
+    DWORD code = 0, size = sizeof code;
+    http.queryHeaders(request.h, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &code, &size,
+                      WINHTTP_NO_HEADER_INDEX);
+    status = static_cast<int>(code);
+    char buf[16384];
+    for (DWORD read = 0; http.readData(request.h, buf, sizeof buf, &read) && read > 0;) {
+        body.append(buf, read);
+        if (body.size() > r.maxResponse) {
+            body.clear();
+            error = "response too large";
+            return false;
+        }
+    }
+    return true;
+}
 
 bool Fetch(const std::string& url, std::string& body, std::string& error) {
     if (url.rfind("file:///", 0) == 0) return FetchFile(url, body, error);

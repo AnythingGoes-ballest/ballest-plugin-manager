@@ -12,6 +12,8 @@
 #include <map>
 #include <set>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "cosmetics.hpp"
@@ -32,6 +34,7 @@ struct Quat {
 };
 
 eng::Weak gHandler, gDetails;
+eng::Weak gLastHandler;                 // the editor's handler, kept through a test run (whose pawn is the ball)
 std::set<int32_t> gKnown;               // AllActors slots seen last frame
 std::map<int32_t, int> gFresh;          // new pieces still being watched: frames left to reach the spawn point
 eng::Weak gKnownHandler;
@@ -365,6 +368,7 @@ void KeepRestores();
 void Frame() {
     Obj pawn = Pawn();
     gHandler = eng::MakeWeak(pawn ? eng::ReadObj(pawn, "SKGMLEHandler") : nullptr);
+    if (Handler()) gLastHandler = gHandler;
     if (!Handler()) {
         gPlaced.clear();
         gKnown.clear();
@@ -1076,6 +1080,165 @@ bool NextClick(Click* out) {
     return true;
 }
 
+// --- pieces not drawn --------------------------------------------------------------------------------------------------
+namespace {
+struct HiddenPart {
+    eng::Weak component;
+    int owner;
+};
+std::vector<HiddenPart> gHiddenParts;
+
+// The pieces of the map: the editor's, or during a test run the same editor's (its handler stays alive under the
+// ball's run, and the run plays on those very actors: see HideByMaterial). With no editor at all, a map raced as a
+// workshop map (Map_TrackUGCPlayback, also a local map opened by Tracks::OpenLocal): there the map's pieces are
+// spawned as actors of the race's own level, BP_BaseItem_C and its subclasses (MP_Cone_C, ..., measured), with no
+// editor handler listing them, so they are every such actor in the player's level.
+std::vector<Obj> PieceActors() {
+    Obj controller = game::PlayerController();
+    Obj level = controller ? eng::OuterOf(controller) : nullptr;
+    Obj h = Handler();
+    // The last editor's handler only while it is in this level (handler -> pawn -> level): not one left from an
+    // editor closed before this map opened.
+    if (!h) h = eng::Get(gLastHandler);
+    if (h && level && eng::OuterOf(eng::OuterOf(h)) != level) h = nullptr;
+    if (h) return eng::ReadObjArray(h, "AllActors");
+    std::vector<Obj> out;
+    if (!level || eng::ObjName(eng::OuterOf(level)) != "Map_TrackUGCPlayback") return out;
+    // In a race only on the player's own never-published map: a live workshop map's pieces stay drawn.
+    if (std::string why; !race::OwnUnpublishedMapHere(&why)) {
+        static std::string refusedFor;
+        if (why != refusedFor) {
+            refusedFor = why;
+            hostlog::Warn("editor: HideByMaterial refused in this race: " + why + " (only on the player's own never-published maps)");
+        }
+        return out;
+    }
+    static eng::Weak baseClass;
+    if (!eng::Get(baseClass)) baseClass = eng::MakeWeak(eng::FindClass("BP_BaseItem_C"));
+    Obj base = eng::Get(baseClass);
+    if (!base) return out;
+    std::unordered_map<Obj, bool> isPiece;      // by class
+    eng::ForEachObject([&](Obj o) {
+        if (eng::OuterOf(o) != level) return true;
+        Obj cls = eng::ClassOf(o);
+        auto it = isPiece.find(cls);
+        if (it == isPiece.end()) it = isPiece.emplace(cls, eng::IsA(o, base)).first;
+        if (it->second && !eng::IsDefaultObject(o)) out.push_back(o);
+        return true;
+    });
+    return out;
+}
+
+// "/Game/A/B/M_X" or "/Game/A/B/M_X.M_X": the object path PathOf gives ("/Game/A/B/M_X.M_X").
+std::string FullObjectPath(const std::string& path) {
+    if (path.find('.') != std::string::npos) return path;
+    const size_t slash = path.find_last_of('/');
+    return path + "." + path.substr(slash == std::string::npos ? 0 : slash + 1);
+}
+}  // namespace
+
+int HideByMaterial(int owner, const std::string& materialPath) {
+    if (materialPath.empty()) return 0;
+    const std::string want = FullObjectPath(materialPath);
+    const auto actors = PieceActors();
+    if (actors.empty()) return 0;
+    const ULONGLONG t0 = GetTickCount64();
+    std::unordered_set<Obj> pieces(actors.begin(), actors.end());
+    // Every primitive component of a piece, found in one pass over the object array (a component's outer is its
+    // actor) instead of one K2_GetComponentsByClass call per piece.
+    static eng::Weak primitiveClass;
+    if (!eng::Get(primitiveClass)) primitiveClass = eng::MakeWeak(eng::FindClass("PrimitiveComponent"));
+    Obj primitive = eng::Get(primitiveClass);
+    if (!primitive) return 0;
+    std::unordered_map<Obj, bool> isPrimitive;      // by class
+    std::vector<Obj> components;
+    eng::ForEachObject([&](Obj o) {
+        if (!pieces.count(eng::OuterOf(o))) return true;
+        Obj cls = eng::ClassOf(o);
+        auto it = isPrimitive.find(cls);
+        if (it == isPrimitive.end()) it = isPrimitive.emplace(cls, eng::IsA(o, primitive)).first;
+        if (it->second && !eng::IsDefaultObject(o)) components.push_back(o);
+        return true;
+    });
+    // A material matches if it, or a material instance's parent (and its parent, ...), is the one asked for.
+    std::unordered_map<Obj, bool> matches;
+    auto matching = [&](Obj m) {
+        if (!m) return false;
+        auto it = matches.find(m);
+        if (it != matches.end()) return it->second;
+        bool found = false;
+        int depth = 0;
+        for (Obj cur = m; cur && !found && depth < 16; ++depth) {
+            found = eng::PathOf(cur) == want;
+            cur = eng::FindProp(eng::ClassOf(cur), "Parent") ? eng::ReadObj(cur, "Parent") : nullptr;
+        }
+        return matches[m] = found;
+    };
+    std::erase_if(gHiddenParts, [](const HiddenPart& h) { return !eng::Get(h.component); });
+    std::unordered_set<Obj> hiddenSet;
+    for (const auto& h : gHiddenParts) hiddenSet.insert(eng::Get(h.component));
+    if (components.empty()) return 0;
+    Obj fnCount = eng::FunctionOn(components.front(), "GetNumMaterials");
+    Obj fnMaterial = eng::FunctionOn(components.front(), "GetMaterial");
+    Obj fnHide = eng::FunctionOn(components.front(), "SetHiddenInGame");
+    if (!fnCount || !fnMaterial || !fnHide) return 0;
+    eng::Params count(fnCount), material(fnMaterial), hide(fnHide);     // one buffer each, reused for every call
+    hide.SetArg(0, uint8_t{1});         // hidden in game
+    hide.SetArg(1, uint8_t{0});         // not propagated: each component is judged by its own materials
+    std::unordered_set<Obj> hiddenPieces;
+    int newlyHidden = 0;
+    for (Obj c : components) {
+        if (hiddenSet.count(c)) {
+            hiddenPieces.insert(eng::OuterOf(c));
+            continue;
+        }
+        if (!eng::Invoke(c, count)) continue;
+        const int32_t n = count.ReturnAs<int32_t>();
+        bool hit = false;
+        for (int32_t i = 0; i < n && i < 64 && !hit; ++i) {
+            material.SetArg(0, i);
+            if (eng::Invoke(c, material)) hit = matching(material.ReturnObj());
+        }
+        if (!hit) continue;
+        bool already = false;           // hidden by the game itself: left alone, and not shown again by ShowAll
+        eng::ReadBool(c, "bHiddenInGame", &already);
+        if (!already) {
+            eng::Invoke(c, hide);
+            gHiddenParts.push_back({eng::MakeWeak(c), owner});
+            hiddenSet.insert(c);
+            ++newlyHidden;
+        }
+        hiddenPieces.insert(eng::OuterOf(c));
+    }
+    hostlog::Info("editor: hid " + std::to_string(newlyHidden) + " components (" + std::to_string(hiddenPieces.size()) + " of " +
+                  std::to_string(actors.size()) + " pieces, " + std::to_string(components.size()) + " components looked at) using " + want +
+                  " in " + std::to_string(GetTickCount64() - t0) + " ms" + (Handler() ? "" : eng::Get(gLastHandler) ? " (not in the editor: a test run)" : " (a race of the map)"));
+    return static_cast<int>(hiddenPieces.size());
+}
+
+int ShowAll(int owner) {
+    int shown = 0;
+    for (auto it = gHiddenParts.begin(); it != gHiddenParts.end();) {
+        if (owner >= 0 && it->owner != owner) {
+            ++it;
+            continue;
+        }
+        if (Obj c = eng::Get(it->component)) {
+            eng::Call(c, "SetHiddenInGame", uint8_t{0}, uint8_t{0});
+            ++shown;
+        }
+        it = gHiddenParts.erase(it);
+    }
+    if (shown) hostlog::Info("editor: showed " + std::to_string(shown) + " hidden components again");
+    return shown;
+}
+
+int HiddenCount() {
+    int n = 0;
+    for (const auto& h : gHiddenParts) n += eng::Get(h.component) != nullptr;
+    return n;
+}
+
 std::vector<int> Pieces() {
     std::vector<int> ids;
     for (Obj a : AllActors()) ids.push_back(IdOf(a));
@@ -1203,6 +1366,7 @@ bool SetBudgetLimit(int owner, int limit) {
 
 void RemoveOwner(int owner) {
     if (owner == gBudgetOwner) SetBudgetLimit(owner, 0);
+    ShowAll(owner);
     for (auto& c : gChoices)
         if (c.owner == owner && !c.removed) {
             if (Obj w = eng::Get(c.widget)) eng::Call(w, "RemoveFromParent");

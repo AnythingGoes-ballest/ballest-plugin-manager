@@ -85,8 +85,12 @@ nav:
       - Tracks: reference/api/tracks.md
       - Workshop: reference/api/workshop.md
       - Hub: reference/api/hub.md
+      - Campaigns: reference/api/campaigns.md
       - Draw: reference/api/draw.md
       - Camera: reference/api/camera.md
+      - Net: reference/api/net.md
+      - Json: reference/api/json.md
+      - Steam: reference/api/steam.md
       - Math: reference/api/math.md
       - Plugins: reference/api/plugins.md
       - Settings: reference/api/settings.md
