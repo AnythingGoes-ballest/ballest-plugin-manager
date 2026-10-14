@@ -523,6 +523,37 @@
       }
     },
     {
+      "id": "mk-cosmetics",
+      "name": "MK Characters",
+      "description": "Mario, Yoshi, Peach and Bowser balls in their Mario Kart Wii colours, made from scratch. Local cosmetics: worn on your own ball only.",
+      "author": "AnythingGoes",
+      "repo": "AnythingGoes-ballest/ballest-mk-cosmetics",
+      "version": "0.1.0",
+      "commit": "6b36d2d539ff3cecd69218a71904d8cdfb4635ff",
+      "min_host": "0.23.2",
+      "icon": "icon.png",
+      "dependencies": [
+        "cosmetic-kit"
+      ],
+      "files": {
+        "info.toml": "5215eeb72cba6a379a9e0498b3cd57e3a7476caa79b0edbf12e5d7ab097204e5",
+        "main.as": "1b5683393738d47df09c58805a7288264c143613e3dad37e3949dfa68506ace1",
+        "previews/bowser.png": "4afd278e21987119c28d57e74b294dd07ff86a9009a7bf4c7ff12b08bd67321c",
+        "previews/mario.png": "4025019cc859f31a47e77889bcbf088f5d683a8fd5fb9a6ca62bab41311fa172",
+        "previews/peach.png": "452c1df4ec9226ec356f4956359e940ea0085bb2b696520a28a404e0e6c0470f",
+        "previews/yoshi.png": "4e2a409886d861c68308544118587eaebcd46f1a44939f340a4a27ece843c355",
+        "models/bowser.txt": "b4a64c735e41961cfd378f8ee783113c38067d81606860312f4bd3635f080105",
+        "models/mario.txt": "b05a6b5d3d8a3a85bb72ab69e5942b0d500e577e1f282fca9ff80df5013d7a30",
+        "models/peach.txt": "91ee4544a108d27d5848589244513543695f1265677026d74f947575aaef842b",
+        "models/yoshi.txt": "2496f0a6f48b5a12dc6283a969ffbcf5f196e74cc2857135f9cb6d15a6e98cc9",
+        "models/bowser.glb": "805962c86aad7650826718e4d011300d210d45fe8b185de5495495311ad12828",
+        "models/mario.glb": "4c4f76a4ea7aae5549eee713abb6284335e886c43e003d3ee1f68f088aff5a27",
+        "models/peach.glb": "fbde5fa2a15aad2e002f7033577f1fe18dac54bd3bf44ab05bce73292e83dd6c",
+        "models/yoshi.glb": "c235f4a67e1f102f729d54cc38998efeb5115b0fa61a8e7e71753d7c2bcca746",
+        "icon.png": "48fa26e3b866a988b126114503eb925bac06d3fb7571ba67be856e03193e1bb4"
+      }
+    },
+    {
       "id": "mk-campaign",
       "name": "MK Mushroom Cup",
       "description": "the Mushroom Cup as a custom campaign in the game's track selection (its own screen with its four courses), each course raced as a normal race with local best times and splits, and the original course models drawn as the solid track (tracks/: models, decals, mushroom bounce data).",
