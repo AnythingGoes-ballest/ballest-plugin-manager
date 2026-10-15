@@ -1,4 +1,5 @@
-// Offline test of the model text's material statements (models.hpp): "material <name> game", "set" and "animate".
+// Offline test of the model text (models.hpp): material statements ("material <name> game", "set", "animate"), and a
+// character's rig (moves, keys, lean, drops).
 // No game: only models::Parse runs. Built and run by tools/tests/run.sh.
 #include <cmath>
 #include <cstdio>
@@ -104,6 +105,52 @@ int main() {
     Parsed("material core game /Game/M\nanimate core \"X\" 1 2 wave=bounce\n" + sphere, false, "animate rejects an unknown wave");
     Parsed("material core game /Game/M\nanimate core \"X\" 1 2 speed=3\n" + sphere, false, "animate rejects an unknown option");
     Parsed("material core game /Game/M\nset core \"X 1\n" + sphere, false, "set rejects an unclosed quote");
+    // Moves, lean and drops (a character's rig): keys name groups anywhere in the text, sorted by group then time.
+    {
+        const std::string rig =
+            "material skin plastic #ffcc99\n"
+            "tempo rate=0.6 run=0.25 max=3 calm=0.2 full=8\n"
+            "group hero travel\n"
+            "group lean on=hero pivot=0,0,-50 lean=10 bob=3\n"
+            "sphere skin r=50\n"
+            "group arm on=lean pivot=0,30,0 swing=y angle=40\n"
+            "sphere skin r=8 at=0,58,-10\n"
+            "group egg on=lean pivot=-58,0,-30 drop=land push=-160,0,380 life=4 max=5 carry=0.85\n"
+            "sphere skin r=11 at=-58,0,-30\n"
+            "moves gap=0.4,1.6\n"
+            "move wave when=run weight=2 blend=0.2\n"
+            "key 1.3 arm\n"
+            "key 0 arm swing=0\n"
+            "key 0.5 arm rot=10,0,-120 at=0,0,6 swing=0\n"
+            "key 0.4 lean at=0,0,12\n"
+            "move spin when=idle blend=0 length=2\n"
+            "key 0 lean\n"
+            "key 1 lean rot=0,360,0\n";
+        const models::Model m = Parsed(rig, true, "a rig with moves");
+        Check(m.moves.size() == 2 && Near(static_cast<float>(m.gap[0]), 0.4f) && Near(static_cast<float>(m.gap[1]), 1.6f), "two moves, gap");
+        if (m.moves.size() == 2) {
+            const models::Move& w = m.moves[0];
+            Check(w.when == models::When::Run && Near(static_cast<float>(w.weight), 2) && Near(static_cast<float>(w.length), 1.3f) &&
+                      Near(static_cast<float>(w.blend), 0.2f), "wave: when, weight, length from the last key, blend");
+            Check(w.keys.size() == 4 && w.keys[0].group == 1 && w.keys[1].group == 2 && w.keys[1].time == 0 && w.keys[3].time > 1,
+                  "keys sorted by group (lean before arm), then time");
+            if (w.keys.size() == 4) Check(Near(static_cast<float>(w.keys[2].rot[2]), -120) && w.keys[2].swing == 0, "key rot and swing");
+            Check(Near(static_cast<float>(m.moves[1].length), 2), "length= past the last key");
+        }
+        Check(m.groups.size() >= 4 && m.groups[1].lean == 10 && m.groups[1].keyed && m.groups[2].keyed, "lean, keyed groups");
+        if (m.groups.size() >= 4) {
+            const models::Group& e = m.groups[3];
+            Check(e.drop == static_cast<int>(models::When::Land) && e.max == 5 && Near(static_cast<float>(e.carry), 0.85f) &&
+                      Near(static_cast<float>(e.push[2]), 380) && e.Moves(), "drop group");
+        }
+        const std::string skin = "material skin plastic #ffffff\n";
+        Parsed(skin + "group a pivot=1,0,0\nsphere skin r=1\nmove m\nkey 0 nobody\n", false, "key: unknown group");
+        Parsed(skin + "group a travel\nsphere skin r=1\nmove m\nkey 1 a rot=0,10,0\n", false, "key on a travelling group");
+        Parsed(skin + "group a travel lean=5\nsphere skin r=1\n", false, "lean on a travelling group");
+        Parsed(skin + "group a pivot=1,0,0 drop=land max=9\nsphere skin r=1\n", false, "drop: max above 8");
+        Parsed(skin + "group a pivot=1,0,0\nsphere skin r=1\nkey 0 a\n", false, "key before any move");
+        Parsed(skin + "group a pivot=1,0,0\nsphere skin r=1\nmove m when=fly\nkey 1 a\n", false, "move: bad when");
+    }
     std::printf("models_test: %s (%d failure(s))\n", failures ? "FAILED" : "ok", failures);
     return failures ? 1 : 0;
 }
