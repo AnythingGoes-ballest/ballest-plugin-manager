@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Offline tests (no game): builds the host first, then
 #   ascheck        compiles every plugin folder given (default: the bundled ones) against the host's real API
-#   models_test    parses model texts' material statements (game materials, set, animate, plugin assets)
+#   models_test    parses model texts: material statements (game materials, set, animate, plugin assets), rigs
 #   modcontainer_test  the gate on plugin-shipped cooked containers (set MOD_UTOC and MOD_NAME, else skipped)
 #   release_files_test the registry's release_files rules (review_guard.py, registry.py)
 #   ghostdata_test parses the ghost replays the game cached and checks their routes against a reference

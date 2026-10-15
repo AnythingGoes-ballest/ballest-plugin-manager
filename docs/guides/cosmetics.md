@@ -113,7 +113,7 @@ key <seconds> <group> [rot=pitch,yaw,roll] [at=x,y,z] [swing=1]
     - `pivot` is the point it turns about (a hip), in the same coordinates as everything else.
     - `swing` rocks it to and fro about an axis through the pivot, `angle` degrees each way.
     - `bob` lifts it by that many cm and lets it down, twice a swing (once a step).
-    - `lean` (host 0.27.0 and newer) tips it forward about its pivot as the ball speeds up, that many degrees from the
+    - `lean` (host 0.28.0 and newer) tips it forward about its pivot as the ball speeds up, that many degrees from the
       tempo's `full` speed: a runner leaning into the run (pivot it on the ground, under the ball).
     - `phase` puts a group's swing and bob later in the cycle (180: opposite, like the other leg).
   A travelling group can't swing or bob itself: make an empty travelling group and build the moving ones on it.
@@ -123,7 +123,7 @@ key <seconds> <group> [rot=pitch,yaw,roll] [at=x,y,z] [swing=1]
     - `calm`: how much of the swing is left when the ball is still (0 to 1); swings grow to their full size at
       `full` m/s.
 
-- **Moves** (host 0.27.0 and newer) are short animations of the groups, played now and then on top of their swings,
+- **Moves** (host 0.28.0 and newer) are short animations of the groups, played now and then on top of their swings,
   so a character does more than one repeating stride: a hop, a wave, a spin, a roar.
     - `move <name>` starts one; the `key` lines after it are its keyframes. `key <seconds> <group>` turns the group
       by `rot` about its pivot and moves it by `at` (cm, in the axes of the group it is built on) at that moment of
@@ -141,7 +141,7 @@ key <seconds> <group> [rot=pitch,yaw,roll] [at=x,y,z] [swing=1]
       as fast, `run` more for every m/s of the ball).
     - A travelling group can't be keyed: key the group built on it. For a full turn, key 0 to 360 degrees with
       `blend=0` (and every key starting and ending at rest), so the turn doesn't unwind as the move fades.
-- **Drops** (host 0.27.0 and newer): a group with `drop=jump` or `drop=land` isn't shown on the ball. At each jump or
+- **Drops** (host 0.28.0 and newer): a group with `drop=jump` or `drop=land` isn't shown on the ball. At each jump or
   landing a copy of it is let go into the world where the group is at that moment: thrown by `push` (cm/s, in the
   group's own axes), with `carry` (0 to 1) of the ball's speed along the ground, it falls to the ground below (a
   line straight down), bounces a little, rolls to a stop, lies there `life` seconds and shrinks away. At most `max`
@@ -299,7 +299,7 @@ mesh <file> [size=<cm>] [at=x,y,z] [rot=pitch,yaw,roll] [scale=x,y,z] [material=
 ```
 
 - `<file>` is next to the text file (in quotes if its name has spaces).
-- `node` (host 0.27.0 and newer) takes only that node of the file (by its name, with the nodes under it): a
+- `node` (host 0.28.0 and newer) takes only that node of the file (by its name, with the nodes under it): a
   character made as one file, its head, arms and legs each a node, each placed in a group of its own. A file is read
   once however many `mesh` lines use it, and its materials are added once (opening a file can take several ms, so
   one file of parts loads faster than a file per part).
