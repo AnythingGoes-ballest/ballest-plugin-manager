@@ -122,6 +122,47 @@
       }
     },
     {
+      "id": "elemental-balls",
+      "name": "Elemental Balls",
+      "description": "Three glowing balls painted from their concept art: Void Crystal, Frost and Toxic Current, in real materials of their own with a clear coat, a slowly flowing glow and a soft aura.",
+      "author": "AnythingGoes",
+      "repo": "AnythingGoes-ballest/ballest-elemental-balls",
+      "version": "0.1.0",
+      "commit": "0528b502f7b2f42825e413e38a241a67dd8917e2",
+      "min_host": "0.27.0",
+      "icon": "icon.png",
+      "dependencies": [
+        "cosmetic-kit"
+      ],
+      "files": {
+        "info.toml": "4eb3b3b82309c536d088be26f88622cac47088bd715e7e0dab0bd0c5023990b3",
+        "main.as": "4e289b62c188cc04f3a47dd3beda41f613c90c25f7d815a1bb3a3edd9af5c2bf",
+        "previews/frost.png": "5fdf709b2266f1593ce302ba16ff67cb1abd2fc1662f0452671f24390092b27d",
+        "previews/toxic.png": "cf57c7407f305a69d36460feea4b016c63ead139309d8613ff2b6f2e5e81ff07",
+        "previews/void.png": "eaf192f73221a067a15610cd17cd1c59fca566e1387f82578204926337a47a64",
+        "models/v2_frost.txt": "fe3f53178e4a241bf8ca1ecca7d3244959780bea0844f55fa48623ac97069869",
+        "models/v2_toxic.txt": "e2bbcbdfaa494295826d2f9e6a5b7a621d0bda0ee9387050dbb9a85cac164438",
+        "models/v2_void.txt": "67da478bbaea8cffc50b6d5f3daf4e555f4a5f9d0e3bbc8e2fa901c761339fde",
+        "models/sphere.glb": "8e73089bb1d88e4198d10d08cf665d575a484b36429358ef683b6bbf0d11a12b",
+        "models/v2_frost_shell.glb": "ca1f5235b692a014a7b213627fe9c3454829e1e34f299270b0d68ba1f8bfdd4e",
+        "icon.png": "352106cb1cf29fa67329cc11dae0936ca85ff14ae56e0562ae1767724dc83197"
+      },
+      "release_files": {
+        "assets/elemental_balls_b0008-Windows.utoc": {
+          "url": "https://github.com/AnythingGoes-ballest/ballest-elemental-balls/releases/download/v0.1.0/elemental_balls_b0008-Windows.utoc",
+          "sha256": "35ae521431dfd183bd69e7c93bb6793d91ea13abb786c1fec88daa8a2e4ffed6"
+        },
+        "assets/elemental_balls_b0008-Windows.ucas": {
+          "url": "https://github.com/AnythingGoes-ballest/ballest-elemental-balls/releases/download/v0.1.0/elemental_balls_b0008-Windows.ucas",
+          "sha256": "4ff4216e7fe5bfa34eec301fbdcc255259d8235e6e51ea0d473da4052f32ba8b"
+        },
+        "assets/elemental_balls_b0008-Windows.pak": {
+          "url": "https://github.com/AnythingGoes-ballest/ballest-elemental-balls/releases/download/v0.1.0/elemental_balls_b0008-Windows.pak",
+          "sha256": "8f2939268c0ba79c5d9818028c1794c7bb4e190ea9a01882bbc115970c466392"
+        }
+      }
+    },
+    {
       "id": "example-arms",
       "name": "Example Arms",
       "description": "Six arms for your ball, moving as it rolls: buff arms, zombie arms, skeleton arms, robot arms, crab claws and boxer arms.",
