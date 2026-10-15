@@ -721,6 +721,10 @@ void Run(const std::string& cmd) {
              Report("cosmetic " + kind + " " + id + (ok ? " -> ok" : " -> failed"));
          }},
         {"cosmetics", [](const Args&, const std::string&) { Report(cosmetics::Status()); }},
+        {"movetrace", [](const Args& a, const std::string& c) {    // movetrace on|off: log models' moves and the ball's fall
+             models::TraceMoves(Arg(a, 1) == "on");
+             Report(c + " -> ok");
+         }},
         {"wear", [](const Args& a, const std::string& c) {        // wear ball|hat|bfx <custom id> ("-" for the game's own)
              const cosmetics::Kind kind = Arg(a, 1) == "hat" ? cosmetics::Kind::Hat : Arg(a, 1) == "bfx" ? cosmetics::Kind::Bfx : cosmetics::Kind::Ball;
              Report(c + (cosmetics::Equip(kind, Arg(a, 2) == "-" ? "" : Arg(a, 2)) ? " -> ok" : " -> failed"));

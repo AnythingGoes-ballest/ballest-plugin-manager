@@ -80,6 +80,7 @@ void Slerp(const float* a, const float* b, double t, double* out) {
 
 // ------------------------------------------------------------------------------------------------ the parsed file
 struct Node {
+    std::string name;
     int parent = -1;
     std::vector<int> children;
     double t[3] = {0, 0, 0}, r[4] = {0, 0, 0, 1}, s[3] = {1, 1, 1};
@@ -403,6 +404,7 @@ private:
         for (size_t i = 0; i < nodes.size(); ++i) {
             const json::Value& n = nodes[i];
             Node& node = scene_.nodes[i];
+            node.name = n.Str("name");
             if (const json::Value* m = n.Get("matrix"); m && m->items.size() == 16) {
                 node.hasMatrix = true;
                 for (int k = 0; k < 16; ++k) node.matrix[static_cast<size_t>(k)] = m->items[static_cast<size_t>(k)].number;
@@ -848,6 +850,26 @@ bool Model::Load(const std::wstring& file, const std::wstring& cacheDir, std::st
         return gltf.Load(bytes, error);
     }
     *error = "not a model file this reads (.glb, .gltf or .obj; FBX: export glTF from Blender instead)";
+    return false;
+}
+
+int Model::FindNode(const std::string& name) const {
+    for (size_t i = 0; i < scene_->nodes.size(); ++i)
+        if (scene_->nodes[i].name == name) return static_cast<int>(i);
+    return -1;
+}
+
+std::vector<std::string> Model::Nodes() const {
+    std::vector<std::string> names;
+    for (const auto& n : scene_->nodes)
+        if (!n.name.empty()) names.push_back(n.name);
+    return names;
+}
+
+bool Model::ItemUnder(size_t item, int node) const {
+    if (item >= scene_->sources.size()) return false;
+    for (int n = scene_->sources[item].node; n >= 0; n = scene_->nodes[static_cast<size_t>(n)].parent)
+        if (n == node) return true;
     return false;
 }
 

@@ -51,6 +51,9 @@ public:
 
     const std::vector<Material>& Materials() const { return materials_; }
     const std::vector<Item>& Items() const { return items_; }
+    int FindNode(const std::string& name) const;            // a node by its exact name; -1 if none
+    std::vector<std::string> Nodes() const;                 // the named nodes' names
+    bool ItemUnder(size_t item, int node) const;            // the item hangs from that node or one under it
     std::vector<std::string> Animations() const;
     int FindAnimation(const std::string& fragment) const;   // by name, case-insensitive substring; -1 if none
     double Length(int animation) const;                     // seconds

@@ -69,8 +69,13 @@ race <material> "<parameter>" <factor>
 tempo [rate=1] [run=0] [max=] [calm=1] [full=1]
 ball hidden
 group <name> [spin=x|y|z] [speed=<degrees a second>] [travel|facing] [on=<group>] [pivot=x,y,z]
-      [swing=x|y|z angle=<degrees>] [bob=<cm>] [phase=<degrees>]
+      [swing=x|y|z angle=<degrees>] [bob=<cm>] [phase=<degrees>] [lean=<degrees>]
+      [drop=jump|land [push=x,y,z] [life=4] [max=4] [hit=400] [carry=0.5]]
 <shape> <material> <sizes> [at=x,y,z] [rot=pitch,yaw,roll] [scale=x,y,z]
+moves [gap=<seconds>[,<seconds>]]
+move <name> [when=idle|run|air|jump|land] [min=<m/s>] [max=<m/s>] [weight=1] [length=<seconds>] [blend=0.25]
+     [rate=1] [run=0]
+key <seconds> <group> [rot=pitch,yaw,roll] [at=x,y,z] [swing=1]
 ```
 
 | Shape | Sizes | Placed |
@@ -108,6 +113,8 @@ group <name> [spin=x|y|z] [speed=<degrees a second>] [travel|facing] [on=<group>
     - `pivot` is the point it turns about (a hip), in the same coordinates as everything else.
     - `swing` rocks it to and fro about an axis through the pivot, `angle` degrees each way.
     - `bob` lifts it by that many cm and lets it down, twice a swing (once a step).
+    - `lean` (host 0.27.0 and newer) tips it forward about its pivot as the ball speeds up, that many degrees from the
+      tempo's `full` speed: a runner leaning into the run (pivot it on the ground, under the ball).
     - `phase` puts a group's swing and bob later in the cycle (180: opposite, like the other leg).
   A travelling group can't swing or bob itself: make an empty travelling group and build the moving ones on it.
 - **Tempo** sets the pace of every swing and bob:
@@ -115,6 +122,58 @@ group <name> [spin=x|y|z] [speed=<degrees a second>] [travel|facing] [on=<group>
     - `run`: more swings a second for every m/s of the ball's speed, up to `max`.
     - `calm`: how much of the swing is left when the ball is still (0 to 1); swings grow to their full size at
       `full` m/s.
+
+- **Moves** (host 0.27.0 and newer) are short animations of the groups, played now and then on top of their swings,
+  so a character does more than one repeating stride: a hop, a wave, a spin, a roar.
+    - `move <name>` starts one; the `key` lines after it are its keyframes. `key <seconds> <group>` turns the group
+      by `rot` about its pivot and moves it by `at` (cm, in the axes of the group it is built on) at that moment of
+      the move. Keys of a group are joined smoothly (still at its first and last key) and held before and after.
+    - `swing` on a key (0 to 1) is how much of the group's own swing and bob is kept: 0 holds a waving arm still
+      on its own instead of swinging it as well.
+    - `when` is when the move can be picked: `idle` (the ball still), `run` (rolling), `air` (falling freely for a
+      moment), or at once on a `jump` (the ball pushed up from level) or a `land` (the fall stopped, with the game's
+      own ground bounce: a restart isn't one). `min` and `max` limit it to a range of the ball's speed (m/s).
+    - The host plays one move at a time, picked at random by `weight` among those that fit (never the same twice
+      in a row when there is another), with a pause of `moves gap` seconds between (random in the range; 0.3 to
+      1.2 by default). Each eases in and out over `blend` seconds. A move for another state fades out when the ball
+      changes state; a jump or landing move cuts in at once.
+    - `length` is the move's length when it should run past its last key; `rate` and `run` its speed (`rate` times
+      as fast, `run` more for every m/s of the ball).
+    - A travelling group can't be keyed: key the group built on it. For a full turn, key 0 to 360 degrees with
+      `blend=0` (and every key starting and ending at rest), so the turn doesn't unwind as the move fades.
+- **Drops** (host 0.27.0 and newer): a group with `drop=jump` or `drop=land` isn't shown on the ball. At each jump or
+  landing a copy of it is let go into the world where the group is at that moment: thrown by `push` (cm/s, in the
+  group's own axes), with `carry` (0 to 1) of the ball's speed along the ground, it falls to the ground below (a
+  line straight down), bounces a little, rolls to a stop, lies there `life` seconds and shrinks away. At most `max`
+  (1 to 8) are out at once, the oldest reused. A landing drops one only when the ball came down at least `hit` cm/s
+  (400 by default: about an 80 cm fall), so small bounces don't. Copies are only to look at: nothing touches them,
+  and they are made once when the model is built. Give the group's pivot at the middle of the part: it lies and
+  rolls on the distance from there to its lowest point.
+
+```
+# Yoshi: a wave now and then, and an egg laid behind him at every landing
+tempo rate=0.6 run=0.25 max=3.2 calm=0.2 full=8
+ball hidden
+group yoshi travel
+group lean on=yoshi pivot=0,0,-50 lean=12 bob=3.5
+group body on=lean swing=z angle=8 phase=90
+mesh yoshi.glb node=body at=-3.757,0,-50
+group armR on=body pivot=0,36,8 swing=y angle=45
+mesh yoshi.glb node=armR at=15.25,49.024,-12
+group egg on=body pivot=-58,0,-30 drop=land push=-160,0,380 life=4 max=5 carry=0.85
+mesh yoshi.glb node=egg at=-58.209,0.201,-43.5
+
+moves gap=0.4,1.6
+move wave when=run
+key 0 armR swing=0
+key 0.35 armR rot=10,0,-110 swing=0
+key 0.6 armR rot=10,0,-140 swing=0
+key 0.9 armR rot=10,0,-100 swing=0
+key 1.3 armR swing=0
+```
+
+[MK Characters](https://github.com/AnythingGoes-ballest/ballest-mk-cosmetics) has four characters made this way
+(`tools/make_models.py` writes their parts, rigs and moves).
 
 ```
 # a character running upright inside the ball
@@ -235,11 +294,15 @@ A model file can be the whole model: pass it as `model` (`f + "models/lamp.glb"`
 the ball, 80 cm across; on a hat it stands on the top of the ball, 40 cm across. Or place it in a model's text file with a `mesh` line, alongside shapes and groups:
 
 ```
-mesh <file> [size=<cm>] [at=x,y,z] [rot=pitch,yaw,roll] [scale=x,y,z] [material=<name>]
+mesh <file> [size=<cm>] [at=x,y,z] [rot=pitch,yaw,roll] [scale=x,y,z] [material=<name>] [node=<name>]
      [anim=<name>] [rate=1] [run=0] [idle=<name>] [frames=24]
 ```
 
 - `<file>` is next to the text file (in quotes if its name has spaces).
+- `node` (host 0.27.0 and newer) takes only that node of the file (by its name, with the nodes under it): a
+  character made as one file, its head, arms and legs each a node, each placed in a group of its own. A file is read
+  once however many `mesh` lines use it, and its materials are added once (opening a file can take several ms, so
+  one file of parts loads faster than a file per part).
 - `size` makes its longest side that many cm. It stands on `at`: the bottom of its bounds, centred there, after `rot`
   has turned it. The file's front (Blender's -Y, glTF's +Z) faces the ball's forward direction, which on a hat is the
   way the brim of a cap should point.
