@@ -17,9 +17,15 @@
         Writes a local copy of the registry and the files it points at, for testing before anything is published:
         put the printed file:/// URL in %LOCALAPPDATA%\\Ballest\\Saved\\PluginManager\\registry_url.txt. With
         --host-test, the copy also offers a host update to VERSION: the DLL given, and the bundled plugins as
-        committed at HEAD.
+        committed at HEAD. With --release-dir, the copy also serves the plugins' release files from that folder.
+
+    add ... --release-files <file>...
+        Maintainer-built cooked content (assets/<mod>_bNNNN-Windows.utoc/.ucas/.pak from tools/make_mod_container.py)
+        uploaded to the plugin's GitHub release at <tag>: adds "release_files" with each file's release URL and
+        SHA-256. Only for plugins under the maintainer account; never commit the containers (docs/custom-assets-recipe.md).
 """
 import argparse
+import re
 import fnmatch
 import hashlib
 import json
@@ -82,7 +88,19 @@ def files_of(manifest, repo, commit, path=""):
     return names, (icon if icon in tree else "")
 
 
-def add(path, tag, repo_name, folder=""):
+def release_files_of(paths, repo_name, tag):
+    """--release-files: maintainer-built containers uploaded to the plugin's GitHub release at `tag` (same names)."""
+    out = {}
+    for p in paths or []:
+        f = Path(p)
+        if f.suffix not in (".utoc", ".ucas", ".pak") or not re.fullmatch(r"[A-Za-z0-9_\-.]+", f.name):
+            sys.exit(f"{f}: release files are .utoc/.ucas/.pak with a plain name")
+        out[f"assets/{f.name}"] = {"url": f"https://github.com/{repo_name}/releases/download/{tag}/{f.name}",
+                                   "sha256": hashlib.sha256(f.read_bytes()).hexdigest()}
+    return out
+
+
+def add(path, tag, repo_name, folder="", release_files=None):
     repo = Path(path).resolve()
     folder = folder.strip("/")
     commit = git(repo, "rev-parse", f"{tag}^{{commit}}").decode().strip()
@@ -109,10 +127,13 @@ def add(path, tag, repo_name, folder=""):
         "dependencies": meta.get("dependencies", []),
         "files": {n: hashlib.sha256(git(repo, "show", f"{commit}:{in_repo(folder, n)}")).hexdigest() for n in names},
     }
+    if release_files:
+        entry["release_files"] = release_files_of(release_files, entry["repo"], tag)
     # The review rules (CLAUDE.md, tools/review_guard.py): no built binaries, no Console:: in its scripts.
     from review_guard import plugin_problems
     downloaded = {n: git(repo, "show", f"{commit}:{in_repo(folder, n)}") for n in names}
-    problems = plugin_problems(entry["id"], commit, downloaded)
+    from review_guard import release_file_problems
+    problems = plugin_problems(entry["id"], commit, downloaded) + release_file_problems(entry)
     if problems:
         sys.exit("refused by the review rules (see CLAUDE.md):\n  " + "\n  ".join(problems))
     registry = load()
@@ -148,9 +169,19 @@ def host(tag, dll):
     print(f"host {version} at {commit[:12]} ({len(registry['host']['files'])} bundled files) -> {REGISTRY.name}")
 
 
-def mirror(out, paths, host_test=None, host_dll=None):
+def mirror(out, paths, host_test=None, host_dll=None, release_dir=None):
     out = Path(out).resolve()
     registry = load()
+    if release_dir:
+        # Release files from a local folder (the built containers), served at <out>/<repo>/releases/download/<tag>/<file>
+        # through the test copy's "release_base"; the host reads it only from a file:/// registry.
+        for entry in registry["plugins"]:
+            for spec in (entry.get("release_files") or {}).values():
+                rel = spec["url"].removeprefix("https://github.com/")
+                src = Path(release_dir) / rel.rsplit("/", 1)[1]
+                if src.exists():
+                    (out / rel).parent.mkdir(parents=True, exist_ok=True)
+                    (out / rel).write_bytes(src.read_bytes())
     by_folder = {Path(p).resolve().name: Path(p).resolve() for p in paths}
     for entry in registry["plugins"]:
         repo = by_folder.get(entry["repo"].split("/")[1])
@@ -163,6 +194,8 @@ def mirror(out, paths, host_test=None, host_dll=None):
             (target / name).parent.mkdir(parents=True, exist_ok=True)
             (target / name).write_bytes(git(repo, "show", f"{entry['commit']}:{in_repo(folder, name)}"))
     local = dict(registry, raw_base=out.as_uri() + "/")
+    if release_dir:
+        local["release_base"] = out.as_uri() + "/"
     if host_test:
         # A pretend newer host: the DLL given, and the bundled plugins as committed at HEAD.
         commit = git(ROOT, "rev-parse", "HEAD").decode().strip()
@@ -188,6 +221,7 @@ def main():
     a.add_argument("tag")
     a.add_argument("--repo", help="owner/name on GitHub (default: %s/<folder name>)" % DEFAULT_OWNER)
     a.add_argument("--path", dest="folder", default="", help="the plugin's folder in the repo, for a repo with several plugins")
+    a.add_argument("--release-files", nargs="+", help="maintainer-built assets/ containers uploaded to the plugin's release at the tag")
     h = sub.add_parser("host")
     h.add_argument("tag")
     h.add_argument("dll")
@@ -196,13 +230,14 @@ def main():
     m.add_argument("paths", nargs="+")
     m.add_argument("--host-test", help="also offer a host update to this version")
     m.add_argument("--host-dll", help="the DLL that update installs")
+    m.add_argument("--release-dir", help="a folder with the plugins' release files, served by the test copy")
     args = ap.parse_args()
     if args.command == "add":
-        add(args.path, args.tag, args.repo, args.folder)
+        add(args.path, args.tag, args.repo, args.folder, args.release_files)
     elif args.command == "host":
         host(args.tag, args.dll)
     else:
-        mirror(args.out, args.paths, args.host_test, args.host_dll)
+        mirror(args.out, args.paths, args.host_test, args.host_dll, args.release_dir)
 
 
 if __name__ == "__main__":

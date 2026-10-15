@@ -77,6 +77,14 @@ python tools/registry.py add ../your-plugins-repo grind-stats-v0.1.0 --repo you/
 The plugin's id is its folder's name. Plugins in a shared repo need plugin manager 0.12.0 or later, which the
 registry entry's `min_host` asks for by itself.
 
+## Plugins with cooked content
+
+A plugin's repo must not contain built or packed files (see the rules above), and that includes cooked Unreal content.
+A plugin that needs its own materials (see [Cooked content](../custom-assets-recipe.md)) keeps its Unreal content
+project's *scripts* in its repo. The maintainers build the container from those scripts, attach it to the plugin's
+GitHub release, and pin it in the registry by its SHA-256. Ask in your pull request: release files are only accepted
+for plugins the maintainers build.
+
 ## Updates
 
 An update works like the first version: a new tag, then a request. You don't need to make a GitHub release; the tag is

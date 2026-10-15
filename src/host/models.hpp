@@ -6,12 +6,22 @@
 // radius is 50; angles in degrees):
 //   material <name> plastic|metal|glow #rrggbb [rough=0.5] [bright=5]
 //   material <name> glass [#rrggbb] [opacity=0.2]   (see-through: clear M_GlassV2, or tinted M_Glass)
-//   group <name> [spin=x|y|z] [speed=<degrees a second>] [travel] [on=<group>] [pivot=x,y,z]
+//   material <name> game <material asset path>       (one of the game's own materials, as it is)
+//   set <material> "<parameter>" <value>             a parameter of a material's dynamic instance: a number, a colour
+//       (#rrggbb, or r,g,b[,a] in linear values; "*k" after either brightens it, for glowing colours), a picture file of
+//       the plugin's (.png, .jpg) or a texture asset of the game's (a path starting with "/")
+//   animate <material> "<parameter>" <from> <to> [period=<seconds>] [wave=sine|triangle|saw|square] [phase=<degrees>]
+//       [run=<more a second per m/s of the ball>]: a number or colour moving between two values every frame
+//   race <material> "<parameter>" <factor>           away from the Customize page (a race, the editor, a replay) that
+//       parameter, as set or animated, is that many times as much (a colour's brightness): daylight needs more glow
+//   group <name> [spin=x|y|z] [speed=<degrees a second>] [travel|facing] [on=<group>] [pivot=x,y,z]
 //         [swing=x|y|z angle=<degrees> [phase=<degrees>]] [bob=<cm> [phase=<degrees>]]
 //       parts after it belong to it; "travel" keeps the group upright and turned to where the ball is going instead
-//       of rolling with the ball; "on" builds it on an earlier group, moving with it (a limb on a body); "pivot" is
-//       the point it turns about (a shoulder); "swing" rocks it to and fro about an axis through the pivot, and "bob"
-//       lifts it and lets it down twice a swing (a step), both keeping time with the model's tempo
+//       of rolling with the ball; "facing" turns the group's +x to the camera every frame (a disc of glow round the
+//       ball, which the ball hides in front of it: a halo); "on" builds it on an earlier group, moving with it (a
+//       limb on a body); "pivot" is the point it turns about (a shoulder); "swing" rocks it to and fro about an axis
+//       through the pivot, and "bob" lifts it and lets it down twice a swing (a step), both keeping time with the
+//       model's tempo
 //   tempo [rate=<swings a second at rest>] [run=<more a second per m/s of the ball>] [max=<swings a second>]
 //         [calm=<share of the swing at rest>] [full=<m/s at which swings are full>]
 //   <shape> <material> <size...> [at=x,y,z] [rot=pitch,yaw,roll] [scale=x,y,z]
@@ -42,7 +52,26 @@
 
 namespace models {
 
-enum class Finish { Plastic, Metal, Glow, Glass, Image };
+enum class Finish { Plastic, Metal, Glow, Glass, Image, Game };
+// A parameter set on a material ("set"): a number, a colour, or a texture (a picture file, or a texture asset).
+struct Setting {
+    enum class Kind { Scalar, Colour, Texture };
+    std::string parameter;
+    Kind kind = Kind::Scalar;
+    float value[4] = {0, 0, 0, 1};
+    std::wstring file, asset;           // Texture: a picture file, or else an asset path
+};
+// A parameter that moves ("animate"): from `from` to `to` and back (sine, triangle, square) or from `from` to `to` and
+// over again (saw), a cycle every `period` seconds, `phase` degrees into it; `run` makes the cycle that much faster
+// for every m/s of the ball's speed.
+struct Motion {
+    enum class Wave { Sine, Triangle, Saw, Square };
+    std::string parameter;
+    bool colour = false;
+    Wave wave = Wave::Sine;
+    float from[4] = {0, 0, 0, 1}, to[4] = {1, 1, 1, 1};
+    double period = 4, phase = 0, run = 0;
+};
 struct Material {
     std::string name;
     Finish finish = Finish::Plastic;
@@ -56,6 +85,15 @@ struct Material {
     bool refracts = false;
     float ior = 1.5f;                   // index of refraction: 1 is air (no bending), glass about 1.45-1.5, diamond 2.4
     float reflect = 1;                  // how strongly it reflects, 0 to 1
+    std::wstring asset;                 // Game: the material asset
+    std::vector<Setting> settings;      // "set", after the finish's own parameters
+    std::vector<Motion> motions;        // "animate"
+    std::vector<std::pair<std::string, float>> race;    // "race": parameter, factor away from the Customize page
+    float RaceFactor(const std::string& parameter) const {
+        for (const auto& [param, k] : race)
+            if (param == parameter) return k;
+        return 1;
+    }
 };
 
 enum class Shape { Sphere, Box, Cylinder, Cone, Capsule, Disc, Ring, Saw, Cup, Bowl, Spiral, Mesh };
@@ -90,6 +128,7 @@ struct Group {
     int spinAxis = -1;                  // 0 x, 1 y, 2 z, or -1
     double speed = 0;
     bool travel = false;
+    bool facing = false;                // "facing": its +x turned to the camera every frame (a glow behind the ball)
     int parent = -1;                    // "on": the group it is built on, or -1 for the ball
     double pivot[3] = {0, 0, 0};
     int swingAxis = -1;                 // 0 x, 1 y, 2 z, or -1
@@ -131,6 +170,8 @@ struct Built {
     double travelYaw = 90;             // until the ball moves: side-on to the Customize camera (measured)
     bool facing = false;                // travelYaw has been set from the camera or the ball's travel
     double last = -1, beat = 0, pace = 0;   // the tempo's clock: last time, swings so far, smoothed ball speed
+    std::vector<std::vector<double>> clocks;    // per material, per animation: cycles so far ("run" makes them uneven)
+    bool race = true;                   // not on the Customize page's ball: "race" factors apply
     bool Alive() const;
 };
 Built Build(const Model& model, eng::Obj parent);

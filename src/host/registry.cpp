@@ -63,6 +63,7 @@ std::string gState;
 std::string gRawBase = "https://raw.githubusercontent.com/";
 std::map<std::string, std::string> gPending;
 bool gLocalRegistry = false;                         // read from file:/// (a test copy)
+std::string gReleaseBase;                            // test copies only: where release files are read from
 
 struct HostRelease {
     std::string version, repo, commit, dll, dllSha;
@@ -143,7 +144,29 @@ std::string FileUrl(const Entry& e, const std::string& file) {
 std::string Sha(const Entry& e, const std::string& file) {
     for (const auto& [name, sha] : e.files)
         if (name == file) return sha;
+    for (const auto& r : e.releaseFiles)
+        if (r.name == file) return r.sha;
     return "";
+}
+
+// A release file: "assets/<plain name>" ending in .utoc, .ucas or .pak (a cooked-content container, mounted from the
+// plugin's assets folder past the host's gate), downloaded only from that plugin's own GitHub releases.
+bool ValidReleaseFileName(const std::string& s) {
+    if (s.rfind("assets/", 0) != 0 || !ValidFile(s.substr(7))) return false;
+    auto ends = [&](const char* tail) {
+        const size_t n = std::strlen(tail);
+        return s.size() > n && s.compare(s.size() - n, n, tail) == 0;
+    };
+    return ends(".utoc") || ends(".ucas") || ends(".pak");
+}
+bool ValidReleaseUrl(const std::string& url, const std::string& repo) {
+    // Maintainer-built only: release files are accepted for plugins under the maintainer's account (as review_guard.py).
+    if (repo.rfind("AnythingGoes-ballest/", 0) != 0) return false;
+    const std::string prefix = "https://github.com/" + repo + "/releases/download/";
+    if (url.rfind(prefix, 0) != 0) return false;
+    const std::string rest = url.substr(prefix.size());            // "<tag>/<file>"
+    const size_t slash = rest.find('/');
+    return slash != std::string::npos && ValidFile(rest.substr(0, slash)) && ValidFile(rest.substr(slash + 1));
 }
 
 // --- reading registry.json --------------------------------------------------------------------------------------------
@@ -182,6 +205,14 @@ bool ReadEntry(const json::Value& v, Entry& e, std::string& why) {
         if (!ValidPluginFile(name) || sha.type != json::Value::String || !Hex(sha.string, 64, 64))
             return why = e.id + ": bad file entry '" + name + "'", false;
         e.files.emplace_back(name, sha.string);
+    }
+    if (const json::Value* rel = v.Get("release_files"); rel && rel->type == json::Value::Object) {
+        for (const auto& [name, spec] : rel->members) {
+            const std::string url = spec.Str("url"), sha = spec.Str("sha256");
+            if (!ValidReleaseFileName(name) || !ValidReleaseUrl(url, e.repo) || !Hex(sha, 64, 64) || !Sha(e, name).empty())
+                return why = e.id + ": bad release file '" + name + "'", false;
+            e.releaseFiles.push_back({name, url, sha});
+        }
     }
     if (!e.iconFile.empty() && Sha(e, e.iconFile).empty()) e.iconFile.clear();       // must be one of the files
     return true;
@@ -265,6 +296,10 @@ void Loaded(const std::string& body, const std::string& fetchError, const std::s
     gRawBase = root.Str("raw_base", "https://raw.githubusercontent.com/");
     if (gRawBase.back() != '/') gRawBase += '/';
     gLocalRegistry = url.rfind("file:///", 0) == 0;
+    // A local test copy (tools/registry.py mirror) may serve release files from disk: "release_base" replaces the
+    // "https://github.com/" of an already validated release URL. Ignored for any registry not read from file:///.
+    gReleaseBase = gLocalRegistry ? root.Str("release_base") : "";
+    if (!gReleaseBase.empty() && (gReleaseBase.rfind("file:///", 0) != 0 || gReleaseBase.back() != '/')) gReleaseBase.clear();
     ReadHost(root.Get("host"));
     gEntries.clear();
     for (const auto& item : list->items) {
@@ -362,6 +397,8 @@ void Install(const std::string& id) {
     const Entry e = *found;
     std::vector<std::pair<std::string, std::string>> urls;
     for (const auto& [file, sha] : e.files) urls.emplace_back(file, FileUrl(e, file));
+    for (const auto& r : e.releaseFiles)                                       // same checks, same staging and swap
+        urls.emplace_back(r.name, gReleaseBase.empty() ? r.url : gReleaseBase + r.url.substr(std::strlen("https://github.com/")));
     Post([e, urls] {
         // Everything is downloaded and checked before anything is written into the plugins folder.
         std::vector<std::pair<std::string, std::string>> bodies;

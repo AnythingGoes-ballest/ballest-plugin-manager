@@ -61,9 +61,14 @@ line, or `# `, starts a comment. Lengths are in cm and the ball's radius is 50. 
 ```
 material <name> plastic|metal|glow #rrggbb [rough=0.5] [bright=5]
 material <name> glass [#rrggbb] [opacity=0.2] [ior=1.5] [reflect=1] [rough=0.05]
+material <name> game <material asset path>
+material <name> asset /Game/Mods/<mod>/<material>
+set <material> "<parameter>" <value>
+animate <material> "<parameter>" <from> <to> [period=4] [wave=sine|triangle|saw|square] [phase=0] [run=0]
+race <material> "<parameter>" <factor>
 tempo [rate=1] [run=0] [max=] [calm=1] [full=1]
 ball hidden
-group <name> [spin=x|y|z] [speed=<degrees a second>] [travel] [on=<group>] [pivot=x,y,z]
+group <name> [spin=x|y|z] [speed=<degrees a second>] [travel|facing] [on=<group>] [pivot=x,y,z]
       [swing=x|y|z angle=<degrees>] [bob=<cm>] [phase=<degrees>]
 <shape> <material> <sizes> [at=x,y,z] [rot=pitch,yaw,roll] [scale=x,y,z]
 ```
@@ -138,6 +143,81 @@ sphere light r=4 at=0,-62,0
 ```
 
 If a model has a mistake, the cosmetic isn't added and the log says which line.
+
+### The game's materials, and colours that move
+
+Host 0.27.0 and newer. A model can use any of the game's own materials, set up with parameters of your own, pictures
+included, and change numbers and colours every frame. That's how a ball gets a glossy surface, a glow from a picture,
+and light that flows and shimmers under the surface.
+
+- **`material <name> game <path>`** is one of the game's materials, such as
+  `/Game/Art/DataAssets/Skins/LBall/CameraVisibility/M_LBall05_CameraLogo`. The path can leave out the `.Name` at the
+  end.
+- **`set <material> "<parameter>" <value>`** sets one of its parameters (names with spaces in quotes). The value is a
+  number, a colour (`#rrggbb`, or `r,g,b` in linear values; `*k` after either makes it k times as bright, for glowing
+  colours such as `#39ff14*4`), a picture of the plugin's next to the model (`.png` or `.jpg`, a path from the model's
+  folder such as `../textures/glow.png`), or one of the game's textures (a path starting with `/`). `set` works on
+  every material, the plain kinds too: it comes after the host's own settings. A material ignores parameters it
+  doesn't have.
+- **`animate <material> "<parameter>" <from> <to>`** moves a number or a colour between two values every frame:
+  `period` seconds a cycle, `wave` its shape (`sine`, `triangle` and `square` go there and back, `saw` goes from one
+  to the other and starts over), `phase` degrees into the cycle, and `run` makes it that much faster for every m/s of
+  the ball's speed. It works on the racing ball too, where the game's camera fade puts copies of the materials on.
+- **`race <material> "<parameter>" <factor>`** multiplies that parameter, as set or animated, on every ball but the
+  Customize page's (in races, the editor and replays; a colour's brightness for a colour). Daylight on a track washes
+  glow out that looks right on the dark Customize page: `race crystal "EmissiveColor" 1.8`.
+- **`material <name> asset /Game/Mods/<mod>/<material>`** is a material of the plugin's own: cooked in Unreal Engine
+  5.8.3 and shipped in the plugin's `assets/` folder as a container (see
+  [Custom cooked assets](../custom-assets-recipe.md)). `<mod>` is the plugin's id with `-` as `_`. It works like
+  `game`, with `set`, `animate` and `race`. Only materials and material instances are used, and only from containers that
+  hold nothing outside the plugin's own `/Game/Mods/<mod>/`.
+- **`group <name> facing`** turns the group's +x toward the camera every frame. A disc across the ball's middle with a
+  soft glow picture then shows only round the ball (the ball hides the rest of it): a glow halo.
+
+Parameter names come from the game's materials: `matparams <material path>` in the console lists what an instance
+sets, and the host's `dumptypes` mappings let tools such as FModel read the rest. Materials that work well on balls
+(measured in game):
+
+| Material | What it gives | Parameters |
+|---|---|---|
+| `/Game/Art/DataAssets/Skins/LBall/CameraVisibility/M_LBall05_CameraLogo` | A shiny surface with pictures: colour, glow, normal and shine maps, laid on by the model's UVs | `DiffuseColor`, `DiffuseColorMap` (+`Weight`), `EmissiveColor` (it multiplies the glow), `EmissiveColorMap` (+`Weight`), `NormalMap` (+`Weight`), `SpecularColor`, `Shininess` (higher is sharper) |
+| `/Game/Packs/Vefects/Stylized_Galaxy_Shader/Galaxy/Materials/M_VFX_Lush_Galaxy_Shader` | A glowing deep space with twinkling stars that drift by themselves and a glowing rim; it stays still as the ball rolls, like something deep inside | `Galaxy Tint`, `Galaxy Emission Intensity`, `Galaxy Hue Shift`, `Stars Color 01`/`02`, `Stars Emission Intensity`, `Stars Speed X`/`Y`, `Fresnel Color`, `Fresnel Emission Intensity`, `Fresnel Power`, `Roughness`, `Specular` |
+| `/Game/Packs/Vefects/Anime_VFX/Shared/Materials/Parents/M_VFX_DissolveAdd` | A see-through glowing layer whose pictures pan by themselves | `Main_Tex`, `GradientMap_Tex` (its colours, along the picture's width), `Brightness`, `MainTex_Speed_X`/`Y`. Give your picture to `Color_Tex`, `GradientShape_Tex` and `Dissolve_Tex` too, or the whole layer fogs |
+
+```
+# a glossy black ball with a green glow from a picture, turning slowly and breathing
+ball hidden
+material liquid game /Game/Art/DataAssets/Skins/LBall/CameraVisibility/M_LBall05_CameraLogo
+set liquid "DiffuseColor" #030405
+set liquid "DiffuseColorMapWeight" 0
+set liquid "EmissiveColorMap" ../textures/glow.png
+set liquid "EmissiveColorMapWeight" 1
+set liquid "SpecularColor" #ffffff
+set liquid "Shininess" 400
+animate liquid "EmissiveColor" #ffffff*3 #ffffff*5.5 period=3.5
+group swirl spin=z speed=14
+mesh sphere.glb size=95 at=0,0,-47.5 material=liquid
+```
+
+```
+# a soft glow round the ball: a disc (radius 80, facing +x) whose picture fades out from the ball's edge
+material halo game /Game/Packs/Vefects/Anime_VFX/Shared/Materials/Parents/M_VFX_DissolveAdd
+set halo "Main_Tex" ../textures/halo.png
+set halo "Color_Tex" ../textures/halo.png
+set halo "GradientShape_Tex" ../textures/halo.png
+set halo "Dissolve_Tex" ../textures/halo.png
+set halo "GradientMap_Tex" ../textures/halo_colour.png
+group halo facing
+mesh halo.glb at=0,0,-80 material=halo
+```
+
+A shiny surface also mirrors the track: on the start pad a mirror-shiny ball shows a band of the pad's yellow. A
+lower `SpecularColor` (`#404040`) with a high `Shininess` keeps a sharp highlight without the band (measured).
+
+Layers: a smaller sphere inside a larger one only shows where the larger one has gaps (a mesh with holes, such as
+plates or shards) or is see-through (glass, or the DissolveAdd layer). Pictures load as sRGB textures. The host keeps a
+picture per file path for the session, so after changing one, start the game again to see it.
+[Elemental Balls](https://github.com/AnythingGoes-ballest/ballest-elemental-balls) is three balls built this way.
 
 ## 3D model files
 

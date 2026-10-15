@@ -1,5 +1,7 @@
 #include "models.hpp"
 
+#include "assets.hpp"
+
 #include <windows.h>
 
 #include <algorithm>
@@ -278,6 +280,77 @@ bool LoadMesh(const std::string& fileName, const std::vector<std::string>& optio
     return true;
 }
 
+// Words with quoted ones kept whole ("Stars Color 01"), the quotes taken off. Empty if a quote isn't closed.
+std::vector<std::string> QuotedWords(const std::string& line) {
+    std::vector<std::string> out;
+    size_t i = 0;
+    while (i < line.size()) {
+        while (i < line.size() && std::isspace(static_cast<unsigned char>(line[i]))) ++i;
+        if (i >= line.size()) break;
+        if (line[i] == '"') {
+            const size_t end = line.find('"', i + 1);
+            if (end == std::string::npos) return {};
+            out.push_back(line.substr(i + 1, end - i - 1));
+            i = end + 1;
+        } else {
+            size_t end = i;
+            while (end < line.size() && !std::isspace(static_cast<unsigned char>(line[end]))) ++end;
+            out.push_back(line.substr(i, end - i));
+            i = end;
+        }
+    }
+    return out;
+}
+
+// A colour value: #rrggbb (sRGB, as everywhere in a model) or r,g,b[,a] (linear), either optionally followed by *k
+// (k times as bright, for glowing colours). False if it is neither.
+bool ColourValue(const std::string& text, float out[4]) {
+    std::string s = text;
+    double k = 1;
+    if (const size_t star = s.find('*'); star != std::string::npos) {
+        char* end = nullptr;
+        k = std::strtod(s.c_str() + star + 1, &end);
+        if (!end || *end || star + 1 >= s.size()) return false;
+        s = s.substr(0, star);
+    }
+    out[3] = 1;
+    if (s.size() == 7 && s[0] == '#') {
+        char* end = nullptr;
+        const long rgb = std::strtol(s.c_str() + 1, &end, 16);
+        if (!end || *end) return false;
+        out[0] = Linear((rgb >> 16) & 255), out[1] = Linear((rgb >> 8) & 255), out[2] = Linear(rgb & 255);
+    } else {
+        double v[4] = {0, 0, 0, 1};
+        const size_t commas = static_cast<size_t>(std::count(s.begin(), s.end(), ','));
+        if (commas < 2 || commas > 3) return false;
+        std::stringstream ss(s);
+        std::string item;
+        for (size_t i = 0; std::getline(ss, item, ','); ++i) {
+            char* end = nullptr;
+            v[i] = std::strtod(item.c_str(), &end);
+            if (item.empty() || !end || *end) return false;
+        }
+        for (int c = 0; c < 4; ++c) out[c] = static_cast<float>(v[c]);
+    }
+    for (int c = 0; c < 3; ++c) out[c] = static_cast<float>(out[c] * k);
+    return true;
+}
+
+bool NumberValue(const std::string& s, float* out) {
+    char* end = nullptr;
+    const double v = std::strtod(s.c_str(), &end);
+    if (s.empty() || !end || *end) return false;
+    *out = static_cast<float>(v);
+    return true;
+}
+
+// An asset's object path: "/Game/A/B" is taken as "/Game/A/B.B".
+std::wstring ObjectPath(const std::string& path) {
+    const size_t slash = path.rfind('/');
+    if (path.find('.', slash == std::string::npos ? 0 : slash) != std::string::npos) return eng::Widen(path);
+    return eng::Widen(path + "." + path.substr(slash + 1));
+}
+
 }  // namespace
 
 bool Parse(const std::string& text, Model* model, std::string* error, const std::wstring& folder) {
@@ -316,6 +389,105 @@ bool Parse(const std::string& text, Model* model, std::string* error, const std:
             std::string v;
             return value(key, &v) ? std::atof(v.c_str()) : fallback;
         };
+        auto materialNamed = [&](const std::string& name) -> Material* {
+            for (auto& m : model->materials)
+                if (m.name == name) return &m;
+            return nullptr;
+        };
+        if (w[0] == "material" && w.size() >= 3 && (w[2] == "game" || w[2] == "asset")) {
+            const std::vector<std::string> q = QuotedWords(line);
+            if (w[2] == "asset") {
+                // A material from a plugin's own cooked content (its assets/ container, mounted at plugin start).
+                if (q.size() != 4 || q[3].rfind("/Game/Mods/", 0) != 0)
+                    return fail("material <name> asset /Game/Mods/<plugin id>/<material>.<material>");
+            } else if (q.size() != 4 || q[3].empty() || q[3][0] != '/') {
+                return fail("material <name> game <material asset path>");
+            }
+            Material m;
+            m.name = w[1];
+            m.finish = Finish::Game;
+            m.asset = ObjectPath(q[3]);
+            model->materials.push_back(m);
+            continue;
+        }
+        if (w[0] == "set") {
+            const std::vector<std::string> q = QuotedWords(line);
+            if (q.size() != 4) return fail("set <material> \"<parameter>\" <value>");
+            Material* m = materialNamed(q[1]);
+            if (!m) return fail("no material '" + q[1] + "' (define it first)");
+            Setting st;
+            st.parameter = q[2];
+            const std::string& v = q[3];
+            auto ends = [&](const char* tail) {
+                const size_t n = std::strlen(tail);
+                if (v.size() < n) return false;
+                for (size_t i = 0; i < n; ++i)
+                    if (std::tolower(static_cast<unsigned char>(v[v.size() - n + i])) != tail[i]) return false;
+                return true;
+            };
+            if (NumberValue(v, &st.value[0])) {
+                st.kind = Setting::Kind::Scalar;
+            } else if (ColourValue(v, st.value)) {
+                st.kind = Setting::Kind::Colour;
+            } else if (!v.empty() && v[0] == '/') {
+                st.kind = Setting::Kind::Texture;
+                st.asset = ObjectPath(v);
+            } else if (ends(".png") || ends(".jpg") || ends(".jpeg")) {
+                st.kind = Setting::Kind::Texture;
+                std::wstring file = eng::Widen(v);
+                for (auto& c : file)
+                    if (c == L'/') c = L'\\';
+                if (!(file.size() > 1 && file[1] == L':') && !folder.empty()) file = folder + (folder.back() == L'\\' ? L"" : L"\\") + file;
+                if (GetFileAttributesW(file.c_str()) == INVALID_FILE_ATTRIBUTES) return fail("set: no picture file " + v);
+                st.file = file;
+            } else {
+                return fail("set: a number, a colour (#rrggbb or r,g,b), a picture file or a texture asset path");
+            }
+            m->settings.push_back(st);
+            continue;
+        }
+        if (w[0] == "animate") {
+            const std::vector<std::string> q = QuotedWords(line);
+            if (q.size() < 5) return fail("animate <material> \"<parameter>\" <from> <to> [period=] [wave=] [phase=] [run=]");
+            Material* m = materialNamed(q[1]);
+            if (!m) return fail("no material '" + q[1] + "' (define it first)");
+            Motion mo;
+            mo.parameter = q[2];
+            if (NumberValue(q[3], &mo.from[0]) && NumberValue(q[4], &mo.to[0])) mo.colour = false;
+            else if (ColourValue(q[3], mo.from) && ColourValue(q[4], mo.to)) mo.colour = true;
+            else return fail("animate: from and to are both numbers or both colours");
+            for (size_t i = 5; i < q.size(); ++i) {
+                const size_t eq = q[i].find('=');
+                if (eq == std::string::npos) return fail("animate: options are key=value");
+                const std::string key = q[i].substr(0, eq), val = q[i].substr(eq + 1);
+                if (key == "wave") {
+                    if (val == "sine") mo.wave = Motion::Wave::Sine;
+                    else if (val == "triangle") mo.wave = Motion::Wave::Triangle;
+                    else if (val == "saw") mo.wave = Motion::Wave::Saw;
+                    else if (val == "square") mo.wave = Motion::Wave::Square;
+                    else return fail("animate: wave=sine|triangle|saw|square");
+                    continue;
+                }
+                float f = 0;
+                if (!NumberValue(val, &f)) return fail("animate: " + key + "= takes a number");
+                if (key == "period") mo.period = f;
+                else if (key == "phase") mo.phase = f;
+                else if (key == "run") mo.run = f;
+                else return fail("animate: unknown option " + key);
+            }
+            if (mo.period <= 0 || mo.run < 0) return fail("animate: period above 0, run from 0");
+            m->motions.push_back(mo);
+            continue;
+        }
+        if (w[0] == "race") {
+            const std::vector<std::string> q = QuotedWords(line);
+            float k = 0;
+            if (q.size() != 4 || !NumberValue(q[3], &k) || k < 0) return fail("race <material> \"<parameter>\" <factor from 0>");
+            Material* m = materialNamed(q[1]);
+            if (!m) return fail("no material '" + q[1] + "' (define it first)");
+            m->race.push_back({q[2], k});
+            continue;
+        }
         if (w[0] == "material") {
             if (w.size() >= 3 && w[2] == "glass") {
                 Material m;
@@ -382,6 +554,8 @@ bool Parse(const std::string& text, Model* model, std::string* error, const std:
             if (value("spin", &v)) g.spinAxis = axisOf(v);
             g.speed = num("speed", 0);
             for (const auto& word : w) g.travel |= word == "travel";
+            for (const auto& word : w) g.facing |= word == "facing";
+            if (g.facing && (g.travel || g.spinAxis >= 0)) return fail("a facing group can't travel or spin");
             // The implicit first group goes if nothing was put in it; a group the text named stays even when empty (an
             // empty travelling group that others are built on: it was dropped, and "on=" then failed, reported).
             if (implicitMain && model->groups.size() == 1 && model->groups[0].parts.empty()) model->groups.clear();
@@ -390,7 +564,7 @@ bool Parse(const std::string& text, Model* model, std::string* error, const std:
                 for (size_t i = 0; i < model->groups.size(); ++i)
                     if (model->groups[i].name == v) g.parent = static_cast<int>(i);
                 if (g.parent < 0) return fail("on=" + v + ": no group of that name before this one");
-                if (g.travel) return fail("travel is for groups on the ball; one on another group turns with it");
+                if (g.travel || g.facing) return fail("travel and facing are for groups on the ball; one on another group turns with it");
             }
             if (value("pivot", &v) && !Numbers(v, g.pivot, 3)) return fail("pivot=x,y,z");
             if (value("swing", &v)) {
@@ -400,7 +574,7 @@ bool Parse(const std::string& text, Model* model, std::string* error, const std:
             }
             g.bob = num("bob", 0);
             g.phase = num("phase", 0);
-            if (g.travel && g.Moves()) return fail("a travel group can't pivot, swing or bob: put those on a group on it");
+            if ((g.travel || g.facing) && g.Moves()) return fail("a travel or facing group can't pivot, swing or bob: put those on a group on it");
             model->groups.push_back(g);
             continue;
         }
@@ -788,11 +962,102 @@ Obj GlowParent() {
     return cosmetics::LoadAsset(kGlowMaterial);
 }
 
-Obj MakeMaterial(const Material& m, Obj worldContext) {
+// A parameter name as the engine's FName (8 bytes), made once per name: animations set theirs every frame.
+const uint8_t* ParameterName(const std::string& name) {
+    static std::vector<std::pair<std::string, std::array<uint8_t, 8>>> made;
+    for (const auto& [n, bytes] : made)
+        if (n == name) return bytes.data();
+    const std::wstring wide = eng::Widen(name);
+    const Params call = eng::Call(Lib("KismetStringLibrary"), "Conv_StringToName",
+                                  eng::FString{wide.c_str(), static_cast<int32_t>(wide.size() + 1), static_cast<int32_t>(wide.size() + 1)});
+    const uint8_t* r = call.Return();
+    if (!r) return nullptr;
+    std::array<uint8_t, 8> bytes{};
+    std::memcpy(bytes.data(), r, 8);
+    made.push_back({name, bytes});
+    return made.back().second.data();
+}
+
+void SetScalarParameter(Obj mid, const std::string& name, float v) {
+    const uint8_t* fname = ParameterName(name);
+    if (!mid || !fname) return;
+    Params p(eng::FunctionOn(mid, "SetScalarParameterValue"));
+    p.Set("ParameterName", fname, 8);
+    p.Set("Value", v);
+    eng::Invoke(mid, p);
+}
+
+void SetVectorParameter(Obj mid, const std::string& name, const float v[4]) {
+    const uint8_t* fname = ParameterName(name);
+    if (!mid || !fname) return;
+    Params p(eng::FunctionOn(mid, "SetVectorParameterValue"));
+    p.Set("ParameterName", fname, 8);
+    const float value[4] = {v[0], v[1], v[2], v[3]};
+    p.Set("Value", value);
+    eng::Invoke(mid, p);
+}
+
+// A model's "set" lines on its material's dynamic instance. A material ignores parameters it doesn't have.
+void ApplySettings(const Material& m, Obj mid, bool race) {
+    for (const Setting& st : m.settings) {
+        const float k = race ? m.RaceFactor(st.parameter) : 1;
+        if (st.kind == Setting::Kind::Scalar) SetScalarParameter(mid, st.parameter, st.value[0] * k);
+        else if (st.kind == Setting::Kind::Colour) {
+            const float v[4] = {st.value[0] * k, st.value[1] * k, st.value[2] * k, st.value[3]};
+            SetVectorParameter(mid, st.parameter, v);
+        } else {
+            Obj tex = st.file.empty() ? cosmetics::LoadAsset(st.asset) : ImageTexture(st.file);
+            const uint8_t* fname = ParameterName(st.parameter);
+            if (!tex || !fname) {
+                hostlog::Warn("models: material " + m.name + ": the texture for " + st.parameter + " did not load");
+                continue;
+            }
+            Params p(eng::FunctionOn(mid, "SetTextureParameterValue"));
+            p.Set("ParameterName", fname, 8);
+            p.Set("Value", tex);
+            eng::Invoke(mid, p);
+        }
+    }
+}
+
+// An animation's value at a point of its cycle (cycles: whole cycles count for nothing), from 0 (its "from") to 1.
+double WaveAt(Motion::Wave wave, double cycles) {
+    const double t = cycles - std::floor(cycles);
+    switch (wave) {
+        case Motion::Wave::Sine: return 0.5 - 0.5 * std::cos(2 * kPi * t);
+        case Motion::Wave::Triangle: return t < 0.5 ? 2 * t : 2 - 2 * t;
+        case Motion::Wave::Saw: return t;
+        case Motion::Wave::Square: return t < 0.5 ? 0 : 1;
+    }
+    return 0;
+}
+
+Obj MakeMaterial(const Material& m, Obj worldContext, bool race = true) {
     if (m.finish == Finish::Image) {
         Obj material = cosmetics::ImageMaterial(ImageTexture(m.image), "ModelImage");
         if (!material) hostlog::Warn("models: the image of material " + m.name + " did not load");
+        if (material) ApplySettings(m, material, race);
         return material;
+    }
+    if (m.finish == Finish::Game) {
+        Obj parent = cosmetics::LoadAsset(assets::ResolveModPath(m.asset));   // "asset": the newest build of the plugin's own
+        if (!parent) {
+            hostlog::Warn("models: material " + m.name + ": " + eng::Narrow(m.asset.c_str(), static_cast<int>(m.asset.size())) +
+                          " did not load");
+            return nullptr;
+        }
+        // Plugin content (/Game/Mods/) is only ever used as a material: anything else a container holds (a texture it
+        // uses, say) may load as a dependency, but is never applied, spawned or run.
+        if (m.asset.rfind(L"/Game/Mods/", 0) == 0 && !eng::IsA(parent, eng::FindClass("MaterialInterface"))) {
+            hostlog::Warn("models: material " + m.name + ": " + eng::PathOf(parent) + " is a " +
+                          eng::ObjName(eng::ClassOf(parent)) + ", not a material: refused");
+            return nullptr;
+        }
+        Obj mid = eng::Call(Lib("KismetMaterialLibrary"), "CreateDynamicMaterialInstance", worldContext, parent,
+                            std::array<uint8_t, 8>{}, uint8_t{0})
+                      .ReturnObj();
+        if (mid) ApplySettings(m, mid, race);
+        return mid;
     }
     const wchar_t* path = m.finish == Finish::Glow    ? kGlowMaterial
                           : m.finish == Finish::Glass ? (m.refracts ? (gRefractingParent.empty() ? kRefractingGlassMaterial : gRefractingParent.c_str())
@@ -866,6 +1131,7 @@ Obj MakeMaterial(const Material& m, Obj worldContext) {
         scalar("ConcreteValue", 0);
         scalar("FresnelColorMult", 0);
     }
+    ApplySettings(m, mid, race);
     return mid;
 }
 
@@ -1005,8 +1271,11 @@ Built Build(const Model& model, Obj parent) {
     built.parent = eng::MakeWeak(parent);
     Obj controller = game::PlayerController();
     if (!parent || !controller) return built;
+    // On the Customize page's ball (BP_MenuBall_C) the "race" factors don't apply.
+    Obj owner = eng::Call(parent, "GetOwner").ReturnObj();
+    built.race = !(owner && eng::ClassOf(owner) == eng::FindClass("BP_MenuBall_C"));
     std::vector<Obj> materials;
-    for (const auto& m : model.materials) materials.push_back(MakeMaterial(m, controller));
+    for (const auto& m : model.materials) materials.push_back(MakeMaterial(m, controller, built.race));
     for (const auto& group : model.groups) {
         Obj actor = SpawnMeshActor(controller);
         Obj component = actor ? eng::ReadObj(actor, "DynamicMeshComponent") : nullptr;
@@ -1086,6 +1355,46 @@ std::vector<Obj> Actors(const Built& built) {
 namespace {
 double Wrap(double degrees) { return std::remainder(degrees, 360.0); }
 
+// Materials' animations ("animate"): each frame the values are set on the dynamic material each slot of each mesh shows
+// now. That's the model's own, or one the game put in its place: the racing ball's camera fade swaps in its own fade
+// copies of the materials on the ball, dynamic instances too (see cosmetics' FadeOf).
+void AnimateMaterials(const Model& model, Built& built, double dt) {
+    bool any = false;
+    for (const auto& m : model.materials) any |= !m.motions.empty();
+    if (!any) return;
+    built.clocks.resize(model.materials.size());
+    std::vector<Obj> components;
+    for (Obj actor : Actors(built))
+        if (Obj c = eng::ReadObj(actor, "DynamicMeshComponent")) components.push_back(c);
+    static Obj dynamicClass = nullptr;
+    if (!dynamicClass) dynamicClass = eng::FindClass("MaterialInstanceDynamic");
+    for (size_t i = 0; i < model.materials.size(); ++i) {
+        const Material& m = model.materials[i];
+        if (m.motions.empty()) continue;
+        auto& clocks = built.clocks[i];
+        clocks.resize(m.motions.size(), 0.0);
+        std::vector<Obj> mids;
+        for (Obj c : components) {
+            Obj mat = eng::Call(c, "GetMaterial", static_cast<int32_t>(i)).ReturnObj();
+            if (mat && dynamicClass && eng::IsA(mat, dynamicClass) && std::find(mids.begin(), mids.end(), mat) == mids.end())
+                mids.push_back(mat);
+        }
+        for (size_t k = 0; k < m.motions.size(); ++k) {
+            const Motion& mo = m.motions[k];
+            clocks[k] += dt / mo.period * (1 + mo.run * built.pace);
+            const double at = WaveAt(mo.wave, clocks[k] + mo.phase / 360);
+            float v[4];
+            for (int c = 0; c < 4; ++c) v[c] = static_cast<float>(mo.from[c] + (mo.to[c] - mo.from[c]) * at);
+            const float boost = built.race ? m.RaceFactor(mo.parameter) : 1;
+            for (int c = 0; c < 3; ++c) v[c] *= boost;
+            for (Obj mid : mids) {
+                if (mo.colour) SetVectorParameter(mid, mo.parameter, v);
+                else SetScalarParameter(mid, mo.parameter, v[0]);
+            }
+        }
+    }
+}
+
 // The yaw of the camera the player sees through.
 bool CameraYaw(double* yaw) {
     Obj controller = game::PlayerController();
@@ -1129,10 +1438,23 @@ void Animate(const Model& model, Built& built, Obj ballActor, double seconds) {
     for (size_t i = 0; i < model.groups.size() && i < built.actors.size(); ++i) {
         const Group& g = model.groups[i];
         const bool moves = g.Moves();
-        if (g.spinAxis < 0 && !g.travel && !moves) continue;
+        if (g.spinAxis < 0 && !g.travel && !g.facing && !moves) continue;
         Obj actor = eng::Get(built.actors[i]);
         Obj component = actor ? eng::ReadObj(actor, "DynamicMeshComponent") : nullptr;
         if (!component) continue;
+        if (g.facing) {                                 // +x toward the camera the player sees through
+            Obj controller = game::PlayerController();
+            Obj manager = controller ? eng::ReadObj(controller, "PlayerCameraManager") : nullptr;
+            if (!manager) continue;
+            const Vec3 camera = eng::Call(manager, "GetCameraLocation").ReturnAs<Vec3>();
+            const Vec3 at = eng::Call(component, "K2_GetComponentLocation").ReturnAs<Vec3>();
+            const Rot look = eng::Call(Lib("KismetMathLibrary"), "FindLookAtRotation", at, camera).ReturnAs<Rot>();
+            Params p(eng::FunctionOn(component, "K2_SetWorldRotation"));
+            p.Set("NewRotation", look);
+            p.Set("bTeleport", uint8_t{1});
+            eng::Invoke(component, p);
+            continue;
+        }
         double angles[3] = {0, 0, 0};                   // about x (roll), y (pitch), z (yaw)
         if (g.spinAxis >= 0) angles[g.spinAxis] += std::fmod(seconds * g.speed, 360.0);
         const double phase = g.phase * kPi / 180;
@@ -1191,6 +1513,7 @@ void Animate(const Model& model, Built& built, Obj ballActor, double seconds) {
         show(flip.shown, false);
         flip.shown = index;
     }
+    AnimateMaterials(model, built, dt);
 }
 
 void Destroy(Built& built) {

@@ -3,6 +3,8 @@
 #include "hud.hpp"
 #include "plugins.hpp"
 
+#include "assets.hpp"
+
 #include <windows.h>
 
 #include <angelscript.h>
@@ -262,6 +264,14 @@ void Start(size_t index) {
             hostlog::Write("error", p.id, p.status + (gOff.count(dependency) ? " (it is turned off)" : " (install it, or it stopped)"));
             return;
         }
+    }
+    // Cooked content the plugin ships (assets/*.utoc + .ucas + .pak): gated to /Game/Mods/<id>/, mounted, and its
+    // shader library opened before the script runs, so its Main can already use the assets. A reload mounts any newer
+    // build placed there since (docs/custom-assets-recipe.md).
+    {
+        const std::wstring assetsDir = p.dir + L"\\assets";
+        const DWORD attr = GetFileAttributesW(assetsDir.c_str());
+        if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) assets::MountPluginAssets(p.id, assetsDir);
     }
     CScriptBuilder builder;
     builder.SetIncludeCallback(RefuseInclude, nullptr);
