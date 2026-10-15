@@ -281,6 +281,12 @@ void EarlyWindowFit(const std::wstring& pluginsDir) {
 
 void* WindowHandle() { return GameWindow(); }
 
+double ViewportScale() {
+    Obj controller = PlayerController();
+    if (!controller) return 0;
+    return eng::Call(eng::FindCdo("WidgetLayoutLibrary"), "GetViewportScale", controller).ReturnAs<float>(0.0f);
+}
+
 bool ScreenSize(double* width, double* height) {
     Obj controller = PlayerController();
     if (!controller) return false;

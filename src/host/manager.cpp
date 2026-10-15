@@ -107,7 +107,9 @@ const Color kTrim = ux::Hex("#2A2C32"), kTrimHover = ux::Hex("#3C3F46"), kVerMut
 const Color kPopupText = ux::Hex("#A9ACB1"), kConsole = ux::Hex("#08090B"), kOffKnob = ux::Hex("#6E7176"), kBannerInk = ux::Hex("#1C2600");
 
 // Sizes in design units (the concept's pixels at 1920x1080, scale 1).
-constexpr double kWinW = 1540, kWinH = 916, kTopH = 78, kSubH = 74, kGap = 10;
+// (the window's first size, until it's dragged: Lvcid's at 1080p, 1184 x 780 (screen units: the same share of any
+// screen; a bigger scale's minimum can make it larger); dragged, the player's own size is kept)
+constexpr double kWinW = 1184, kWinH = 780, kTopH = 78, kSubH = 74, kGap = 10;
 constexpr double kThickH = 98, kCompactH = 58;
 constexpr double kEase = 0.06;
 constexpr double kRowEase = 0.26;           // a row's or card's hover: slow and soft (Lvcid: a quarter of the speed or less)
@@ -131,11 +133,13 @@ Color Lift(const Color& c, double hover) { return ux::Mix(c, {1, 1, 1, c.a}, 0.0
 double EaseOut(double t, double power = 2) { return 1 - std::pow(1 - std::clamp(t, 0.0, 1.0), power); }
 
 // --- the window's own settings (kept in the plugin manager's storage) --------------------------------------------------
-// The defaults (Lvcid, 2026-10-11): screen dim 67%, window scale 110% (of the 0.85 that's "100%"), hover sounds at 69%,
+// The defaults (Lvcid, 2026-10-11): screen dim 67%, window scale 110% (of the 0.85 that's "100%"; more on small screens:
+// ScreenDefaultScale), hover sounds at 69%,
 // the compact (small) list on every page, the theme Ballest Night (the Plugin Manager plugin's setting), DEBUG all off.
 constexpr double kDefaultDim = 0.67, kDefaultScale = 0.85 * 1.1, kDefaultHoverVol = 0.69;
 struct Prefs {
     double scale = kDefaultScale, dim = kDefaultDim;
+    bool scaleChosen = false;               // the window scale moved by the player (else the screen's default)
     double winW = 0, winH = 0;              // the window's size on screen (UI units), 0: the concept's
     bool marquee = true;
     std::string view = "compact";           // compact or thick (compact by default: Lvcid, cleaner)
@@ -151,6 +155,17 @@ Prefs gPrefs;
 bool gPrefsRead = false;
 double gPrefsDirtyAt = -1;
 
+// The window scale for this screen, until the player picks one (Lvcid, 2026-10-15): 110% at 1080p and up, more on
+// smaller screens, where the small words got too small to read (AnythingGoes' review): 150% at 720p, in between
+// by the screen's pixels per unit, in steps of 5.
+double ScreenDefaultScale() {
+    const double s = game::ViewportScale();
+    if (s <= 0) return kDefaultScale;
+    const double small = std::clamp((1.0 - s) / (1.0 - 2.0 / 3.0), 0.0, 1.0);
+    const double pct = std::round((110 + 40 * small) / 5) * 5;
+    return pct / 100 * 0.85;
+}
+
 void ReadPrefs() {
     auto get = [](const char* key, const char* fallback) { return storage::Get(kSelf, std::string("manager.") + key, fallback); };
     // (a saved number that isn't one (nan, inf: clamp keeps a nan) reads as the default)
@@ -158,7 +173,9 @@ void ReadPrefs() {
         const double v = std::atof(get(key, fallback).c_str());
         return std::isfinite(v) ? v : std::atof(fallback);
     };
-    gPrefs.scale = std::clamp(num("scale", "0.935"), 0.68, 1.275);      // (80..150% of 0.85; 110% by default)
+    gPrefs.scale = std::clamp(num("scale", "0.935"), 0.68, 1.275);      // (80..150% of 0.85)
+    gPrefs.scaleChosen = get("scaleset", "0") == "1";
+    if (!gPrefs.scaleChosen) gPrefs.scale = ScreenDefaultScale();
     gPrefs.dim = std::clamp(num("dim", "0.67"), 0.0, 0.99);
     // (Lvcid, twice: darker. Once, whatever was saved goes up to the new default; the slider can lower it again)
     // (Lvcid, after several tries: 60%. Once, whatever was saved goes to it, saved at once; the slider can change it)
@@ -206,6 +223,7 @@ void SavePrefs() {
     const Prefs& out = gPrefs;
     std::snprintf(buffer, sizeof buffer, "%.4f", out.scale);
     set("scale", buffer);
+    set("scaleset", out.scaleChosen ? "1" : "0");
     std::snprintf(buffer, sizeof buffer, "%.3f", out.dim);
     set("dim", buffer);
     set("marquee", out.marquee ? "1" : "0");
@@ -3817,10 +3835,10 @@ double General(Layer& pane, Layer& overlay, double w) {
         pmui::Text(pane, "winsize.n", 3, "drag the window's edges or corners", 16, "Semilight", kSub, kSlX, cy);
         y += kRow;
     }
-    // window scale: 80..150% in steps of 5 (110% by default); it changes when the slider is let go (the window would
+    // window scale: 80..150% in steps of 5 (by default the screen's: 110%, more on small screens); it changes when the slider is let go (the window would
     // move under the pointer while dragging: no test-drag either)
     {
-        const double cy = row("scale", "window scale", "for small or very large screens: everything in this window (110% by default)");
+        const double cy = row("scale", "window scale", "for small or very large screens: everything in this window (by default 110%, more on small screens)");
         static double pending = -1;
         const double shown = std::round((pending >= 0 ? pending : gPrefs.scale) / kScaleBase * 20) * 5;
         double st = (shown - 80) / 70;
@@ -3828,6 +3846,7 @@ double General(Layer& pane, Layer& overlay, double w) {
             pending = (80 + std::round(st * 14) * 5) / 100 * kScaleBase;
         if (pending >= 0 && !pmui::Held("scale.s")) {
             gPrefs.scale = pending;
+            gPrefs.scaleChosen = true;
             pending = -1;
             PrefsChanged();
         }
@@ -3898,7 +3917,8 @@ void ResetAppearance() {
     hostlog::Info("manager: general settings reset");
     gPrefs.dim = kDefaultDim;
     gPrefs.dimOn = true;
-    gPrefs.scale = kDefaultScale;
+    gPrefs.scaleChosen = false;
+    gPrefs.scale = ScreenDefaultScale();
     gPrefs.winW = gPrefs.winH = 0;
     gPrefs.hoverSound = true;
     gPrefs.hoverVol = kDefaultHoverVol;
@@ -3932,7 +3952,7 @@ void ResetPopup(Layer& wl, double W, double H) {
     // (this page's settings only, said exactly; Lvcid)
     pmui::Text(pop, "title", 2, "reset general?", 28, "Regular", kWhite, 28, 46);
     pmui::Para(pop, "text", 2,
-               "The window size, window scale (110%), screen dim (on, 67%), hover sounds (on, 69%) and the theme (Ballest Night) go "
+               "The window size, window scale (110%, more on small screens), screen dim (on, 67%), hover sounds (on, 69%) and the theme (Ballest Night) go "
                "back to their defaults.",
                17, "Semilight", kPopupText, {28, 76, b.w - 56, 70});
     pmui::Text(pop, "text2", 2, "Nothing on the other pages changes.", 15, "Semilight", kSub, 28, 150);
@@ -5306,6 +5326,7 @@ void Frame() {
     gScreen.Show(true);
     if (!closing) game::SetModalWidget(eng::Get(gScreen.host));
     if (!gPrefsRead) ReadPrefs();
+    if (!gPrefs.scaleChosen) gPrefs.scale = ScreenDefaultScale();     // (a screen change: its own default)
     const double k = gPrefs.scale;
     gScreen.Scale(k);
     pmui::OnHoverStart(HoverSound);
@@ -5321,7 +5342,7 @@ void Frame() {
     if (closing || gWelcome == Welcome::Intro) pmui::SetModal(1000);      // fading out: nothing answers
     else pmui::SetModal(!gS.popup.empty() ? kPopupLevel : (!gS.choiceOpen.empty() || gS.sortOpen) ? kDropLevel : !gS.overlay.empty() ? kBarLevel : 0);
     // Where it goes: centred between the game's top bar and its footer, drawn at the size setting about the screen's
-    // middle. Its size on screen: the one dragged to (else the concept's 1540x916 at 1080), never smaller than its pages
+    // middle. Its size on screen: the one dragged to (else 1184x780 at 1080), never smaller than its pages
     // fit, never bigger than the room between the bars. The dim leaves both bars as they are; clicks are taken everywhere.
     double sw = 1920, sh = 1080;
     ux::ScreenSize(&sw, &sh);
