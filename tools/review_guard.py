@@ -71,6 +71,32 @@ def plugin_problems(plugin_id, commit, files):
     return problems
 
 
+# Cooked-content containers a plugin needs (docs/custom-assets-recipe.md) are the one kind of packed file allowed, and
+# only this way: built by the maintainers from the plugin's reviewed content project, attached to the plugin's own
+# GitHub release under the maintainer account, and pinned by SHA-256 in "release_files". Never in a repo or a diff.
+MAINTAINER_OWNER = "AnythingGoes-ballest"
+RELEASE_FILE = re.compile(r"^assets/[A-Za-z0-9_\-.]+\.(utoc|ucas|pak)$")
+PLAIN = re.compile(r"^[A-Za-z0-9_\-.]+$")
+
+
+def release_file_problems(p):
+    problems = []
+    for name, spec in (p.get("release_files") or {}).items():
+        url = spec.get("url", "") if isinstance(spec, dict) else ""
+        sha = spec.get("sha256", "") if isinstance(spec, dict) else ""
+        prefix = f"https://github.com/{p['repo']}/releases/download/"
+        rest = url[len(prefix):].split("/") if url.startswith(prefix) else []
+        if not RELEASE_FILE.match(name) or ".." in name:
+            problems.append(f"release file {name}: only assets/<name>.utoc|.ucas|.pak")
+        elif p["repo"].split("/")[0] != MAINTAINER_OWNER:
+            problems.append(f"release file {name}: only plugins under {MAINTAINER_OWNER} (maintainer-built) may have release files")
+        elif len(rest) != 2 or not all(PLAIN.match(x) and ".." not in x for x in rest):
+            problems.append(f"release file {name}: url must be {prefix}<tag>/<file>")
+        elif not re.fullmatch(r"[0-9a-f]{64}", sha):
+            problems.append(f"release file {name}: sha256 must be 64 lowercase hex digits")
+    return problems
+
+
 def check_registry():
     registry = json.loads((ROOT / "registry.json").read_text(encoding="utf-8"))
     problems = []
@@ -82,7 +108,7 @@ def check_registry():
                 files[name] = b""              # refused by name, no need to download it
             else:
                 files[name] = urllib.request.urlopen(base + name.replace(" ", "%20"), timeout=60).read()
-        found = plugin_problems(p["id"], p["commit"], files)
+        found = plugin_problems(p["id"], p["commit"], files) + release_file_problems(p)
         problems += [f"{p['id']} {p['version']}: {x}" for x in found]
         print(f"{p['id']:24} {'PROBLEMS' if found else 'ok'}")
     return problems

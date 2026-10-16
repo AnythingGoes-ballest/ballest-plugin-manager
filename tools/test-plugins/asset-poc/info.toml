@@ -1,0 +1,11 @@
+[meta]
+name = "Asset PoC"
+version = "0.0.1"
+author = "AnythingGoes"
+description = "Test: a ball in a material cooked by the plugin's own content project (assets/)."
+min_host = "0.27.0"
+dependencies = ["cosmetic-kit"]
+
+[script]
+files = ["main.as"]
+assets = ["models/*.txt"]

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Offline tests (no game): builds the host first, then
 #   ascheck        compiles every plugin folder given (default: the bundled ones) against the host's real API
+#   models_test    parses model texts: material statements (game materials, set, animate, plugin assets), rigs
+#   modcontainer_test  the gate on plugin-shipped cooked containers (set MOD_UTOC and MOD_NAME, else skipped)
+#   release_files_test the registry's release_files rules (review_guard.py, registry.py)
 #   ghostdata_test parses the ghost replays the game cached and checks their routes against a reference
 #                  (needs the game's GhostSwarmCache and a ghosts.js from Will's viewer: skipped when missing)
 #   tools/tests/run.sh [plugin folder]...
@@ -12,6 +15,12 @@ AS=third_party/angelscript
 OBJS=$(ls build/host/*.o | grep -v "/main.o\|/exports.o\|/exports_stubs.o")
 $CXX -std=c++20 -O1 -isystem $AS/include -isystem $AS/add_on -c tools/tests/ascheck.cpp -o build/ascheck.o
 $CXX -static -o build/ascheck.exe build/ascheck.o $OBJS build/as/*.o -lkernel32 -luser32 -lws2_32 -lshell32 -lole32 -luuid
+$CXX -std=c++20 -O1 -isystem $AS/include -isystem $AS/add_on -c tools/tests/models_test.cpp -o build/models_test.o
+$CXX -static -o build/models_test.exe build/models_test.o $OBJS build/as/*.o -lkernel32 -luser32 -lws2_32 -lshell32 -lole32 -luuid
+build/models_test.exe
+$CXX -std=c++20 -O1 -static -o build/modcontainer_test.exe tools/tests/modcontainer_test.cpp src/host/modcontainer.cpp
+build/modcontainer_test.exe
+python tools/tests/release_files_test.py
 $CXX -std=c++17 -O2 -static -o build/ghostdata_test.exe tools/tests/ghostdata_test.cpp src/host/ghostdata.cpp src/host/json.cpp
 if [ $# -eq 0 ]; then set -- plugins/*/; fi
 build/ascheck.exe "$@" | grep -v "info: Compiling"

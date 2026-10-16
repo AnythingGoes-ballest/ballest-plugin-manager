@@ -1,5 +1,4 @@
 #include "manager.hpp"
-#include "race.hpp"
 
 #include <windows.h>
 
@@ -5158,15 +5157,7 @@ long long gFrameNo = 0, gClosedFrameNo = -1;
 std::string gFooterPage = "plugins";
 bool gFromFooter = false;
 
-// A run being raced, not paused and not finished: the window doesn't open over it, and closes if one starts under it (the
-// timer runs on and the ball can't be driven meanwhile: AnythingGoes' review).
-bool LiveRun() { return race::Active() && !race::Complete() && !race::Paused(); }
-
 void Open(const std::string& page_) {
-    if (!gS.open && LiveRun()) {
-        hostlog::Info("manager: not opened: a run is being raced (pause it first)");
-        return;
-    }
     // (the Classic theme: this window is only its settings, opened by the old menu's cog)
     const std::string page = page_.empty() && !NewLook() ? "settings" : page_;
     const bool first = !gS.open && FirstOpenNow();
@@ -5290,10 +5281,6 @@ void Frame() {
     }
     // closed: for a moment the window fades out as it was (taking nothing); its dim eases out meanwhile and longer
     bool closing = false;
-    if (gS.open && LiveRun() && gWelcome != Welcome::Intro) {
-        hostlog::Info("manager: closed: a run started");
-        Close();
-    }
     if (!gS.open) {
         if (gReleaseAt < 0) return;
         if (!gReleased && game::Seconds() >= gReleaseAt) Release();

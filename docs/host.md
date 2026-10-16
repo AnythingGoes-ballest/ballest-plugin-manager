@@ -80,6 +80,40 @@ plugin's GitHub repo and lists the SHA-256 of every file the game downloads:
 3. Here: `python tools/registry.py add ../<plugin repo> v0.1.0`, then commit and push `registry.json`. Everyone's
    browser shows the new version (as an update if they have an older one) the next time it loads the registry.
 
+### Plugins with cooked content (release files)
+
+A plugin can ship cooked UE content (its own materials and textures) as an IoStore container in its `assets/` folder
+(host 0.27.0; see [custom-assets-recipe.md](custom-assets-recipe.md)). A container is a packed binary, so it follows the
+rule for binaries: **built by the maintainers from the plugin's reviewed sources, never committed to any repo.**
+
+1. Build it from the tagged plugin repo: `python tools/make_mod_container.py <project>.uproject <plugin>/assets`. For
+   Elemental Balls, that's its `unreal/Scripts/rebuild_all.py --clean`.
+2. Upload the `assets/<mod>_bNNNN-Windows.utoc`, `.ucas` and `.pak` to the plugin's GitHub release at that tag.
+3. `python tools/registry.py add ../<plugin repo> v0.1.0 --release-files <the three files>`. This adds:
+   ```json
+   "release_files": {
+     "assets/elemental_balls_b0008-Windows.utoc": {
+       "url": "https://github.com/AnythingGoes-ballest/ballest-elemental-balls/releases/download/v0.1.0/elemental_balls_b0008-Windows.utoc",
+       "sha256": "..."
+     }
+   }
+   ```
+   and the same for the `.ucas` and `.pak`.
+
+The game downloads release files with the plugin's other files and checks each against its SHA-256 before anything is
+written. They then go through the same staging folder and swap. Release files are refused unless all of these hold:
+- the name is `assets/<plain name>.utoc|.ucas|.pak`;
+- the URL is under `https://github.com/<that plugin's repo>/releases/download/<tag>/`;
+- the plugin's repo is under the maintainer account (`AnythingGoes-ballest`);
+- the hash has 64 hex digits.
+
+`tools/review_guard.py registry` (run in CI whenever `registry.json` changes) applies the same rules. Binaries in repos
+and diffs stay refused. When the plugin starts, the host also checks the container itself: only `/Game/Mods/<mod>/`
+packages and the plugin's own shader library, or it isn't mounted.
+
+To test before publishing: `python tools/registry.py mirror <out> <plugin repo> --release-dir <folder with the files>`.
+The local copy serves them from disk through its `release_base`, which the host honours only for a `file:///` registry.
+
 ## Source map (reading order)
 
 | File | Responsibility |
@@ -126,6 +160,8 @@ plugin's GitHub repo and lists the SHA-256 of every file the game downloads:
 | `src/host/tracks.*` | The game's tracks and the workshop's, their titles and pictures, and opening them; the player's own never-published map files raced as a race (alone or as a playlist) and maps a plugin ships installed into the player's maps folder |
 | `src/host/models.*` | Models: shapes described in text, built as Geometry Script dynamic meshes and attached to a ball or hat slot; mesh parts from model files, and their animations as a mesh per frame |
 | `src/host/meshfile.*` | 3D model files (glTF 2.0 and OBJ): read into triangles per material and posed, skinned meshes included. No engine code: `tools/tests/meshfile_test.cpp` checks it offline |
+| `src/host/assets.*` | Cooked content a plugin ships in `assets/`. Mounted when the plugin starts: gated, then mounted past the pak signature check for that container only, then its own shader library opened. Also maps a model's `/Game/Mods/<mod>/X` to the newest build. See [custom-assets-recipe.md](custom-assets-recipe.md) |
+| `src/host/modcontainer.*` | The gate on plugin containers: reads only the `.utoc` and refuses any container serving a package outside `/Game/Mods/<mod>/` (directory index plus package ids). No engine code: `tools/tests/modcontainer_test.cpp` checks it offline |
 | `src/host/testchannel.*` | Test and measurement commands, from the console and from the tools below |
 | `src/proxy/` | The `version.dll` export stubs (generated from the system DLL's export table) |
 | `plugins/` | The bundled plugins: Plugin Manager (the footer entry; with the Classic theme, its classic menu: console, plugin browser) and Hello World (an example) |
@@ -155,6 +191,18 @@ map), the console, the plugin browser (and, when the plugin repos are checked ou
 install from a local copy of the registry), the Replay Manager on a simulated replay (length, pause, Space, 2x rate,
 scrubbing, restart at 5x, camera dropdown), a map load, and crashes. It expects the Replay Manager to be installed.
 Real replays cannot be started by script, so camera modes on a real replay are checked by hand.
+
+### Plugin cooked content
+
+A plugin can ship cooked UE 5.8 content in `assets/`, built with `tools/make_mod_container.py`. The full procedure and
+the measured results are in [custom-assets-recipe.md](custom-assets-recipe.md). Test commands:
+
+- `assetplugin <id>`: check and mount that plugin's `assets/` containers, as at its start.
+- `assetreload <id>`: reload a plugin so it mounts a newer build. After it, send `wear ball -` and then
+  `wear ball <ball id>` to rebuild the ball.
+
+There's deliberately no command that mounts a container without the check, or from anywhere but a plugin's own
+`assets/` folder.
 
 ### API tests
 

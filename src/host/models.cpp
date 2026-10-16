@@ -1,5 +1,7 @@
 #include "models.hpp"
 
+#include "assets.hpp"
+
 #include <windows.h>
 
 #include <algorithm>
@@ -25,6 +27,10 @@ using eng::Obj;
 using eng::Params;
 
 constexpr double kPi = 3.14159265358979323846;
+// Moves: the ball falling freely (cm/s each second: the game's gravity), and the sudden change of its vertical speed
+// (cm/s) that is a landing or a jump.
+constexpr double kFreeFall = 980, kKick = 250;
+constexpr double kPair = 0.15;                          // seconds between a landing's kick and the game's bounce
 // Measured materials that render on dynamic meshes: the game's plain ball colour (BaseColor, Metallic, Roughness) and
 // its emissive light (Light_Color, Light_Emissive_Intensity).
 // Since the 2026-10-06 update the racing ball fades out near the camera with materials of the game's own that fade by
@@ -120,9 +126,16 @@ bool MeshWords(const std::string& line, std::string* file, std::vector<std::stri
     return !file->empty();
 }
 
+// A model file as read, once for all the parts of a model that use it, and where its materials start in the model's.
+struct FileRead {
+    std::wstring file;
+    meshfile::Model model;
+    int base = -1;
+};
+
 // A model file read, placed and baked for a mesh part: its materials join the model's.
 bool LoadMesh(const std::string& fileName, const std::vector<std::string>& options, const std::wstring& folder, Model* model, Part* part,
-              std::string* why) {
+              std::vector<std::shared_ptr<FileRead>>* files, std::string* why) {
     auto option = [&](const char* key, std::string* out) {
         const std::string prefix = std::string(key) + "=";
         for (const auto& word : options)
@@ -140,12 +153,21 @@ bool LoadMesh(const std::string& fileName, const std::vector<std::string>& optio
     for (auto& c : file)
         if (c == L'/') c = L'\\';
     if (!(file.size() > 1 && file[1] == L':') && !folder.empty()) file = folder + (folder.back() == L'\\' ? L"" : L"\\") + file;
-    meshfile::Model m;
-    std::string error;
-    if (!m.Load(file, hostlog::DataDir() + L"\\cache\\models", &error)) {
-        *why = fileName + ": " + error;
-        return false;
+    // A file is read once for the whole model (each part can be a node of it), and its materials added once.
+    std::shared_ptr<FileRead> cached;
+    for (const auto& f : *files)
+        if (f->file == file) cached = f;
+    if (!cached) {
+        cached = std::make_shared<FileRead>();
+        cached->file = file;
+        std::string error;
+        if (!cached->model.Load(file, hostlog::DataDir() + L"\\cache\\models", &error)) {
+            *why = fileName + ": " + error;
+            return false;
+        }
+        files->push_back(cached);
     }
+    const meshfile::Model& m = cached->model;
     auto data = std::make_shared<MeshData>();
     data->file = file;
     std::string v;
@@ -164,8 +186,8 @@ bool LoadMesh(const std::string& fileName, const std::vector<std::string>& optio
             if (model->materials[i].name == v) forced = static_cast<int>(i);
         if (forced < 0) return *why = "no material '" + v + "' (define it first)", false;
     }
-    const int base = static_cast<int>(model->materials.size());
-    if (forced < 0)
+    if (forced < 0 && cached->base < 0) {
+        cached->base = static_cast<int>(model->materials.size());
         for (const auto& fm : m.Materials()) {
             Material mat;
             mat.name = fileName + "#" + fm.name;
@@ -196,7 +218,33 @@ bool LoadMesh(const std::string& fileName, const std::vector<std::string>& optio
             }
             model->materials.push_back(mat);
         }
-    for (const auto& item : m.Items()) {
+    }
+    const int base = cached->base;
+    // "node": only what hangs from that node of the file (a part of a character made as one file).
+    int node = -1;
+    if (option("node", &v)) {
+        node = m.FindNode(v);
+        if (node < 0) {
+            std::string list;
+            for (const auto& n : m.Nodes()) list += (list.empty() ? "" : ", ") + n;
+            return *why = fileName + " has no node '" + v + "'" + (list.empty() ? "" : " (it has: " + list.substr(0, 400) + ")"), false;
+        }
+    }
+    std::vector<size_t> kept;                                       // the file's items this part has
+    for (size_t i = 0; i < m.Items().size(); ++i)
+        if (node < 0 || m.ItemUnder(i, node)) kept.push_back(i);
+    if (kept.empty()) return *why = fileName + ": node '" + v + "' has no triangles", false;
+    // The file's poses, with only this part's items.
+    auto At = [&](int animation, double seconds) {
+        meshfile::Pose all = m.At(animation, seconds), out;
+        for (size_t i : kept) {
+            out.positions.push_back(std::move(all.positions[i]));
+            out.normals.push_back(std::move(all.normals[i]));
+        }
+        return out;
+    };
+    for (size_t i : kept) {
+        const auto& item = m.Items()[i];
         data->materials.push_back(forced >= 0 ? forced : base + item.material);
         data->uv.push_back(item.uv);
         data->indices.push_back(item.indices);
@@ -204,7 +252,7 @@ bool LoadMesh(const std::string& fileName, const std::vector<std::string>& optio
     }
     // Placed from the rest pose: its longest side "size" cm (as the file has it), then turned by "rot", then moved so
     // the bottom of its bounds, centred, is on "at".
-    const meshfile::Pose rest = m.At(-1, 0);
+    const meshfile::Pose rest = At(-1, 0);
     auto bounds = [](const std::vector<std::vector<float>>& positions, double lo[3], double hi[3]) {
         for (int c = 0; c < 3; ++c) lo[c] = 1e30, hi[c] = -1e30;
         for (const auto& p : positions)
@@ -261,7 +309,7 @@ bool LoadMesh(const std::string& fileName, const std::vector<std::string>& optio
             return false;
         }
         *length = m.Length(anim);
-        for (int f = 0; f < frames; ++f) out->push_back(place(m.At(anim, *length * f / frames)));
+        for (int f = 0; f < frames; ++f) out->push_back(place(At(anim, *length * f / frames)));
         return true;
     };
     if (!bake("anim", &data->clip, &data->clipLength) || !bake("idle", &data->idle, &data->idleLength)) return false;
@@ -278,6 +326,77 @@ bool LoadMesh(const std::string& fileName, const std::vector<std::string>& optio
     return true;
 }
 
+// Words with quoted ones kept whole ("Stars Color 01"), the quotes taken off. Empty if a quote isn't closed.
+std::vector<std::string> QuotedWords(const std::string& line) {
+    std::vector<std::string> out;
+    size_t i = 0;
+    while (i < line.size()) {
+        while (i < line.size() && std::isspace(static_cast<unsigned char>(line[i]))) ++i;
+        if (i >= line.size()) break;
+        if (line[i] == '"') {
+            const size_t end = line.find('"', i + 1);
+            if (end == std::string::npos) return {};
+            out.push_back(line.substr(i + 1, end - i - 1));
+            i = end + 1;
+        } else {
+            size_t end = i;
+            while (end < line.size() && !std::isspace(static_cast<unsigned char>(line[end]))) ++end;
+            out.push_back(line.substr(i, end - i));
+            i = end;
+        }
+    }
+    return out;
+}
+
+// A colour value: #rrggbb (sRGB, as everywhere in a model) or r,g,b[,a] (linear), either optionally followed by *k
+// (k times as bright, for glowing colours). False if it is neither.
+bool ColourValue(const std::string& text, float out[4]) {
+    std::string s = text;
+    double k = 1;
+    if (const size_t star = s.find('*'); star != std::string::npos) {
+        char* end = nullptr;
+        k = std::strtod(s.c_str() + star + 1, &end);
+        if (!end || *end || star + 1 >= s.size()) return false;
+        s = s.substr(0, star);
+    }
+    out[3] = 1;
+    if (s.size() == 7 && s[0] == '#') {
+        char* end = nullptr;
+        const long rgb = std::strtol(s.c_str() + 1, &end, 16);
+        if (!end || *end) return false;
+        out[0] = Linear((rgb >> 16) & 255), out[1] = Linear((rgb >> 8) & 255), out[2] = Linear(rgb & 255);
+    } else {
+        double v[4] = {0, 0, 0, 1};
+        const size_t commas = static_cast<size_t>(std::count(s.begin(), s.end(), ','));
+        if (commas < 2 || commas > 3) return false;
+        std::stringstream ss(s);
+        std::string item;
+        for (size_t i = 0; std::getline(ss, item, ','); ++i) {
+            char* end = nullptr;
+            v[i] = std::strtod(item.c_str(), &end);
+            if (item.empty() || !end || *end) return false;
+        }
+        for (int c = 0; c < 4; ++c) out[c] = static_cast<float>(v[c]);
+    }
+    for (int c = 0; c < 3; ++c) out[c] = static_cast<float>(out[c] * k);
+    return true;
+}
+
+bool NumberValue(const std::string& s, float* out) {
+    char* end = nullptr;
+    const double v = std::strtod(s.c_str(), &end);
+    if (s.empty() || !end || *end) return false;
+    *out = static_cast<float>(v);
+    return true;
+}
+
+// An asset's object path: "/Game/A/B" is taken as "/Game/A/B.B".
+std::wstring ObjectPath(const std::string& path) {
+    const size_t slash = path.rfind('/');
+    if (path.find('.', slash == std::string::npos ? 0 : slash) != std::string::npos) return eng::Widen(path);
+    return eng::Widen(path + "." + path.substr(slash + 1));
+}
+
 }  // namespace
 
 bool Parse(const std::string& text, Model* model, std::string* error, const std::wstring& folder) {
@@ -286,6 +405,13 @@ bool Parse(const std::string& text, Model* model, std::string* error, const std:
     main.name = "main";
     model->groups.push_back(main);
     bool implicitMain = true;           // groups[0] is still that one, made here, not one the text named
+    struct KeyGroup {
+        size_t move, key;
+        std::string name;
+        int line;
+    };
+    std::vector<KeyGroup> keyGroups;
+    std::vector<std::shared_ptr<FileRead>> files;      // model files read so far
     std::stringstream lines(text);
     std::string line;
     int number = 0;
@@ -316,6 +442,105 @@ bool Parse(const std::string& text, Model* model, std::string* error, const std:
             std::string v;
             return value(key, &v) ? std::atof(v.c_str()) : fallback;
         };
+        auto materialNamed = [&](const std::string& name) -> Material* {
+            for (auto& m : model->materials)
+                if (m.name == name) return &m;
+            return nullptr;
+        };
+        if (w[0] == "material" && w.size() >= 3 && (w[2] == "game" || w[2] == "asset")) {
+            const std::vector<std::string> q = QuotedWords(line);
+            if (w[2] == "asset") {
+                // A material from a plugin's own cooked content (its assets/ container, mounted at plugin start).
+                if (q.size() != 4 || q[3].rfind("/Game/Mods/", 0) != 0)
+                    return fail("material <name> asset /Game/Mods/<plugin id>/<material>.<material>");
+            } else if (q.size() != 4 || q[3].empty() || q[3][0] != '/') {
+                return fail("material <name> game <material asset path>");
+            }
+            Material m;
+            m.name = w[1];
+            m.finish = Finish::Game;
+            m.asset = ObjectPath(q[3]);
+            model->materials.push_back(m);
+            continue;
+        }
+        if (w[0] == "set") {
+            const std::vector<std::string> q = QuotedWords(line);
+            if (q.size() != 4) return fail("set <material> \"<parameter>\" <value>");
+            Material* m = materialNamed(q[1]);
+            if (!m) return fail("no material '" + q[1] + "' (define it first)");
+            Setting st;
+            st.parameter = q[2];
+            const std::string& v = q[3];
+            auto ends = [&](const char* tail) {
+                const size_t n = std::strlen(tail);
+                if (v.size() < n) return false;
+                for (size_t i = 0; i < n; ++i)
+                    if (std::tolower(static_cast<unsigned char>(v[v.size() - n + i])) != tail[i]) return false;
+                return true;
+            };
+            if (NumberValue(v, &st.value[0])) {
+                st.kind = Setting::Kind::Scalar;
+            } else if (ColourValue(v, st.value)) {
+                st.kind = Setting::Kind::Colour;
+            } else if (!v.empty() && v[0] == '/') {
+                st.kind = Setting::Kind::Texture;
+                st.asset = ObjectPath(v);
+            } else if (ends(".png") || ends(".jpg") || ends(".jpeg")) {
+                st.kind = Setting::Kind::Texture;
+                std::wstring file = eng::Widen(v);
+                for (auto& c : file)
+                    if (c == L'/') c = L'\\';
+                if (!(file.size() > 1 && file[1] == L':') && !folder.empty()) file = folder + (folder.back() == L'\\' ? L"" : L"\\") + file;
+                if (GetFileAttributesW(file.c_str()) == INVALID_FILE_ATTRIBUTES) return fail("set: no picture file " + v);
+                st.file = file;
+            } else {
+                return fail("set: a number, a colour (#rrggbb or r,g,b), a picture file or a texture asset path");
+            }
+            m->settings.push_back(st);
+            continue;
+        }
+        if (w[0] == "animate") {
+            const std::vector<std::string> q = QuotedWords(line);
+            if (q.size() < 5) return fail("animate <material> \"<parameter>\" <from> <to> [period=] [wave=] [phase=] [run=]");
+            Material* m = materialNamed(q[1]);
+            if (!m) return fail("no material '" + q[1] + "' (define it first)");
+            Motion mo;
+            mo.parameter = q[2];
+            if (NumberValue(q[3], &mo.from[0]) && NumberValue(q[4], &mo.to[0])) mo.colour = false;
+            else if (ColourValue(q[3], mo.from) && ColourValue(q[4], mo.to)) mo.colour = true;
+            else return fail("animate: from and to are both numbers or both colours");
+            for (size_t i = 5; i < q.size(); ++i) {
+                const size_t eq = q[i].find('=');
+                if (eq == std::string::npos) return fail("animate: options are key=value");
+                const std::string key = q[i].substr(0, eq), val = q[i].substr(eq + 1);
+                if (key == "wave") {
+                    if (val == "sine") mo.wave = Motion::Wave::Sine;
+                    else if (val == "triangle") mo.wave = Motion::Wave::Triangle;
+                    else if (val == "saw") mo.wave = Motion::Wave::Saw;
+                    else if (val == "square") mo.wave = Motion::Wave::Square;
+                    else return fail("animate: wave=sine|triangle|saw|square");
+                    continue;
+                }
+                float f = 0;
+                if (!NumberValue(val, &f)) return fail("animate: " + key + "= takes a number");
+                if (key == "period") mo.period = f;
+                else if (key == "phase") mo.phase = f;
+                else if (key == "run") mo.run = f;
+                else return fail("animate: unknown option " + key);
+            }
+            if (mo.period <= 0 || mo.run < 0) return fail("animate: period above 0, run from 0");
+            m->motions.push_back(mo);
+            continue;
+        }
+        if (w[0] == "race") {
+            const std::vector<std::string> q = QuotedWords(line);
+            float k = 0;
+            if (q.size() != 4 || !NumberValue(q[3], &k) || k < 0) return fail("race <material> \"<parameter>\" <factor from 0>");
+            Material* m = materialNamed(q[1]);
+            if (!m) return fail("no material '" + q[1] + "' (define it first)");
+            m->race.push_back({q[2], k});
+            continue;
+        }
         if (w[0] == "material") {
             if (w.size() >= 3 && w[2] == "glass") {
                 Material m;
@@ -382,6 +607,8 @@ bool Parse(const std::string& text, Model* model, std::string* error, const std:
             if (value("spin", &v)) g.spinAxis = axisOf(v);
             g.speed = num("speed", 0);
             for (const auto& word : w) g.travel |= word == "travel";
+            for (const auto& word : w) g.facing |= word == "facing";
+            if (g.facing && (g.travel || g.spinAxis >= 0)) return fail("a facing group can't travel or spin");
             // The implicit first group goes if nothing was put in it; a group the text named stays even when empty (an
             // empty travelling group that others are built on: it was dropped, and "on=" then failed, reported).
             if (implicitMain && model->groups.size() == 1 && model->groups[0].parts.empty()) model->groups.clear();
@@ -390,7 +617,7 @@ bool Parse(const std::string& text, Model* model, std::string* error, const std:
                 for (size_t i = 0; i < model->groups.size(); ++i)
                     if (model->groups[i].name == v) g.parent = static_cast<int>(i);
                 if (g.parent < 0) return fail("on=" + v + ": no group of that name before this one");
-                if (g.travel) return fail("travel is for groups on the ball; one on another group turns with it");
+                if (g.travel || g.facing) return fail("travel and facing are for groups on the ball; one on another group turns with it");
             }
             if (value("pivot", &v) && !Numbers(v, g.pivot, 3)) return fail("pivot=x,y,z");
             if (value("swing", &v)) {
@@ -400,8 +627,74 @@ bool Parse(const std::string& text, Model* model, std::string* error, const std:
             }
             g.bob = num("bob", 0);
             g.phase = num("phase", 0);
-            if (g.travel && g.Moves()) return fail("a travel group can't pivot, swing or bob: put those on a group on it");
+            g.lean = num("lean", 0);
+            if (value("drop", &v)) {
+                if (v == "jump") g.drop = static_cast<int>(When::Jump);
+                else if (v == "land") g.drop = static_cast<int>(When::Land);
+                else return fail("drop=jump|land");
+                if (value("push", &v) && !Numbers(v, g.push, 3)) return fail("push=x,y,z");
+                g.life = num("life", 4);
+                g.max = static_cast<int>(num("max", 4));
+                g.hit = num("hit", 400);
+                g.carry = num("carry", 0.5);
+                if (g.carry < 0 || g.carry > 1) return fail("drop: carry from 0 to 1");
+                if (g.life <= 0 || g.max < 1 || g.max > 8) return fail("drop: life above 0, max from 1 to 8");
+            }
+            if ((g.travel || g.facing) && g.Moves()) return fail("a travel or facing group can't pivot, swing or bob: put those on a group on it");
             model->groups.push_back(g);
+            continue;
+        }
+        if (w[0] == "moves") {                          // moves gap=<s>[,<s>]
+            std::string v;
+            if (value("gap", &v)) {
+                double g[2] = {0, 0};
+                if (Numbers(v, g, 2)) model->gap[0] = g[0], model->gap[1] = g[1];
+                else if (Numbers(v, g, 1)) model->gap[0] = model->gap[1] = g[0];
+                else return fail("moves gap=<seconds>[,<seconds>]");
+                if (model->gap[0] < 0 || model->gap[1] < model->gap[0]) return fail("moves gap: from 0, the longest last");
+            }
+            continue;
+        }
+        if (w[0] == "move") {
+            if (w.size() < 2 || w[1].find('=') != std::string::npos) return fail("move <name> [when=idle|run|air|jump|land] ...");
+            Move mv;
+            mv.name = w[1];
+            std::string v;
+            if (value("when", &v)) {
+                static const std::pair<const char*, When> whens[] = {
+                    {"idle", When::Idle}, {"run", When::Run}, {"air", When::Air}, {"jump", When::Jump}, {"land", When::Land}};
+                bool found = false;
+                for (const auto& [n, wh] : whens)
+                    if (v == n) mv.when = wh, found = true;
+                if (!found) return fail("move: when=idle|run|air|jump|land");
+            }
+            mv.min = num("min", 0);
+            mv.max = num("max", 1e9);
+            mv.weight = num("weight", 1);
+            mv.length = num("length", 0);
+            mv.blend = num("blend", 0.25);
+            mv.rate = num("rate", 1);
+            mv.run = num("run", 0);
+            if (mv.weight < 0 || mv.length < 0 || mv.blend < 0 || mv.rate <= 0 || mv.run < 0 || mv.max < mv.min)
+                return fail("move: weight, length, blend and run from 0, rate above 0, max not below min");
+            model->moves.push_back(mv);
+            continue;
+        }
+        if (w[0] == "key") {                            // key <seconds> <group> [rot=] [at=] [swing=]
+            if (model->moves.empty()) return fail("key before any move");
+            if (w.size() < 3) return fail("key <seconds> <group> [rot=pitch,yaw,roll] [at=x,y,z] [swing=0..1]");
+            Key k;
+            char* end = nullptr;
+            k.time = std::strtod(w[1].c_str(), &end);
+            if (end == w[1].c_str() || *end || k.time < 0) return fail("key: a time in seconds from 0 first");
+            std::string v;
+            if (value("rot", &v) && !Numbers(v, k.rot, 3)) return fail("rot=pitch,yaw,roll");
+            if (value("at", &v) && !Numbers(v, k.at, 3)) return fail("at=x,y,z");
+            k.swing = num("swing", 1);
+            if (k.swing < 0 || k.swing > 1) return fail("key: swing from 0 to 1");
+            k.group = -1;
+            keyGroups.push_back({model->moves.size() - 1, model->moves.back().keys.size(), w[2], number});
+            model->moves.back().keys.push_back(k);
             continue;
         }
         if (w[0] == "mesh") {
@@ -409,7 +702,7 @@ bool Parse(const std::string& text, Model* model, std::string* error, const std:
             std::vector<std::string> options;
             if (!MeshWords(line, &fileName, &options)) return fail("mesh <file> [options]");
             Part p{};
-            if (!LoadMesh(fileName, options, folder, model, &p, &why)) return fail(why);
+            if (!LoadMesh(fileName, options, folder, model, &p, &files, &why)) return fail(why);
             model->groups.back().parts.push_back(p);
             continue;
         }
@@ -458,6 +751,27 @@ bool Parse(const std::string& text, Model* model, std::string* error, const std:
                                                      : p.r > 0;
         if (!ok) return fail(w[0] + ": sizes missing or out of range");
         model->groups.back().parts.push_back(p);
+    }
+    // Keys name groups anywhere in the text: found once it has all been read.
+    for (const auto& kg : keyGroups) {
+        int found = -1;
+        for (size_t i = 0; i < model->groups.size(); ++i)
+            if (model->groups[i].name == kg.name) found = static_cast<int>(i);
+        number = kg.line;
+        if (found < 0) return fail("key: no group '" + kg.name + "'");
+        Group& g = model->groups[static_cast<size_t>(found)];
+        if (g.travel || g.facing) return fail("key: " + g.name + (g.travel ? " travels" : " faces the camera") + "; key a group built on it");
+        g.keyed = true;
+        model->moves[kg.move].keys[kg.key].group = found;
+    }
+    for (auto& mv : model->moves) {
+        if (mv.keys.empty()) return *error = "move " + mv.name + ": no keys", false;
+        std::stable_sort(mv.keys.begin(), mv.keys.end(), [](const Key& a, const Key& b) {
+            return a.group != b.group ? a.group < b.group : a.time < b.time;
+        });
+        for (const Key& k : mv.keys) mv.length = std::max(mv.length, k.time);
+        if (mv.length <= 0) return *error = "move " + mv.name + ": keys over no time (give it length=)", false;
+        mv.blend = std::min(mv.blend, mv.length / 2);
     }
     for (const auto& g : model->groups)
         if (!g.parts.empty()) return true;
@@ -788,11 +1102,102 @@ Obj GlowParent() {
     return cosmetics::LoadAsset(kGlowMaterial);
 }
 
-Obj MakeMaterial(const Material& m, Obj worldContext) {
+// A parameter name as the engine's FName (8 bytes), made once per name: animations set theirs every frame.
+const uint8_t* ParameterName(const std::string& name) {
+    static std::vector<std::pair<std::string, std::array<uint8_t, 8>>> made;
+    for (const auto& [n, bytes] : made)
+        if (n == name) return bytes.data();
+    const std::wstring wide = eng::Widen(name);
+    const Params call = eng::Call(Lib("KismetStringLibrary"), "Conv_StringToName",
+                                  eng::FString{wide.c_str(), static_cast<int32_t>(wide.size() + 1), static_cast<int32_t>(wide.size() + 1)});
+    const uint8_t* r = call.Return();
+    if (!r) return nullptr;
+    std::array<uint8_t, 8> bytes{};
+    std::memcpy(bytes.data(), r, 8);
+    made.push_back({name, bytes});
+    return made.back().second.data();
+}
+
+void SetScalarParameter(Obj mid, const std::string& name, float v) {
+    const uint8_t* fname = ParameterName(name);
+    if (!mid || !fname) return;
+    Params p(eng::FunctionOn(mid, "SetScalarParameterValue"));
+    p.Set("ParameterName", fname, 8);
+    p.Set("Value", v);
+    eng::Invoke(mid, p);
+}
+
+void SetVectorParameter(Obj mid, const std::string& name, const float v[4]) {
+    const uint8_t* fname = ParameterName(name);
+    if (!mid || !fname) return;
+    Params p(eng::FunctionOn(mid, "SetVectorParameterValue"));
+    p.Set("ParameterName", fname, 8);
+    const float value[4] = {v[0], v[1], v[2], v[3]};
+    p.Set("Value", value);
+    eng::Invoke(mid, p);
+}
+
+// A model's "set" lines on its material's dynamic instance. A material ignores parameters it doesn't have.
+void ApplySettings(const Material& m, Obj mid, bool race) {
+    for (const Setting& st : m.settings) {
+        const float k = race ? m.RaceFactor(st.parameter) : 1;
+        if (st.kind == Setting::Kind::Scalar) SetScalarParameter(mid, st.parameter, st.value[0] * k);
+        else if (st.kind == Setting::Kind::Colour) {
+            const float v[4] = {st.value[0] * k, st.value[1] * k, st.value[2] * k, st.value[3]};
+            SetVectorParameter(mid, st.parameter, v);
+        } else {
+            Obj tex = st.file.empty() ? cosmetics::LoadAsset(st.asset) : ImageTexture(st.file);
+            const uint8_t* fname = ParameterName(st.parameter);
+            if (!tex || !fname) {
+                hostlog::Warn("models: material " + m.name + ": the texture for " + st.parameter + " did not load");
+                continue;
+            }
+            Params p(eng::FunctionOn(mid, "SetTextureParameterValue"));
+            p.Set("ParameterName", fname, 8);
+            p.Set("Value", tex);
+            eng::Invoke(mid, p);
+        }
+    }
+}
+
+// An animation's value at a point of its cycle (cycles: whole cycles count for nothing), from 0 (its "from") to 1.
+double WaveAt(Motion::Wave wave, double cycles) {
+    const double t = cycles - std::floor(cycles);
+    switch (wave) {
+        case Motion::Wave::Sine: return 0.5 - 0.5 * std::cos(2 * kPi * t);
+        case Motion::Wave::Triangle: return t < 0.5 ? 2 * t : 2 - 2 * t;
+        case Motion::Wave::Saw: return t;
+        case Motion::Wave::Square: return t < 0.5 ? 0 : 1;
+    }
+    return 0;
+}
+
+Obj MakeMaterial(const Material& m, Obj worldContext, bool race = true) {
     if (m.finish == Finish::Image) {
         Obj material = cosmetics::ImageMaterial(ImageTexture(m.image), "ModelImage");
         if (!material) hostlog::Warn("models: the image of material " + m.name + " did not load");
+        if (material) ApplySettings(m, material, race);
         return material;
+    }
+    if (m.finish == Finish::Game) {
+        Obj parent = cosmetics::LoadAsset(assets::ResolveModPath(m.asset));   // "asset": the newest build of the plugin's own
+        if (!parent) {
+            hostlog::Warn("models: material " + m.name + ": " + eng::Narrow(m.asset.c_str(), static_cast<int>(m.asset.size())) +
+                          " did not load");
+            return nullptr;
+        }
+        // Plugin content (/Game/Mods/) is only ever used as a material: anything else a container holds (a texture it
+        // uses, say) may load as a dependency, but is never applied, spawned or run.
+        if (m.asset.rfind(L"/Game/Mods/", 0) == 0 && !eng::IsA(parent, eng::FindClass("MaterialInterface"))) {
+            hostlog::Warn("models: material " + m.name + ": " + eng::PathOf(parent) + " is a " +
+                          eng::ObjName(eng::ClassOf(parent)) + ", not a material: refused");
+            return nullptr;
+        }
+        Obj mid = eng::Call(Lib("KismetMaterialLibrary"), "CreateDynamicMaterialInstance", worldContext, parent,
+                            std::array<uint8_t, 8>{}, uint8_t{0})
+                      .ReturnObj();
+        if (mid) ApplySettings(m, mid, race);
+        return mid;
     }
     const wchar_t* path = m.finish == Finish::Glow    ? kGlowMaterial
                           : m.finish == Finish::Glass ? (m.refracts ? (gRefractingParent.empty() ? kRefractingGlassMaterial : gRefractingParent.c_str())
@@ -866,6 +1271,7 @@ Obj MakeMaterial(const Material& m, Obj worldContext) {
         scalar("ConcreteValue", 0);
         scalar("FresnelColorMult", 0);
     }
+    ApplySettings(m, mid, race);
     return mid;
 }
 
@@ -997,6 +1403,9 @@ bool Built::Alive() const {
     for (const auto& f : flips)
         for (const auto& a : f.frames)
             if (!eng::Get(a)) return false;
+    for (const auto& d : drops)
+        for (const auto& c : d.copies)
+            if (!eng::Get(c.actor)) return false;
     return !actors.empty();
 }
 
@@ -1005,8 +1414,11 @@ Built Build(const Model& model, Obj parent) {
     built.parent = eng::MakeWeak(parent);
     Obj controller = game::PlayerController();
     if (!parent || !controller) return built;
+    // On the Customize page's ball (BP_MenuBall_C) the "race" factors don't apply.
+    Obj owner = eng::Call(parent, "GetOwner").ReturnObj();
+    built.race = !(owner && eng::ClassOf(owner) == eng::FindClass("BP_MenuBall_C"));
     std::vector<Obj> materials;
-    for (const auto& m : model.materials) materials.push_back(MakeMaterial(m, controller));
+    for (const auto& m : model.materials) materials.push_back(MakeMaterial(m, controller, built.race));
     for (const auto& group : model.groups) {
         Obj actor = SpawnMeshActor(controller);
         Obj component = actor ? eng::ReadObj(actor, "DynamicMeshComponent") : nullptr;
@@ -1017,21 +1429,51 @@ Built Build(const Model& model, Obj parent) {
             Destroy(built);
             return built;
         }
-        for (Part part : group.parts) {                               // built about the group's pivot
-            if (part.shape == Shape::Mesh) {
-                if (part.mesh && part.mesh->clip.empty()) AppendFrame(mesh, *part.mesh, part.mesh->rest, group.pivot);
-                continue;
+        auto fill = [&](Obj into, Obj intoComponent) {
+            for (Part part : group.parts) {                           // built about the group's pivot
+                if (part.shape == Shape::Mesh) {
+                    if (part.mesh && part.mesh->clip.empty()) AppendFrame(into, *part.mesh, part.mesh->rest, group.pivot);
+                    continue;
+                }
+                for (int k = 0; k < 3; ++k) part.at[k] -= group.pivot[k];
+                Append(into, part);
             }
-            for (int k = 0; k < 3; ++k) part.at[k] -= group.pivot[k];
-            Append(mesh, part);
+            for (size_t i = 0; i < materials.size(); ++i)
+                if (materials[i]) eng::Call(intoComponent, "SetMaterial", static_cast<int32_t>(i), materials[i]);
+            eng::Call(intoComponent, "SetTranslucentSortPriority", kGlassSortPriority);   // glass after the water
+            eng::Call(intoComponent, "SetCollisionEnabled", uint8_t{0});     // never touches the ball's physics
+            // As the game's own ball (its Sphere has bReceivesDecals false): the start pad's shadow decal would
+            // otherwise paint the model's lower half black (measured on the start pad and the menu stand).
+            eng::Call(intoComponent, "SetReceivesDecals", uint8_t{0});
+        };
+        fill(mesh, component);
+        if (group.drop >= 0) {
+            // Not shown on the ball (it still follows it, to say where a copy starts); the copies, hidden until let go.
+            eng::Call(component, "SetVisibility", uint8_t{0}, uint8_t{1});
+            Built::Drops d;
+            d.group = built.actors.size();
+            double lowest = 0;
+            for (const Part& part : group.parts) {
+                if (part.shape == Shape::Mesh && part.mesh)
+                    for (const auto& p : part.mesh->rest.positions)
+                        for (size_t i = 2; i < p.size(); i += 3) lowest = std::min(lowest, p[i] - group.pivot[2]);
+                else if (part.shape != Shape::Mesh)
+                    lowest = std::min(lowest, part.at[2] - group.pivot[2] - std::max(part.r, part.size[2] / 2));
+            }
+            d.radius = std::max(1.0, -lowest);
+            for (int n = 0; n < group.max; ++n) {
+                Obj copy = SpawnMeshActor(controller);
+                Obj copyComponent = copy ? eng::ReadObj(copy, "DynamicMeshComponent") : nullptr;
+                Obj copyMesh = copyComponent ? eng::Call(copyComponent, "GetDynamicMesh").ReturnObj() : nullptr;
+                if (!copyMesh) continue;
+                fill(copyMesh, copyComponent);
+                eng::Call(copyComponent, "SetVisibility", uint8_t{0}, uint8_t{0});
+                Built::Dropped c;
+                c.actor = eng::MakeWeak(copy);
+                d.copies.push_back(c);
+            }
+            built.drops.push_back(std::move(d));
         }
-        for (size_t i = 0; i < materials.size(); ++i)
-            if (materials[i]) eng::Call(component, "SetMaterial", static_cast<int32_t>(i), materials[i]);
-        eng::Call(component, "SetTranslucentSortPriority", kGlassSortPriority);   // glass after the water
-        eng::Call(component, "SetCollisionEnabled", uint8_t{0});     // never touches the ball's physics
-        // As the game's own ball (its Sphere has bReceivesDecals false): the start pad's shadow decal would otherwise
-        // paint the model's lower half black (measured on the start pad and the menu stand).
-        eng::Call(component, "SetReceivesDecals", uint8_t{0});
         const uint8_t snap = 2;                                       // EAttachmentRule::SnapToTarget
         Obj on = parent;                                              // the ball, or the group it is built on
         if (group.parent >= 0) {
@@ -1080,11 +1522,360 @@ std::vector<Obj> Actors(const Built& built) {
     for (const auto& f : built.flips)
         for (const auto& a : f.frames)
             if (Obj actor = eng::Get(a)) out.push_back(actor);
-    return out;
+    return out;                                         // not the dropped copies: they lie in the world, not on the ball
 }
 
 namespace {
 double Wrap(double degrees) { return std::remainder(degrees, 360.0); }
+
+// Materials' animations ("animate"): each frame the values are set on the dynamic material each slot of each mesh shows
+// now. That's the model's own, or one the game put in its place: the racing ball's camera fade swaps in its own fade
+// copies of the materials on the ball, dynamic instances too (see cosmetics' FadeOf).
+void AnimateMaterials(const Model& model, Built& built, double dt) {
+    bool any = false;
+    for (const auto& m : model.materials) any |= !m.motions.empty();
+    if (!any) return;
+    built.clocks.resize(model.materials.size());
+    std::vector<Obj> components;
+    for (Obj actor : Actors(built))
+        if (Obj c = eng::ReadObj(actor, "DynamicMeshComponent")) components.push_back(c);
+    static Obj dynamicClass = nullptr;
+    if (!dynamicClass) dynamicClass = eng::FindClass("MaterialInstanceDynamic");
+    for (size_t i = 0; i < model.materials.size(); ++i) {
+        const Material& m = model.materials[i];
+        if (m.motions.empty()) continue;
+        auto& clocks = built.clocks[i];
+        clocks.resize(m.motions.size(), 0.0);
+        std::vector<Obj> mids;
+        for (Obj c : components) {
+            Obj mat = eng::Call(c, "GetMaterial", static_cast<int32_t>(i)).ReturnObj();
+            if (mat && dynamicClass && eng::IsA(mat, dynamicClass) && std::find(mids.begin(), mids.end(), mat) == mids.end())
+                mids.push_back(mat);
+        }
+        for (size_t k = 0; k < m.motions.size(); ++k) {
+            const Motion& mo = m.motions[k];
+            clocks[k] += dt / mo.period * (1 + mo.run * built.pace);
+            const double at = WaveAt(mo.wave, clocks[k] + mo.phase / 360);
+            float v[4];
+            for (int c = 0; c < 4; ++c) v[c] = static_cast<float>(mo.from[c] + (mo.to[c] - mo.from[c]) * at);
+            const float boost = built.race ? m.RaceFactor(mo.parameter) : 1;
+            for (int c = 0; c < 3; ++c) v[c] *= boost;
+            for (Obj mid : mids) {
+                if (mo.colour) SetVectorParameter(mid, mo.parameter, v);
+                else SetScalarParameter(mid, mo.parameter, v[0]);
+            }
+        }
+    }
+}
+
+double Smooth(double x) {
+    x = std::clamp(x, 0.0, 1.0);
+    return x * x * (3 - 2 * x);
+}
+
+// A group's pose in a move at time t: its keys joined by a smooth curve (Catmull-Rom tangents, still at the first and
+// last key), held before the first and after the last. False if the move has no keys for the group.
+// Values: pitch, yaw, roll, x, y, z, swing.
+bool Sample(const Move& mv, int group, double t, double out[7]) {
+    size_t b = 0;
+    while (b < mv.keys.size() && mv.keys[b].group != group) ++b;
+    if (b == mv.keys.size()) return false;
+    size_t e = b;
+    while (e < mv.keys.size() && mv.keys[e].group == group) ++e;
+    auto value = [&](size_t i, int c) {
+        const Key& k = mv.keys[i];
+        return c < 3 ? k.rot[c] : c < 6 ? k.at[c - 3] : k.swing;
+    };
+    if (t <= mv.keys[b].time || e - b == 1) {
+        for (int c = 0; c < 7; ++c) out[c] = value(b, c);
+        return true;
+    }
+    if (t >= mv.keys[e - 1].time) {
+        for (int c = 0; c < 7; ++c) out[c] = value(e - 1, c);
+        return true;
+    }
+    size_t i = b;
+    while (i + 2 < e && mv.keys[i + 1].time <= t) ++i;
+    const double t0 = mv.keys[i].time, t1 = mv.keys[i + 1].time, h = std::max(t1 - t0, 1e-6);
+    const double u = std::clamp((t - t0) / h, 0.0, 1.0);
+    const double h00 = 2 * u * u * u - 3 * u * u + 1, h10 = u * u * u - 2 * u * u + u, h01 = -2 * u * u * u + 3 * u * u,
+                 h11 = u * u * u - u * u;
+    for (int c = 0; c < 7; ++c) {
+        const double p0 = value(i, c), p1 = value(i + 1, c);
+        auto slope = [&](size_t k) {                    // per second, at key k (0 at the first and last)
+            if (k == b || k + 1 == e) return 0.0;
+            return (value(k + 1, c) - value(k - 1, c)) / std::max(mv.keys[k + 1].time - mv.keys[k - 1].time, 1e-6);
+        };
+        out[c] = h00 * p0 + h10 * h * slope(i) + h01 * p1 + h11 * h * slope(i + 1);
+    }
+    return true;
+}
+
+double Random(Built& built) {                           // 0..1
+    uint32_t& x = built.seed;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    return (x & 0xffffff) / 16777216.0;
+}
+
+bool gTraceMoves = false;                               // tests: log the moves' clock
+
+const char* WhenName(When w) {
+    static const char* names[] = {"idle", "run", "air", "jump", "land"};
+    return names[static_cast<int>(w)];
+}
+
+bool Fits(const Move& mv, const Built& built, When when) {
+    return mv.when == when && built.pace >= mv.min && built.pace <= mv.max && mv.weight > 0;
+}
+
+// A move for what the ball is doing, at random by weight (not the last one again when there's another), or -1.
+int Pick(const Model& model, Built& built, When when) {
+    double total = 0;
+    int count = 0;
+    for (const Move& mv : model.moves)
+        if (Fits(mv, built, when)) total += mv.weight, ++count;
+    if (count == 0) return -1;
+    const int last = built.lastMove;
+    const bool skipLast = count > 1 && last >= 0 && Fits(model.moves[static_cast<size_t>(last)], built, when);
+    if (skipLast) total -= model.moves[static_cast<size_t>(last)].weight;
+    double r = Random(built) * total;
+    int chosen = -1;
+    for (size_t i = 0; i < model.moves.size(); ++i) {
+        const Move& mv = model.moves[i];
+        if (!Fits(mv, built, when) || (skipLast && static_cast<int>(i) == last)) continue;
+        chosen = static_cast<int>(i);
+        if ((r -= mv.weight) < 0) break;
+    }
+    return chosen;
+}
+
+// The moves' clock: what the ball is doing (still, rolling, in the air; a jump or a landing starts a move of its own
+// at once), the move playing and the one fading out under it, and the pause between moves.
+int Sequence(const Model& model, Built& built, double dt, bool known, double vz) {
+    if (built.seed == 0) {
+        built.seed = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(&built)) ^
+                     static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+        if (built.seed == 0) built.seed = 1;
+        built.wait = model.gap[0];
+    }
+    // Falling freely for a while is "air"; a sudden push upward is a landing after a fall, or a jump from level.
+    int event = -1;
+    if (known && built.vzKnown && dt > 0) {
+        const double change = vz - built.vz;
+        if (change / dt < -kFreeFall * 0.75) built.fall += dt;
+        else if (change > 0) built.fall = 0;
+        if (change > kKick && built.vz < -kKick) built.kickAt = built.last, built.kickFall = -built.vz;
+        else if (change > kKick && std::abs(built.vz) < kKick && vz > kKick) event = static_cast<int>(When::Jump);
+    }
+    if (gTraceMoves && known) {
+        static double lastTrace = 0;
+        lastTrace += dt;
+        if (lastTrace >= 0.1 || event >= 0) {
+            lastTrace = 0;
+            hostlog::Info("models: trace vz " + std::to_string(static_cast<int>(vz)) + " pace " + std::to_string(built.pace) +
+                          " fall " + std::to_string(built.fall) + (event >= 0 ? std::string(" event ") + WhenName(static_cast<When>(event)) : ""));
+        }
+    }
+    if (known) built.vz = vz, built.vzKnown = true;
+    else built.vzKnown = false;
+    // The game's ground bounces since the last frame (the ball being played: models are worn on the player's own).
+    if (built.bounceSeen < 0) built.bounceSeen = race::LatestBounce();
+    for (race::Bounce b; race::BounceAfter(built.bounceSeen, &b);) {
+        built.bounceSeen = b.serial;
+        if (b.ground) built.groundAt = built.last;
+    }
+    if (built.kickAt >= 0 && built.groundAt >= 0 && std::abs(built.kickAt - built.groundAt) <= kPair) {
+        if (event < 0) event = static_cast<int>(When::Land);
+        built.landing = built.kickFall;
+        built.kickAt = built.groundAt = -1;
+    } else if (built.kickAt >= 0 && built.last - built.kickAt > kPair) {
+        built.kickAt = -1;                              // a fall stopped with no bounce: a restart, not a landing
+    }
+    if (model.moves.empty()) return event;
+    const When state = built.fall >= 0.2 ? When::Air : built.pace >= 0.5 ? When::Run : When::Idle;
+    auto cut = [&]() {                                  // the move playing fades out under the next
+        if (built.now.move < 0) return;
+        built.before = built.now;
+        built.now = {};
+    };
+    auto start = [&](int move) {
+        built.now = {move, 0, 1};
+        built.lastMove = move;
+        if (gTraceMoves) {
+            const Move& mv = model.moves[static_cast<size_t>(move)];
+            hostlog::Info("models: move " + mv.name + " (" + WhenName(mv.when) + ")");
+        }
+    };
+    if (event >= 0) {
+        const int move = Pick(model, built, static_cast<When>(event));
+        if (move >= 0) {
+            cut();
+            start(move);
+        }
+    }
+    if (static_cast<int>(state) != built.state) {
+        built.state = static_cast<int>(state);
+        if (built.now.move >= 0) {
+            const When w = model.moves[static_cast<size_t>(built.now.move)].when;
+            if (w != When::Jump && w != When::Land && w != state) {
+                cut();
+                built.wait = 0;
+            }
+        }
+    }
+    if (built.now.move < 0) {
+        built.wait -= dt;
+        if (built.wait <= 0) {
+            const int move = Pick(model, built, state);
+            if (move >= 0) start(move);
+            else built.wait = 0.25;
+        }
+    }
+    auto advance = [&](Built::Playing& p, bool fading) {
+        if (p.move < 0) return;
+        const Move& mv = model.moves[static_cast<size_t>(p.move)];
+        p.time += dt * (mv.rate + mv.run * built.pace);
+        if (fading) p.fade -= dt / std::max(mv.blend, 0.1);
+        if (p.time >= mv.length || p.fade <= 0) {
+            p.move = -1;
+            if (!fading) built.wait = model.gap[0] + (model.gap[1] - model.gap[0]) * Random(built);
+        }
+    };
+    advance(built.now, false);
+    advance(built.before, true);
+    return event;
+}
+
+// The ground straight below a point (the first thing a line down from just above it hits, the ball not counted).
+bool GroundBelow(Obj ball, const double at[3], double* ground) {
+    Obj controller = game::PlayerController();
+    Obj library = eng::FindCdo("KismetSystemLibrary");
+    Obj statics = eng::FindCdo("GameplayStatics");
+    if (!controller || !library || !statics) return false;
+    struct {
+        Obj* data;
+        int32_t num, max;
+    } actors{&ball, ball ? 1 : 0, ball ? 1 : 0};
+    const double start[3] = {at[0], at[1], at[2] + 60}, end[3] = {at[0], at[1], at[2] - 5000};
+    Params trace(eng::FunctionOn(library, "LineTraceSingle"));
+    trace.Set("WorldContextObject", controller);
+    trace.Set("Start", start, sizeof start);
+    trace.Set("End", end, sizeof end);
+    trace.Set("TraceChannel", uint8_t{0});              // Visibility
+    trace.Set("bTraceComplex", uint8_t{0});
+    trace.Set("ActorsToIgnore", actors);
+    trace.Set("bIgnoreSelf", uint8_t{1});
+    if (!eng::Invoke(library, trace) || !trace.ReturnBool()) return false;
+    size_t size = 0;
+    const uint8_t* hit = trace.Get("OutHit", &size);
+    Params brk(eng::FunctionOn(statics, "BreakHitResult"));
+    if (!hit || !brk.Set("Hit", hit, size) || !eng::Invoke(statics, brk)) return false;
+    const uint8_t* l = brk.Get("Location");
+    if (!l) return false;
+    double where[3];
+    std::memcpy(where, l, sizeof where);
+    *ground = where[2];
+    return true;
+}
+
+// The dropped copies: a new one let go at the event, each falling, rolling to a stop, lying, then shrinking away.
+void Drop(const Model& model, Built& built, Obj ballActor, double dt, int event) {
+    constexpr double kShrink = 0.5;                     // seconds
+    for (auto& d : built.drops) {
+        const Group& g = model.groups[d.group];
+        if (d.copies.empty()) continue;
+        if (event >= 0 && event == g.drop && (event != static_cast<int>(When::Land) || built.landing >= g.hit)) {
+            Obj holder = eng::Get(built.actors[d.group]);
+            Obj from = holder ? eng::ReadObj(holder, "DynamicMeshComponent") : nullptr;
+            if (from) {
+                Built::Dropped& c = d.copies[d.next];
+                d.next = (d.next + 1) % d.copies.size();
+                const Vec3 at = eng::Call(from, "K2_GetComponentLocation").ReturnAs<Vec3>();
+                const Rot r = eng::Call(from, "K2_GetComponentRotation").ReturnAs<Rot>();
+                c.live = true;
+                c.age = c.spin = c.retrace = 0;
+                c.pos[0] = at.x, c.pos[1] = at.y, c.pos[2] = at.z;
+                c.rot[0] = r.pitch, c.rot[1] = r.yaw, c.rot[2] = r.roll;
+                Turn(c.rot, g.push, c.vel);
+                if (ballActor) {                                // part of the ball's own way along
+                    const Vec3 v = eng::Call(ballActor, "GetVelocity").ReturnAs<Vec3>();
+                    c.vel[0] += v.x * g.carry, c.vel[1] += v.y * g.carry;
+                }
+                double ground = 0;
+                const bool found = GroundBelow(ballActor, c.pos, &ground);
+                c.ground = found ? ground + d.radius : c.pos[2] - 50;
+                if (gTraceMoves) {
+                    char line[200];
+                    std::snprintf(line, sizeof line, "models: dropped %s at %.0f,%.0f,%.0f push %.0f,%.0f,%.0f ground %s %.0f",
+                                  g.name.c_str(), c.pos[0], c.pos[1], c.pos[2], c.vel[0], c.vel[1], c.vel[2], found ? "found" : "none", ground);
+                    hostlog::Info(line);
+                }
+                Obj actor = eng::Get(c.actor);
+                Obj component = actor ? eng::ReadObj(actor, "DynamicMeshComponent") : nullptr;
+                if (component) {
+                    Params p(eng::FunctionOn(component, "SetWorldScale3D"));
+                    p.Set("NewScale", Vec3{1, 1, 1});
+                    eng::Invoke(component, p);
+                    eng::Call(component, "SetVisibility", uint8_t{1}, uint8_t{0});
+                }
+            }
+        }
+        for (auto& c : d.copies) {
+            if (!c.live) continue;
+            Obj actor = eng::Get(c.actor);
+            Obj component = actor ? eng::ReadObj(actor, "DynamicMeshComponent") : nullptr;
+            if (!component) continue;
+            c.age += dt;
+            if (gTraceMoves && std::fmod(c.age, 0.5) < dt) {
+                char line[160];
+                std::snprintf(line, sizeof line, "models: %s age %.1f at %.0f,%.0f,%.0f", g.name.c_str(), c.age, c.pos[0], c.pos[1], c.pos[2]);
+                hostlog::Info(line);
+            }
+            if (c.age >= g.life + kShrink) {
+                c.live = false;
+                eng::Call(component, "SetVisibility", uint8_t{0}, uint8_t{0});
+                continue;
+            }
+            // Falling, bouncing a little, then rolling along the ground, slowing down.
+            const bool flying = c.pos[2] > c.ground + 0.5 || c.vel[2] > 0;
+            if (flying) {
+                c.vel[2] -= kFreeFall * dt;
+                for (int k = 0; k < 3; ++k) c.pos[k] += c.vel[k] * dt;
+                if (c.pos[2] <= c.ground) {
+                    c.pos[2] = c.ground;
+                    c.vel[2] = c.vel[2] < -150 ? -c.vel[2] * 0.3 : 0;
+                }
+            } else {
+                const double slow = std::exp(-1.5 * dt);
+                c.vel[0] *= slow, c.vel[1] *= slow, c.vel[2] = 0;
+                c.pos[0] += c.vel[0] * dt, c.pos[1] += c.vel[1] * dt;
+            }
+            const double speed = std::hypot(c.vel[0], c.vel[1]);
+            const double yaw = c.rot[1] * kPi / 180;
+            const double along = c.vel[0] * std::cos(yaw) + c.vel[1] * std::sin(yaw);       // forward, as it faces
+            c.spin -= along / d.radius * dt * 180 / kPi;                                      // rolling backward: pitch up
+            if (speed > 20 && (c.retrace -= dt) <= 0) {        // the ground under it as it rolls on
+                c.retrace = 0.2;
+                double ground = 0;
+                if (GroundBelow(ballActor, c.pos, &ground)) c.ground = ground + d.radius;
+                if (c.pos[2] < c.ground) c.pos[2] = c.ground;
+            }
+            Params p(eng::FunctionOn(component, "K2_SetWorldLocationAndRotation"));
+            p.Set("NewLocation", Vec3{c.pos[0], c.pos[1], c.pos[2]});
+            p.Set("NewRotation", Rot{c.rot[0] + c.spin, c.rot[1], c.rot[2]});
+            p.Set("bTeleport", uint8_t{1});
+            eng::Invoke(component, p);
+            if (c.age > g.life) {
+                const double s = std::max(0.01, 1 - (c.age - g.life) / kShrink);
+                Params sp(eng::FunctionOn(component, "SetWorldScale3D"));
+                sp.Set("NewScale", Vec3{s, s, s});
+                eng::Invoke(component, sp);
+            }
+        }
+    }
+}
 
 // The yaw of the camera the player sees through.
 bool CameraYaw(double* yaw) {
@@ -1099,9 +1890,10 @@ bool CameraYaw(double* yaw) {
 void Animate(const Model& model, Built& built, Obj ballActor, double seconds) {
     const double dt = built.last < 0 ? 0 : std::clamp(seconds - built.last, 0.0, 0.1);
     built.last = seconds;
-    double speed = 0;                                   // cm/s
+    double speed = 0, vz = 0;                           // cm/s
     if (ballActor) {
         const Vec3 v = eng::Call(ballActor, "GetVelocity").ReturnAs<Vec3>();
+        vz = v.z;
         speed = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
         // A group that travels faces where the ball is going. Before the ball has gone anywhere it faces the way the
         // camera looks (a racing ball waiting at the start), or looks at the camera (the Customize page's ball,
@@ -1126,18 +1918,65 @@ void Animate(const Model& model, Built& built, Obj ballActor, double seconds) {
     built.beat += dt * std::min(t.max, t.rate + t.run * built.pace);
     const double reach = t.calm + (1 - t.calm) * std::min(1.0, built.pace / t.full);
     const double turn = 2 * kPi * built.beat;
+    // Moves: each group's turn and shift from the move playing and the one fading, eased in and out, and how much of
+    // its own swing is left.
+    // A restart moves the ball far in one frame: not a landing.
+    bool steady = ballActor != nullptr;
+    if (ballActor) {
+        const Vec3 p = eng::Call(ballActor, "K2_GetActorLocation").ReturnAs<Vec3>();
+        const double jump = std::hypot(p.x - built.ballAt[0], p.y - built.ballAt[1], p.z - built.ballAt[2]);
+        steady = built.ballKnown && jump < std::max(500.0, speed * dt * 3);
+        built.ballAt[0] = p.x, built.ballAt[1] = p.y, built.ballAt[2] = p.z;
+        built.ballKnown = true;
+    }
+    const int event = Sequence(model, built, dt, steady, vz);
+    std::vector<std::array<double, 7>> moved;           // pitch, yaw, roll, x, y, z, swing kept
+    if (built.now.move >= 0 || built.before.move >= 0) {
+        moved.assign(model.groups.size(), {0, 0, 0, 0, 0, 0, 1});
+        for (const Built::Playing* p : {&built.now, &built.before}) {
+            if (p->move < 0) continue;
+            const Move& mv = model.moves[static_cast<size_t>(p->move)];
+            const double ease = mv.blend > 0 ? Smooth(p->time / mv.blend) * Smooth((mv.length - p->time) / mv.blend) : 1;
+            const double weight = ease * std::clamp(p->fade, 0.0, 1.0);
+            if (weight <= 0) continue;
+            for (size_t g = 0; g < model.groups.size(); ++g) {
+                double pose[7];
+                if (!model.groups[g].keyed || !Sample(mv, static_cast<int>(g), p->time, pose)) continue;
+                for (int c = 0; c < 6; ++c) moved[g][c] += weight * pose[c];
+                moved[g][6] -= weight * (1 - pose[6]);
+            }
+        }
+        for (auto& m : moved) m[6] = std::clamp(m[6], 0.0, 1.0);
+    }
     for (size_t i = 0; i < model.groups.size() && i < built.actors.size(); ++i) {
         const Group& g = model.groups[i];
         const bool moves = g.Moves();
-        if (g.spinAxis < 0 && !g.travel && !moves) continue;
+        if (g.spinAxis < 0 && !g.travel && !g.facing && !moves) continue;
         Obj actor = eng::Get(built.actors[i]);
         Obj component = actor ? eng::ReadObj(actor, "DynamicMeshComponent") : nullptr;
         if (!component) continue;
+        if (g.facing) {                                 // +x toward the camera the player sees through
+            Obj controller = game::PlayerController();
+            Obj manager = controller ? eng::ReadObj(controller, "PlayerCameraManager") : nullptr;
+            if (!manager) continue;
+            const Vec3 camera = eng::Call(manager, "GetCameraLocation").ReturnAs<Vec3>();
+            const Vec3 at = eng::Call(component, "K2_GetComponentLocation").ReturnAs<Vec3>();
+            const Rot look = eng::Call(Lib("KismetMathLibrary"), "FindLookAtRotation", at, camera).ReturnAs<Rot>();
+            Params p(eng::FunctionOn(component, "K2_SetWorldRotation"));
+            p.Set("NewRotation", look);
+            p.Set("bTeleport", uint8_t{1});
+            eng::Invoke(component, p);
+            continue;
+        }
         double angles[3] = {0, 0, 0};                   // about x (roll), y (pitch), z (yaw)
         if (g.spinAxis >= 0) angles[g.spinAxis] += std::fmod(seconds * g.speed, 360.0);
         const double phase = g.phase * kPi / 180;
-        if (g.swingAxis >= 0) angles[g.swingAxis] += g.swingAngle * reach * std::sin(turn + phase);
+        const std::array<double, 7>* mv = i < moved.size() ? &moved[i] : nullptr;
+        const double keep = mv ? (*mv)[6] : 1;
+        if (g.swingAxis >= 0) angles[g.swingAxis] += g.swingAngle * reach * keep * std::sin(turn + phase);
         Rot r{angles[1], angles[2], angles[0]};
+        if (mv) r.pitch += (*mv)[0], r.yaw += (*mv)[1], r.roll += (*mv)[2];
+        r.pitch -= g.lean * std::min(1.0, built.pace / t.full);       // forward: the top toward +x
         if (g.travel) {
             r.yaw += built.travelYaw;
             Params p(eng::FunctionOn(component, "K2_SetWorldRotation"));
@@ -1157,13 +1996,15 @@ void Animate(const Model& model, Built& built, Obj ballActor, double seconds) {
         // the bob.
         const double* base = g.parent >= 0 ? model.groups[static_cast<size_t>(g.parent)].pivot : nullptr;
         Vec3 at{g.pivot[0] - (base ? base[0] : 0), g.pivot[1] - (base ? base[1] : 0), g.pivot[2] - (base ? base[2] : 0)};
-        at.z += g.bob * reach * (0.5 - 0.5 * std::cos(2 * turn + phase));
+        at.z += g.bob * reach * keep * (0.5 - 0.5 * std::cos(2 * turn + phase));
+        if (mv) at.x += (*mv)[3], at.y += (*mv)[4], at.z += (*mv)[5];
         Params p(eng::FunctionOn(component, "K2_SetRelativeLocationAndRotation"));
         p.Set("NewLocation", at);
         p.Set("NewRotation", r);
         p.Set("bTeleport", uint8_t{1});
         eng::Invoke(component, p);
     }
+    if (!built.drops.empty()) Drop(model, built, ballActor, dt, event);
     // Animated meshes: the clip plays faster as the ball goes faster ("rate" at rest, "run" more per m/s), and the
     // idle clip, if there is one, while the ball is still.
     constexpr double kStill = 0.5;                      // m/s
@@ -1191,12 +2032,19 @@ void Animate(const Model& model, Built& built, Obj ballActor, double seconds) {
         show(flip.shown, false);
         flip.shown = index;
     }
+    AnimateMaterials(model, built, dt);
 }
+
+void TraceMoves(bool on) { gTraceMoves = on; }
 
 void Destroy(Built& built) {
     for (Obj actor : Actors(built)) eng::Call(actor, "K2_DestroyActor");
+    for (const auto& d : built.drops)
+        for (const auto& c : d.copies)
+            if (Obj actor = eng::Get(c.actor)) eng::Call(actor, "K2_DestroyActor");
     built.actors.clear();
     built.flips.clear();
+    built.drops.clear();
 }
 
 namespace {

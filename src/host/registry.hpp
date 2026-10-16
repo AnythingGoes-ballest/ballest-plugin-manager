@@ -27,6 +27,10 @@ struct Entry {
     std::vector<std::string> dependencies;                  // ids installed before it
     std::string iconFile;                                   // one of `files`, or ""
     std::vector<std::pair<std::string, std::string>> files; // name, sha256
+    // Maintainer-built cooked content attached to the plugin's own GitHub release (never in its repo):
+    // "assets/<name>.utoc|.ucas|.pak" -> {url under github.com/<repo>/releases/download/, sha256}.
+    struct ReleaseFile { std::string name, url, sha; };
+    std::vector<ReleaseFile> releaseFiles;
     std::string icon;                                       // local copy of the icon once downloaded, or ""
     bool listed = true;                                     // offered in the plugin browser (false: installed only as a dependency)
     std::string category;                                   // where it's listed (see Placing)

@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "assets.hpp"
 #include "campaigns.hpp"
 #include "cosmetics.hpp"
 #include "engine.hpp"
@@ -450,6 +451,23 @@ void Run(const std::string& cmd) {
              Report(c + " -> ok");
          }},
         {"tagname", [](const Args& a, const std::string&) { Report("tagname: " + nativeghost::RenameTags(Arg(a, 1), Arg(a, 2))); }},
+        {"assetplugin", [](const Args& a, const std::string&) {    // assetplugin <id>: gate + mount its assets/ (as at start)
+             const std::string id = Arg(a, 1);
+             const int n = id.empty() || id.find_first_of("\\/.") != std::string::npos ? 0
+                         : assets::MountPluginAssets(id, plugins::Dir() + L"\\" + eng::Widen(id) + L"\\assets");
+             Report("assetplugin " + id + ": mounted " + std::to_string(n));
+         }},
+        {"assetreload", [](const Args& a, const std::string&) {    // assetreload <plugin id>: newer assets/ build, no restart
+             // assetreload <plugin id>: reloads the plugin, which mounts any newer build in its assets/ folder. Re-wear its
+             // ball after (wear ball -; wear ball <id>) so the model is rebuilt from the newest build.
+             const std::string id = Arg(a, 1);
+             const ULONGLONG t0 = GetTickCount64();
+             plugins::Unload(id);
+             assets::CollectGarbage();
+             const bool ok = plugins::Load(id);
+             Report("assetreload " + id + ": " + (ok ? "reloaded" : "load failed") + " in " +
+                    std::to_string(GetTickCount64() - t0) + " ms");
+         }},
         {"localrec", [](const Args&, const std::string& c) {        // localrec <level name>: the game's record for it
              const std::string level = c.size() > 9 ? c.substr(9) : "";
              double best = 0;
@@ -703,9 +721,13 @@ void Run(const std::string& cmd) {
              Report("cosmetic " + kind + " " + id + (ok ? " -> ok" : " -> failed"));
          }},
         {"cosmetics", [](const Args&, const std::string&) { Report(cosmetics::Status()); }},
-        {"wear", [](const Args& a, const std::string& c) {        // wear ball|hat|bfx <custom id> ("" for the game's own)
+        {"movetrace", [](const Args& a, const std::string& c) {    // movetrace on|off: log models' moves and the ball's fall
+             models::TraceMoves(Arg(a, 1) == "on");
+             Report(c + " -> ok");
+         }},
+        {"wear", [](const Args& a, const std::string& c) {        // wear ball|hat|bfx <custom id> ("-" for the game's own)
              const cosmetics::Kind kind = Arg(a, 1) == "hat" ? cosmetics::Kind::Hat : Arg(a, 1) == "bfx" ? cosmetics::Kind::Bfx : cosmetics::Kind::Ball;
-             Report(c + (cosmetics::Equip(kind, Arg(a, 2)) ? " -> ok" : " -> failed"));
+             Report(c + (cosmetics::Equip(kind, Arg(a, 2) == "-" ? "" : Arg(a, 2)) ? " -> ok" : " -> failed"));
          }},
         {"cosmodel", [](const Args& a, const std::string& c) {    // cosmodel ball|hat <id> <model file> [ball image]
              std::string text;

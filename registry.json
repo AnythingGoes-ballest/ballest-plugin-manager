@@ -131,6 +131,47 @@
       }
     },
     {
+      "id": "elemental-balls",
+      "name": "Elemental Balls",
+      "description": "Three glowing balls painted from their concept art: Void Crystal, Frost and Toxic Current, in real materials of their own with a clear coat, a slowly flowing glow and a soft aura.",
+      "author": "AnythingGoes",
+      "repo": "AnythingGoes-ballest/ballest-elemental-balls",
+      "version": "0.1.0",
+      "commit": "0528b502f7b2f42825e413e38a241a67dd8917e2",
+      "min_host": "0.27.0",
+      "icon": "icon.png",
+      "dependencies": [
+        "cosmetic-kit"
+      ],
+      "files": {
+        "info.toml": "4eb3b3b82309c536d088be26f88622cac47088bd715e7e0dab0bd0c5023990b3",
+        "main.as": "4e289b62c188cc04f3a47dd3beda41f613c90c25f7d815a1bb3a3edd9af5c2bf",
+        "previews/frost.png": "5fdf709b2266f1593ce302ba16ff67cb1abd2fc1662f0452671f24390092b27d",
+        "previews/toxic.png": "cf57c7407f305a69d36460feea4b016c63ead139309d8613ff2b6f2e5e81ff07",
+        "previews/void.png": "eaf192f73221a067a15610cd17cd1c59fca566e1387f82578204926337a47a64",
+        "models/v2_frost.txt": "fe3f53178e4a241bf8ca1ecca7d3244959780bea0844f55fa48623ac97069869",
+        "models/v2_toxic.txt": "e2bbcbdfaa494295826d2f9e6a5b7a621d0bda0ee9387050dbb9a85cac164438",
+        "models/v2_void.txt": "67da478bbaea8cffc50b6d5f3daf4e555f4a5f9d0e3bbc8e2fa901c761339fde",
+        "models/sphere.glb": "8e73089bb1d88e4198d10d08cf665d575a484b36429358ef683b6bbf0d11a12b",
+        "models/v2_frost_shell.glb": "ca1f5235b692a014a7b213627fe9c3454829e1e34f299270b0d68ba1f8bfdd4e",
+        "icon.png": "352106cb1cf29fa67329cc11dae0936ca85ff14ae56e0562ae1767724dc83197"
+      },
+      "release_files": {
+        "assets/elemental_balls_b0008-Windows.utoc": {
+          "url": "https://github.com/AnythingGoes-ballest/ballest-elemental-balls/releases/download/v0.1.0/elemental_balls_b0008-Windows.utoc",
+          "sha256": "35ae521431dfd183bd69e7c93bb6793d91ea13abb786c1fec88daa8a2e4ffed6"
+        },
+        "assets/elemental_balls_b0008-Windows.ucas": {
+          "url": "https://github.com/AnythingGoes-ballest/ballest-elemental-balls/releases/download/v0.1.0/elemental_balls_b0008-Windows.ucas",
+          "sha256": "4ff4216e7fe5bfa34eec301fbdcc255259d8235e6e51ea0d473da4052f32ba8b"
+        },
+        "assets/elemental_balls_b0008-Windows.pak": {
+          "url": "https://github.com/AnythingGoes-ballest/ballest-elemental-balls/releases/download/v0.1.0/elemental_balls_b0008-Windows.pak",
+          "sha256": "8f2939268c0ba79c5d9818028c1794c7bb4e190ea9a01882bbc115970c466392"
+        }
+      }
+    },
+    {
       "id": "example-arms",
       "name": "Example Arms",
       "description": "Six arms for your ball, moving as it rolls: buff arms, zombie arms, skeleton arms, robot arms, crab claws and boxer arms.",
@@ -552,29 +593,33 @@
       "description": "Mario, Yoshi, Peach and Bowser balls in their Mario Kart Wii colours, made from scratch. Local cosmetics: worn on your own ball only.",
       "author": "AnythingGoes",
       "repo": "AnythingGoes-ballest/ballest-mk-cosmetics",
-      "version": "0.1.0",
-      "commit": "6b36d2d539ff3cecd69218a71904d8cdfb4635ff",
-      "min_host": "0.23.2",
+      "version": "0.2.0",
+      "commit": "5725e01f126f9a64c0a91359313bb4b10ed31cf5",
+      "min_host": "0.28.0",
       "icon": "icon.png",
       "dependencies": [
         "cosmetic-kit"
       ],
       "files": {
-        "info.toml": "5215eeb72cba6a379a9e0498b3cd57e3a7476caa79b0edbf12e5d7ab097204e5",
+        "info.toml": "79b47de64da1bc0dab2c668844fc78c6de52b91c1bc993e2b5f72de39f806e49",
         "main.as": "1b5683393738d47df09c58805a7288264c143613e3dad37e3949dfa68506ace1",
         "previews/bowser.png": "4afd278e21987119c28d57e74b294dd07ff86a9009a7bf4c7ff12b08bd67321c",
-        "previews/mario.png": "4025019cc859f31a47e77889bcbf088f5d683a8fd5fb9a6ca62bab41311fa172",
-        "previews/peach.png": "452c1df4ec9226ec356f4956359e940ea0085bb2b696520a28a404e0e6c0470f",
-        "previews/yoshi.png": "4e2a409886d861c68308544118587eaebcd46f1a44939f340a4a27ece843c355",
-        "models/bowser.txt": "b4a64c735e41961cfd378f8ee783113c38067d81606860312f4bd3635f080105",
-        "models/mario.txt": "b05a6b5d3d8a3a85bb72ab69e5942b0d500e577e1f282fca9ff80df5013d7a30",
-        "models/peach.txt": "91ee4544a108d27d5848589244513543695f1265677026d74f947575aaef842b",
-        "models/yoshi.txt": "2496f0a6f48b5a12dc6283a969ffbcf5f196e74cc2857135f9cb6d15a6e98cc9",
-        "models/bowser.glb": "805962c86aad7650826718e4d011300d210d45fe8b185de5495495311ad12828",
-        "models/mario.glb": "4c4f76a4ea7aae5549eee713abb6284335e886c43e003d3ee1f68f088aff5a27",
-        "models/peach.glb": "fbde5fa2a15aad2e002f7033577f1fe18dac54bd3bf44ab05bce73292e83dd6c",
-        "models/yoshi.glb": "c235f4a67e1f102f729d54cc38998efeb5115b0fa61a8e7e71753d7c2bcca746",
-        "icon.png": "48fa26e3b866a988b126114503eb925bac06d3fb7571ba67be856e03193e1bb4"
+        "previews/mario.png": "12cd58acaf6cd35520de7a61f84ba62eaab3619e03fbb55eaf50c8139a26a2c2",
+        "previews/moves/bowser.png": "6f6b873682897aba700b9a2cf2d831e66cb534b443dfc5752d06c519763c3ee7",
+        "previews/moves/mario.png": "fe46779974f2500d27f34f6d7ee9b8af10a7d301da92d12b3105631a47e993b9",
+        "previews/moves/peach.png": "04972bc293b20cb5b28bcc88fda8eab0592a01fd09652f9c7c51bec542804b36",
+        "previews/moves/yoshi.png": "a27a5449b262a5e83f40422d3f7002bb8de215c02356afb17779573291dce357",
+        "previews/peach.png": "5fc96bdb91c3937b6f14aa446fc666eac663f1712a92b267fd6091d8a8ba2617",
+        "previews/yoshi.png": "b4b4c712eaf98313fe18e18e8039cf2327ccb7b09746de94556afa4f17dcdd9f",
+        "models/bowser.txt": "4a175864a379ad9fb9b5e20fafdf13848d7130111444dba406e64d713ae395eb",
+        "models/mario.txt": "da1746adddf41cf9c728d0835308254d7b0aa41b3adf83ff23546104223f6bb1",
+        "models/peach.txt": "dafd6f2254fa51ef36659afd32085784accb0ccb39a32a88d4491c1351e80ac8",
+        "models/yoshi.txt": "26a69cf5fc8ede8701e397b35812507878278a32a1833276c613e0a4c3c084d5",
+        "models/bowser.glb": "63e76f915c2560ff59479375c5bf08c673eca6a4c8d26892472220dc57ef7c5e",
+        "models/mario.glb": "3feca8fc706d585878920a608b6bac4a234a5e367e22ec32b49d788295d91479",
+        "models/peach.glb": "151cb61c47ce2a73e215d8499025d5e43628c2705f99ffa238c78a8726a26e10",
+        "models/yoshi.glb": "fd818f928c23f96a7c4d933011f0b10052040feffe24af5f2f67bd2a7e73ce59",
+        "icon.png": "2407b0f31e733e5c08ebc5a8d55fa0bed18963e6327bbbd9ba6c62f196c897e4"
       }
     },
     {
@@ -834,17 +879,17 @@
     }
   ],
   "host": {
-    "version": "0.26.4",
+    "version": "0.28.0",
     "repo": "AnythingGoes-ballest/ballest-plugin-manager",
-    "commit": "5d0d1a805525306f15fd34592918cf2f8300b87b",
-    "dll": "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/download/v0.26.4/version.dll",
-    "dll_sha256": "dc492b0f4c92acdcc67fc106e79de28d0f77a6ff07f0fbe5b36e1699b5adb157",
+    "commit": "43071f69b80f863ace69ab5b7e570a579f80b814",
+    "dll": "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/download/v0.28.0/version.dll",
+    "dll_sha256": "e2de94af8c339b557c732da5e8e4c388c9670bbe3fac84bf244e882ca0ab4bac",
     "files": {
       "plugins/hello-world/info.toml": "5300e78277bc1e92d4d1626ce17ed15e938f37e692b2271b58c3c9c30b79be40",
       "plugins/hello-world/main.as": "24f510821cb3ea7825bfef6363d92e12fd493b9977038beb9e6c297a692fb23b",
       "plugins/plugin-manager/default-icon.png": "304d27462febbf15c8645b64ae6b01624e4a59e29e0304ffac1f28313a3ba362",
       "plugins/plugin-manager/icon.png": "fb60df477ecffe4942dc7500d2f4f6cb8b65d017bde68b49b81541c29f8e144e",
-      "plugins/plugin-manager/info.toml": "6539be82fd2cf37c93b89794fffb75a5bdcab3371fbb95e866f18e486f834134",
+      "plugins/plugin-manager/info.toml": "391577a37bbb96cbae4a96d818f1d78396ff6d3a23cfd63cdb60d8e4ff967a72",
       "plugins/plugin-manager/main.as": "87f9b3adb6f72812d233ec0ebe2de7a81ea4916866207b2b47da543112b36d8b"
     }
   }

@@ -65,6 +65,7 @@ nav:
       - Previewing windows: guides/preview.md
       - Publishing a plugin: guides/publishing.md
       - Custom cosmetics: guides/cosmetics.md
+      - Cooked content (custom materials): custom-assets-recipe.md
       - Drawing in the world: guides/world.md
   - Reference:
       - info.toml: reference/manifest.md

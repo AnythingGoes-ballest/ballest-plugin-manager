@@ -6,12 +6,23 @@
 // radius is 50; angles in degrees):
 //   material <name> plastic|metal|glow #rrggbb [rough=0.5] [bright=5]
 //   material <name> glass [#rrggbb] [opacity=0.2]   (see-through: clear M_GlassV2, or tinted M_Glass)
-//   group <name> [spin=x|y|z] [speed=<degrees a second>] [travel] [on=<group>] [pivot=x,y,z]
-//         [swing=x|y|z angle=<degrees> [phase=<degrees>]] [bob=<cm> [phase=<degrees>]]
+//   material <name> game <material asset path>       (one of the game's own materials, as it is)
+//   set <material> "<parameter>" <value>             a parameter of a material's dynamic instance: a number, a colour
+//       (#rrggbb, or r,g,b[,a] in linear values; "*k" after either brightens it, for glowing colours), a picture file of
+//       the plugin's (.png, .jpg) or a texture asset of the game's (a path starting with "/")
+//   animate <material> "<parameter>" <from> <to> [period=<seconds>] [wave=sine|triangle|saw|square] [phase=<degrees>]
+//       [run=<more a second per m/s of the ball>]: a number or colour moving between two values every frame
+//   race <material> "<parameter>" <factor>           away from the Customize page (a race, the editor, a replay) that
+//       parameter, as set or animated, is that many times as much (a colour's brightness): daylight needs more glow
+//   group <name> [spin=x|y|z] [speed=<degrees a second>] [travel|facing] [on=<group>] [pivot=x,y,z]
+//         [swing=x|y|z angle=<degrees> [phase=<degrees>]] [bob=<cm> [phase=<degrees>]] [lean=<degrees>]
 //       parts after it belong to it; "travel" keeps the group upright and turned to where the ball is going instead
-//       of rolling with the ball; "on" builds it on an earlier group, moving with it (a limb on a body); "pivot" is
-//       the point it turns about (a shoulder); "swing" rocks it to and fro about an axis through the pivot, and "bob"
-//       lifts it and lets it down twice a swing (a step), both keeping time with the model's tempo
+//       of rolling with the ball; "facing" turns the group's +x to the camera every frame (a disc of glow round the
+//       ball, which the ball hides in front of it: a halo); "on" builds it on an earlier group, moving with it (a
+//       limb on a body); "pivot" is the point it turns about (a shoulder); "swing" rocks it to and fro about an axis
+//       through the pivot, and "bob" lifts it and lets it down twice a swing (a step), both keeping time with the
+//       model's tempo; "lean" tips it forward about its pivot as the ball speeds up, that many degrees from the
+//       tempo's "full" speed
 //   tempo [rate=<swings a second at rest>] [run=<more a second per m/s of the ball>] [max=<swings a second>]
 //         [calm=<share of the swing at rest>] [full=<m/s at which swings are full>]
 //   <shape> <material> <size...> [at=x,y,z] [rot=pitch,yaw,roll] [scale=x,y,z]
@@ -21,7 +32,7 @@
 //     spiral r= inner= turns= thick=
 //   A bowl is the lower half of a sphere's shell, centred on "at" (open at the top); a spiral is a tube coiled flat
 //   around z from radius r in to radius inner.
-//   mesh <file> [size=<cm>] [at=x,y,z] [rot=pitch,yaw,roll] [scale=x,y,z] [material=<name>]
+//   mesh <file> [size=<cm>] [at=x,y,z] [rot=pitch,yaw,roll] [scale=x,y,z] [material=<name>] [node=<name>]
 //        [anim=<name>] [rate=<times its speed at rest>] [run=<more a second per m/s of the ball>] [idle=<name>]
 //        [frames=<a clip>]
 //     a model file from Blender or another 3D tool: glTF 2.0 (.glb, or .gltf) or OBJ (.obj with its .mtl), next to
@@ -29,6 +40,24 @@
 //     the file has it without). Its colours, glow, see-through parts and textures come from the file, or all of it
 //     is "material". "anim" plays one of its animations (a name, or part of one), faster as the ball speeds up;
 //     "idle" plays instead while the ball is still. Animations are baked into "frames" poses (24 by default).
+//     "node" takes only that node of the file (and the nodes under it): a character's parts as one file. A file is
+//     read once for the whole model, its materials added once.
+//   move <name> [when=idle|run|air|jump|land] [min=<m/s>] [max=<m/s>] [weight=1] [length=<s>] [blend=0.25]
+//        [rate=1] [run=0]
+//   key <seconds> <group> [rot=pitch,yaw,roll] [at=x,y,z] [swing=<0..1>]
+//   moves [gap=<s>[,<s>]]
+//   group <name> ... drop=jump|land [push=x,y,z] [life=<s>] [max=<n>] [hit=<cm/s>] [carry=0.5]
+//     a group that isn't shown on the ball: at each jump or landing a copy of it is let go into the world where it
+//     is (thrown by "push", cm/s in its own axes), falls to the ground below, rolls to a stop, lies there "life"
+//     seconds and shrinks away; "max" (1 to 8) at once, the oldest reused; a landing drops one only when the ball
+//     came down at least "hit" cm/s (400: about an 80 cm fall); it leaves with "carry" of the ball's speed along the
+//     ground (0: it stays where it was let go). Only to look at: nothing touches it.
+//     moves: short keyframed animations of the groups (a hop, a wave, a spin), played one after another, picked at
+//     random from those for what the ball is doing ("when": still, rolling, in the air; or at once on a jump or a
+//     landing), and eased in and out over "blend" seconds. Each "key" (of the last "move") turns a group by "rot"
+//     about its pivot and moves it by "at", on top of its swing and bob, which "swing" scales (0: the move holds the
+//     limb on its own). Keys of a group are joined smoothly. "moves gap" is the pause between two moves (random in
+//     the range). "rate" and "run" are the move's speed: "rate" times as fast, "run" more for every m/s of the ball.
 //   Spheres, boxes, discs, rings and saws are centred on "at"; cylinders, cones, capsules and cups stand on it (along
 //   +z). Rings and saws lie flat (around z).
 #pragma once
@@ -42,7 +71,26 @@
 
 namespace models {
 
-enum class Finish { Plastic, Metal, Glow, Glass, Image };
+enum class Finish { Plastic, Metal, Glow, Glass, Image, Game };
+// A parameter set on a material ("set"): a number, a colour, or a texture (a picture file, or a texture asset).
+struct Setting {
+    enum class Kind { Scalar, Colour, Texture };
+    std::string parameter;
+    Kind kind = Kind::Scalar;
+    float value[4] = {0, 0, 0, 1};
+    std::wstring file, asset;           // Texture: a picture file, or else an asset path
+};
+// A parameter that moves ("animate"): from `from` to `to` and back (sine, triangle, square) or from `from` to `to` and
+// over again (saw), a cycle every `period` seconds, `phase` degrees into it; `run` makes the cycle that much faster
+// for every m/s of the ball's speed.
+struct Motion {
+    enum class Wave { Sine, Triangle, Saw, Square };
+    std::string parameter;
+    bool colour = false;
+    Wave wave = Wave::Sine;
+    float from[4] = {0, 0, 0, 1}, to[4] = {1, 1, 1, 1};
+    double period = 4, phase = 0, run = 0;
+};
 struct Material {
     std::string name;
     Finish finish = Finish::Plastic;
@@ -56,6 +104,15 @@ struct Material {
     bool refracts = false;
     float ior = 1.5f;                   // index of refraction: 1 is air (no bending), glass about 1.45-1.5, diamond 2.4
     float reflect = 1;                  // how strongly it reflects, 0 to 1
+    std::wstring asset;                 // Game: the material asset
+    std::vector<Setting> settings;      // "set", after the finish's own parameters
+    std::vector<Motion> motions;        // "animate"
+    std::vector<std::pair<std::string, float>> race;    // "race": parameter, factor away from the Customize page
+    float RaceFactor(const std::string& parameter) const {
+        for (const auto& [param, k] : race)
+            if (param == parameter) return k;
+        return 1;
+    }
 };
 
 enum class Shape { Sphere, Box, Cylinder, Cone, Capsule, Disc, Ring, Saw, Cup, Bowl, Spiral, Mesh };
@@ -90,11 +147,20 @@ struct Group {
     int spinAxis = -1;                  // 0 x, 1 y, 2 z, or -1
     double speed = 0;
     bool travel = false;
+    bool facing = false;                // "facing": its +x turned to the camera every frame (a glow behind the ball)
     int parent = -1;                    // "on": the group it is built on, or -1 for the ball
     double pivot[3] = {0, 0, 0};
     int swingAxis = -1;                 // 0 x, 1 y, 2 z, or -1
     double swingAngle = 0, phase = 0, bob = 0;
-    bool Moves() const { return parent >= 0 || swingAxis >= 0 || bob != 0 || pivot[0] != 0 || pivot[1] != 0 || pivot[2] != 0; }
+    double lean = 0;                    // degrees forward at full speed (the tempo's "full")
+    bool keyed = false;                 // a move has keys for it
+    // "drop": not shown on the ball; at that moment (a When: jump or land) a copy of it is let go into the world where
+    // it is, thrown by "push" (cm/s, its own axes), and lies there "life" seconds before shrinking away; at most "max".
+    int drop = -1;
+    double push[3] = {-200, 0, 150}, life = 4, hit = 400;   // hit: a landing at least this fast (cm/s) drops one
+    double carry = 0.5;                 // the share of the ball's speed along the ground it leaves with
+    int max = 4;
+    bool Moves() const { return parent >= 0 || swingAxis >= 0 || bob != 0 || lean != 0 || keyed || drop >= 0 || pivot[0] != 0 || pivot[1] != 0 || pivot[2] != 0; }
     std::vector<Part> parts;
 };
 
@@ -102,9 +168,28 @@ struct Tempo {
     double rate = 1, run = 0, max = 1e9, calm = 1, full = 1;
 };
 
+// A move: keyframes for some of the groups, played now and then (see "move" above).
+enum class When { Idle, Run, Air, Jump, Land };
+struct Key {
+    double time = 0;
+    int group = 0;
+    double rot[3] = {0, 0, 0};          // pitch, yaw, roll
+    double at[3] = {0, 0, 0};
+    double swing = 1;                   // how much of the group's own swing and bob is kept
+};
+struct Move {
+    std::string name;
+    When when = When::Run;
+    double min = 0, max = 1e9;          // the ball's speed, m/s
+    double weight = 1, length = 0, blend = 0.25, rate = 1, run = 0;
+    std::vector<Key> keys;              // by group, then time
+};
+
 struct Model {
     std::vector<Material> materials;
     std::vector<Group> groups;
+    std::vector<Move> moves;
+    double gap[2] = {0.3, 1.2};         // seconds between moves
     Tempo tempo;
     bool hideBall = false;              // "ball hidden": a clear ball's own glass isn't drawn (the model is the ball)
 };
@@ -131,11 +216,46 @@ struct Built {
     double travelYaw = 90;             // until the ball moves: side-on to the Customize camera (measured)
     bool facing = false;                // travelYaw has been set from the camera or the ball's travel
     double last = -1, beat = 0, pace = 0;   // the tempo's clock: last time, swings so far, smoothed ball speed
+    std::vector<std::vector<double>> clocks;    // per material, per animation: cycles so far ("run" makes them uneven)
+    bool race = true;                   // not on the Customize page's ball: "race" factors apply
+    // Moves: the one playing and the one fading out under it (-1: none), how far into each, and the wait for the next.
+    struct Playing {
+        int move = -1;
+        double time = 0, fade = 1;      // fade: 1, or going down to 0 once it has been cut short
+    };
+    Playing now, before;
+    double wait = 0;
+    int lastMove = -1;
+    int state = 0;                      // When the ball is in (Idle, Run or Air)
+    double vz = 0, fall = 0;            // the ball's last vertical speed (cm/s), and how long it has been falling freely
+    bool vzKnown = false;
+    double landing = 0;                 // how fast the ball came down at the last landing (cm/s)
+    // A landing is the ball's fall stopped (a kick up in its vertical speed) with the game's own ground bounce (race.hpp)
+    // within kPair seconds of it: a restart stops the fall too, but with no bounce.
+    int bounceSeen = -1;                // the last bounce read
+    double kickAt = -1, kickFall = 0, groundAt = -1;
+    double ballAt[3] = {0, 0, 0};       // where the ball was last frame (a jump in it is a restart, not a landing)
+    bool ballKnown = false;
+    // Dropped copies of a "drop" group, each an actor of its own in the world (made when the model is built, reused).
+    struct Dropped {
+        eng::Weak actor;
+        bool live = false;
+        double age = 0, pos[3] = {0, 0, 0}, vel[3] = {0, 0, 0}, rot[3] = {0, 0, 0}, spin = 0, ground = 0, retrace = 0;
+    };
+    struct Drops {
+        size_t group = 0;
+        double radius = 10;             // from its pivot down to its lowest point: it lies and rolls on that
+        std::vector<Dropped> copies;
+        size_t next = 0;
+    };
+    std::vector<Drops> drops;
+    uint32_t seed = 0;
     bool Alive() const;
 };
 Built Build(const Model& model, eng::Obj parent);
 void Animate(const Model& model, Built& built, eng::Obj ballActor, double seconds);
 void Destroy(Built& built);
+void TraceMoves(bool on);               // tests only: log each move started, and the ball's vertical speed (10 a second)
 
 // Shapes in the world, for drawing (ghost trails and balls): a mesh actor on its own (not attached, no collision) in
 // one colour, glowing or plastic. Null when it could not be made.

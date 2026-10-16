@@ -1069,8 +1069,8 @@ std::wstring PluginFile(const std::string& path, bool* ok) {
     return resolved;
 }
 // A model file (models.hpp's format) in the plugins folder, read whole; "" for none. A 3D model file (.glb, .gltf,
-// .obj) is a model of that mesh alone. The files a model's "mesh" lines name are found next to it, must be in the
-// plugins folder too, and are passed on by their full path.
+// .obj) is a model of that mesh alone. The files a model's "mesh" lines name, and the pictures its "set" lines give a
+// material, are found next to it, must be in the plugins folder too, and are passed on by their full path.
 bool IsMeshFile(const std::string& path) {
     std::string lower = path;
     for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -1121,6 +1121,41 @@ bool ModelText(const std::string& path, std::string* text, bool hat = false) {
             const std::wstring resolved = PluginFile(absolute ? name : folder + name, &inside);
             if (!inside) return false;
             line = line.substr(0, first) + "mesh \"" + eng::Narrow(resolved.c_str(), static_cast<int>(resolved.size())) + "\"" + line.substr(end);
+        } else if (first != std::string::npos && line.compare(first, 4, "set ") == 0) {
+            // set <material> "<parameter>" <value>: a value that is a picture file (not a game asset, "/...") is the
+            // plugin's own, next to the model.
+            std::string value;
+            size_t start = line.size(), stop = line.size(), at = first + 3;
+            for (int word = 0; word < 3 && at < line.size(); ++word) {
+                at = line.find_first_not_of(" \t", at);
+                if (at == std::string::npos) break;
+                size_t end;
+                if (line[at] == '"') {
+                    end = line.find('"', at + 1);
+                    end = end == std::string::npos ? line.size() : end + 1;
+                } else {
+                    end = line.find_first_of(" \t\r", at);
+                    if (end == std::string::npos) end = line.size();
+                }
+                if (word == 2) {
+                    start = at, stop = end;
+                    value = line[at] == '"' ? line.substr(at + 1, end - at - 2) : line.substr(at, end - at);
+                }
+                at = end;
+            }
+            std::string lower = value;
+            for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            auto ends = [&](const char* tail) {
+                const size_t n = std::strlen(tail);
+                return lower.size() > n && lower.compare(lower.size() - n, n, tail) == 0;
+            };
+            if (!value.empty() && value[0] != '/' && (ends(".png") || ends(".jpg") || ends(".jpeg"))) {
+                const bool absolute = value.size() > 1 && value[1] == ':';
+                bool inside = false;
+                const std::wstring resolved = PluginFile(absolute ? value : folder + value, &inside);
+                if (!inside) return false;
+                line = line.substr(0, start) + "\"" + eng::Narrow(resolved.c_str(), static_cast<int>(resolved.size())) + "\"" + line.substr(stop);
+            }
         }
         *text += line + "\n";
     }

@@ -19,8 +19,7 @@
 
 namespace manager {
 
-// "" where it was; "plugins", "cosmetics", "settings", "console". Not over a run being raced (unpaused): it closes if
-// one starts under it too.
+// "" where it was; "plugins", "cosmetics", "settings", "console". Any time, a run being raced too.
 void Open(const std::string& page = "");
 void Close();
 bool IsOpen();

@@ -1,0 +1,4 @@
+# A sphere in the plugin's own cooked material (assets/asset_poc_b*.utoc, /Game/Mods/asset_poc/).
+ball hidden
+material shell asset /Game/Mods/asset_poc/MI_PoC.MI_PoC
+sphere shell r=49 at=0,0,0
