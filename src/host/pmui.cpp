@@ -409,8 +409,7 @@ double Text(Layer& l, const std::string& key, int z, const std::string& s, doubl
         e.px = px;
         e.face = face;
     } else if (std::fabs(e.px - px) > 0.01 || e.face != face) {
-        // a new size or face (a growing title): set, and measured again; its text sent again, so it is laid out at the
-        // new size now (the size alone, written into the block, was missed: a closed card's name stayed big)
+        // a new size or face (a growing title): set (handed to the block through SetFont) and measured again
         ux::TextFace(e.node.Get(), px, face);
         e.px = px;
         e.face = face;

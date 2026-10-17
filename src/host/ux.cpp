@@ -64,8 +64,23 @@ Obj OnCanvas(Obj canvas, Obj child, int z, bool autoSize, bool centered, double 
 
 }  // namespace
 
+// The block takes a font only through SetFont (written into it alone, the text on screen kept its old size: a closed
+// card's name stayed big): its own, outline and all, handed back to it.
+void ResendFont(Obj text) {
+    eng::Prop fp;
+    const int fontAt = eng::NestedOffset(eng::ClassOf(text), {"Font"}, &fp);
+    if (fontAt < 0 || fp.size <= 0) return;
+    if (Obj fn = eng::FunctionOn(text, "SetFont")) {
+        eng::Params p(fn);
+        p.SetArg(0, text + fontAt, static_cast<size_t>(fp.size));
+        eng::Invoke(text, p);
+    }
+}
+
 void TextFace(Obj text, double px, const char* face) {
-    if (text) SetFace(text, px, face);
+    if (!text) return;
+    SetFace(text, px, face);
+    ResendFont(text);
 }
 
 void TextOutline(Obj text, int size, const Color& c) {
@@ -81,16 +96,7 @@ void TextOutline(Obj text, int size, const Color& c) {
         const float f[4] = {c.r, c.g, c.b, c.a};
         std::memcpy(text + colourAt, f, sizeof f);
     }
-    // (the block takes a font only through SetFont: its own, outline and all, handed back to it)
-    eng::Prop fp;
-    const int fontAt = eng::NestedOffset(cls, {"Font"}, &fp);
-    if (fontAt >= 0 && fp.size > 0) {
-        if (Obj fn = eng::FunctionOn(text, "SetFont")) {
-            eng::Params p(fn);
-            p.SetArg(0, text + fontAt, static_cast<size_t>(fp.size));
-            eng::Invoke(text, p);
-        }
-    }
+    ResendFont(text);
 }
 
 void TextShadow(Obj text, double dx, double dy, const Color& c) {
