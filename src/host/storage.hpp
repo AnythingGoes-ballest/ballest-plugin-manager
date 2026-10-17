@@ -9,5 +9,6 @@ std::string Get(const std::string& plugin, const std::string& key, const std::st
 void Set(const std::string& plugin, const std::string& key, const std::string& value);
 void Erase(const std::string& plugin, const std::string& key);
 bool Has(const std::string& plugin, const std::string& key);
+void Forget(const std::string& plugin);    // every value of a removed plugin: its file is deleted
 
 }  // namespace storage

@@ -46,9 +46,19 @@ Values& Load(const std::string& plugin) {
 
 void Save(const std::string& plugin, const Values& values) {
     CreateDirectoryW(Dir().c_str(), nullptr);       // fails harmlessly when it exists
-    std::ofstream out(FileOf(plugin).c_str(), std::ios::trunc);
-    for (const auto& [name, saved] : values) out << name << '=' << saved << '\n';
-    if (!out) hostlog::Warn("could not save storage for " + plugin);
+    // (written to a ".part" file, then moved over the real one: a crash mid-save lost every stored value)
+    const std::wstring file = FileOf(plugin), part = file + L".part";
+    bool ok = false;
+    {
+        std::ofstream out(part.c_str(), std::ios::trunc);
+        for (const auto& [name, saved] : values) out << name << '=' << saved << '\n';
+        ok = static_cast<bool>(out);
+    }
+    if (ok) ok = MoveFileExW(part.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+    if (!ok) {
+        DeleteFileW(part.c_str());
+        hostlog::Warn("could not save storage for " + plugin);
+    }
 }
 
 }  // namespace
@@ -73,5 +83,10 @@ void Erase(const std::string& plugin, const std::string& key) {
 }
 
 bool Has(const std::string& plugin, const std::string& key) { return Load(plugin).count(Key(key)) > 0; }
+
+void Forget(const std::string& plugin) {
+    gPlugins.erase(plugin);
+    DeleteFileW(FileOf(plugin).c_str());
+}
 
 }  // namespace storage

@@ -1,18 +1,22 @@
-// Plugin runtime: discovers plugins/<id>/info.toml, compiles each plugin's AngelScript into its own module, and
-// calls its callbacks on the game thread with a time budget. A plugin that throws, or overruns often, is stopped; the
-// game and the other plugins carry on. Plugins can also be loaded and unloaded while the game runs (installs and
-// removals from the plugin browser). The script API itself is in api.cpp.
+// Plugin runtime: discovers plugins/<id>/info.toml (cosmetic plugins: plugins/cosmetics/<id>/info.toml), compiles each
+// plugin's AngelScript into its own module, and calls its callbacks on the game thread with a time budget. A plugin
+// that throws, or overruns often, is stopped; the game and the other plugins carry on. Plugins can also be loaded and
+// unloaded while the game runs (installs and removals from the plugin browser). The script API itself is in api.cpp.
 #pragma once
 #include <string>
 #include <vector>
 
 namespace plugins {
 
-constexpr const char* kHostVersion = "0.28.0";
+constexpr const char* kHostVersion = "0.29.0";
 
 void LoadAll(const std::wstring& pluginsDir);
 void Frame(float dt);
 std::wstring Dir();                         // the plugins folder
+// Cosmetic plugins (registry::IsCosmetic) are kept in a folder of their own inside it, plugins\cosmetics\<id>, so they
+// don't crowd the plugins folder (AnythingGoes). One found in plugins\<id> (installed before) is moved there at start.
+std::wstring CosmeticsDir();
+std::wstring FolderOf(const std::string& id);   // a loaded plugin's folder (either place), or ""
 void OpenFolder();                          // shows the plugins folder in File Explorer
 
 // Outside plugin callbacks only (the registry calls these from its own frame step).
@@ -39,6 +43,7 @@ int Current();                              // index of the plugin whose code is
 bool RecoverFromFault(const std::string& where);
 void CrashNext(const std::string& id);      // test hook: that plugin's next callback faults inside host code
 std::string CurrentId();
+std::string CallerId();                     // the plugin whose callback is running (not a dependency it called into), or ""
 std::string IdAt(int index);                // the plugin at an index (Current()'s kind), or ""
 std::string NameAt(int index);
 std::wstring CurrentDir();                  // the running plugin's folder, or "" outside plugin code

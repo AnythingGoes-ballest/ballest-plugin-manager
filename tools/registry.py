@@ -137,6 +137,12 @@ def add(path, tag, repo_name, folder="", release_files=None):
     if problems:
         sys.exit("refused by the review rules (see CLAUDE.md):\n  " + "\n  ".join(problems))
     registry = load()
+    # where the plugin manager lists it, set by hand in registry.json, kept through an update (else from its info.toml)
+    previous = next((p for p in registry["plugins"] if p["id"] == entry["id"]), {})
+    for key in ("category", "priority", "added", "listed"):
+        value = previous.get(key, meta.get(key))
+        if value is not None:
+            entry[key] = value
     plugins = [p for p in registry["plugins"] if p["id"] != entry["id"]]
     plugins.append(entry)
     registry["plugins"] = sorted(plugins, key=lambda p: p["name"].lower())

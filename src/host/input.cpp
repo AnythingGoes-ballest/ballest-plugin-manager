@@ -2,8 +2,10 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <cstdint>
 #include <initializer_list>
+#include <string>
 
 namespace input {
 namespace {
@@ -19,6 +21,30 @@ bool GameHasFocus() {
 }
 
 bool Valid(int key) { return key > 0 && key < kKeyCount; }
+
+// --- the mouse wheel: from the game window's own messages, so it is seen whatever the game's input mode (the plugin
+// manager window makes input UI-only, where the player controller no longer sees the wheel) ------------------------
+HWND gHooked = nullptr;
+WNDPROC gOriginalProc = nullptr;
+std::atomic<int> gWheelDelta{0};
+double gWheel = 0;
+
+LRESULT CALLBACK WheelProc(HWND window, UINT message, WPARAM w, LPARAM l) {
+    if (message == WM_MOUSEWHEEL) gWheelDelta += GET_WHEEL_DELTA_WPARAM(w);
+    return CallWindowProcW(gOriginalProc, window, message, w, l);
+}
+
+// The game's window (the foreground one, while it has focus): its window procedure wrapped once, again if it is made anew.
+void HookWheel() {
+    if (gHooked && IsWindow(gHooked)) return;
+    HWND window = GetForegroundWindow();
+    wchar_t cls[64] = {};
+    if (!window || !GetClassNameW(window, cls, 64) || std::wstring(cls) != L"UnrealWindow") return;
+    const LONG_PTR old = SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&WheelProc));
+    if (!old) return;
+    gOriginalProc = reinterpret_cast<WNDPROC>(old);
+    gHooked = window;
+}
 
 // --- controllers: XInput (the Windows API for Xbox-style pads, which also covers most others through Steam Input) ---
 struct PadState {                       // XINPUT_STATE
@@ -81,7 +107,10 @@ void Frame() {
     if (focus) {
         for (int vk = 1; vk < 256; ++vk) now[vk] = (GetAsyncKeyState(vk) & 0x8000) != 0;
         ReadPads(now);
+        HookWheel();
     }
+    gWheel = gWheelDelta.exchange(0) / static_cast<double>(WHEEL_DELTA);
+    if (!focus) gWheel = 0;
     for (int key = 1; key < kKeyCount; ++key) {
         gWasDown[key] = gDown[key];
         gDown[key] = now[key] || gHeld[key];
@@ -94,6 +123,7 @@ void Frame() {
 }
 
 bool Down(int key) { return Valid(key) && gDown[key]; }
+double Wheel() { return gWheel; }
 bool Pressed(int key) { return Valid(key) && gDown[key] && !gWasDown[key]; }
 void Simulate(int key) { gSimulated = Valid(key) ? key : 0; }
 void SimulateHeld(int key, bool held) {

@@ -28,6 +28,7 @@ double MouseWheel();
 // The game's screen in widget units (those of window offsets and MousePosition): the viewport's size in pixels
 // (WidgetLayoutLibrary.GetViewportSize) over its DPI scale (GetViewportScale).
 bool ScreenSize(double* width, double* height);
+double ViewportScale();                     // the screen's pixels per widget unit (2/3 at 720p, 1 at 1080p); 0 unknown
 // The game's own window (its top-level window, class UnrealWindow): whether it's maximized; whether it fits the usable
 // part of its screen (the taskbar left out), fullscreen and borderless always do; maximizing it.
 bool WindowMaximized();
@@ -44,6 +45,9 @@ void EarlyWindowFit(const std::wstring& pluginsDir);
 // viewport ignores keys, so the player controller (whose "any key" event moves menu focus) and the pawn never
 // see what is typed. Afterwards input returns to game-and-UI, as while the cursor is requested.
 void SetTypingWidget(eng::Obj textInput);
+// A host window that takes all input while it is open (the plugin manager): input UI-only with it focused, in every
+// map, menus included; null lets go. A text box typed in inside it gets the focus instead.
+void SetModalWidget(eng::Obj widget);
 
 // Opens a map by name the way GameplayStatics.OpenLevel does (test tooling; skips the menu's level setup, so
 // medal times and the leaderboard stay unloaded in that map).

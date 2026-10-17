@@ -1,8 +1,9 @@
 # Settings
 
 Settings are global variables with a `[Setting]` tag, the same way Openplanet does them. Each plugin with settings
-gets its own settings page in the plugin manager: footer **plugins** > **installed**, then **settings** on
-the plugin's card. The page saves the player's changes and tells your plugin about them.
+gets its own settings page in the plugin manager: footer **plugins**, then the cog at the top (each plugin with
+settings has a page there, under PLUGIN SETTINGS) or the cog on the plugin's own row. The page saves the player's
+changes and tells your plugin about them.
 
 ```cpp
 [Setting name="Time size" min=16 max=160 description="Height of the time, in pixels"]

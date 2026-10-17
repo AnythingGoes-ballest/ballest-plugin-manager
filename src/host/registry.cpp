@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cctype>
 #include <condition_variable>
 #include <cstring>
@@ -71,6 +72,15 @@ struct HostRelease {
 };
 HostRelease gHost;
 std::string gHostState;
+
+// Where a plugin goes in the plugin manager's lists is registry.json's "category" and "priority"; the plugin manager
+// itself is always first.
+bool IsKit(const std::string& id) { return id == "cosmetic-kit" || id == "cosmetic-kit-plus"; }
+// A plugin the registry doesn't place is a cosmetic when it needs a kit, unless it is a kit itself (Kit Plus needs
+// Cosmetic Kit). This is also all there is before the registry has loaded, when the loader sorts the folders.
+bool NeedsKit(const std::string& id, const std::vector<std::string>& dependencies) {
+    return !IsKit(id) && std::any_of(dependencies.begin(), dependencies.end(), IsKit);
+}
 std::vector<std::string> gRemovals;                  // applied at the start of the next Frame
 
 // --- validation: registry values end up in paths and URLs, so only plain names are accepted -------------------------
@@ -105,7 +115,10 @@ bool Hex(const std::string& s, size_t min, size_t max) {
     return true;
 }
 
-std::wstring PluginPath(const std::string& id) { return plugins::Dir() + L"\\" + eng::Widen(id); }
+// Where a plugin is installed: plugins\<id>, or plugins\cosmetics\<id> for a cosmetic one.
+std::wstring InstallPath(const Entry& e) {
+    return (IsCosmetic(e.id, e.dependencies) ? plugins::CosmeticsDir() : plugins::Dir()) + L"\\" + eng::Widen(e.id);
+}
 std::wstring StagingPath(const std::string& id) { return plugins::Dir() + L"\\." + eng::Widen(id) + L".download"; }
 std::wstring IconCache() { return hostlog::DataDir() + L"\\cache"; }
 
@@ -131,10 +144,29 @@ void DeleteTree(const std::wstring& dir) {
     RemoveDirectoryW(dir.c_str());
 }
 
+// Written whole or not at all: to a ".part" file, then moved over the real one (a crash mid-write left a cut-off file
+// under the right name, e.g. an icon never fetched again).
 bool WriteAll(const std::wstring& path, const std::string& data) {
-    std::ofstream f(path.c_str(), std::ios::binary | std::ios::trunc);
-    f.write(data.data(), static_cast<std::streamsize>(data.size()));
-    return static_cast<bool>(f);
+    const std::wstring part = path + L".part";
+    {
+        std::ofstream f(part.c_str(), std::ios::binary | std::ios::trunc);
+        f.write(data.data(), static_cast<std::streamsize>(data.size()));
+        if (!f) {
+            f.close();
+            DeleteFileW(part.c_str());
+            return false;
+        }
+    }
+    if (MoveFileExW(part.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) return true;
+    DeleteFileW(part.c_str());
+    return false;
+}
+
+// A SHA-256 as net::Sha256 writes it (lower case): the registry's own may be upper case.
+std::string LowerHex(std::string s) {
+    for (char& c : s)
+        if (c >= 'A' && c <= 'F') c = static_cast<char>(c + 32);
+    return s;
 }
 
 std::string FileUrl(const Entry& e, const std::string& file) {
@@ -196,6 +228,9 @@ bool ReadEntry(const json::Value& v, Entry& e, std::string& why) {
         for (const auto& d : deps->items)
             if (d.type == json::Value::String && ValidId(d.string)) e.dependencies.push_back(d.string);
     if (!ValidId(e.id)) return why = "bad id '" + e.id + "'", false;
+    // ("cosmetics" is the folder cosmetic plugins are installed into: a plugin by that id would replace it, every
+    // cosmetic plugin with it)
+    if (e.id == "cosmetics") return why = "the id 'cosmetics' is reserved (the cosmetic plugins' folder)", false;
     if (!ValidRepo(e.repo)) return why = e.id + ": bad repo", false;
     if (!e.path.empty() && !ValidPluginFile(e.path)) return why = e.id + ": bad path", false;
     if (!Hex(e.commit, 40, 40)) return why = e.id + ": commit must be a full SHA", false;
@@ -204,7 +239,7 @@ bool ReadEntry(const json::Value& v, Entry& e, std::string& why) {
     for (const auto& [name, sha] : files->members) {
         if (!ValidPluginFile(name) || sha.type != json::Value::String || !Hex(sha.string, 64, 64))
             return why = e.id + ": bad file entry '" + name + "'", false;
-        e.files.emplace_back(name, sha.string);
+        e.files.emplace_back(name, LowerHex(sha.string));
     }
     if (const json::Value* rel = v.Get("release_files"); rel && rel->type == json::Value::Object) {
         for (const auto& [name, spec] : rel->members) {
@@ -258,7 +293,7 @@ void ReadHost(const json::Value* v) {
     h.repo = v->Str("repo");
     h.commit = v->Str("commit");
     h.dll = v->Str("dll");
-    h.dllSha = v->Str("dll_sha256");
+    h.dllSha = LowerHex(v->Str("dll_sha256"));
     const bool fromRelease = h.dll.rfind("https://github.com/" + h.repo + "/releases/download/", 0) == 0;
     const bool fromTestCopy = gLocalRegistry && h.dll.rfind("file:///", 0) == 0;
     std::string why;
@@ -271,7 +306,7 @@ void ReadHost(const json::Value* v) {
                 why = "bad file '" + path + "'";
                 break;
             }
-            h.files.emplace_back(path, sha.string);
+            h.files.emplace_back(path, LowerHex(sha.string));
         }
     if (!why.empty()) return hostlog::Warn("registry: host entry ignored: " + why);
     gHost = h;
@@ -294,6 +329,7 @@ void Loaded(const std::string& body, const std::string& fetchError, const std::s
         return;
     }
     gRawBase = root.Str("raw_base", "https://raw.githubusercontent.com/");
+    if (gRawBase.empty()) gRawBase = "https://raw.githubusercontent.com/";     // ("raw_base": "" in the registry)
     if (gRawBase.back() != '/') gRawBase += '/';
     gLocalRegistry = url.rfind("file:///", 0) == 0;
     // A local test copy (tools/registry.py mirror) may serve release files from disk: "release_base" replaces the
@@ -305,8 +341,20 @@ void Loaded(const std::string& body, const std::string& fetchError, const std::s
     for (const auto& item : list->items) {
         Entry e;
         std::string why;
-        if (item.type == json::Value::Object && ReadEntry(item, e, why)) gEntries.push_back(e);
-        else hostlog::Warn("registry: skipped an entry: " + why);
+        if (item.type == json::Value::Object && ReadEntry(item, e, why)) {
+            const json::Value* listed = item.Get("listed");
+            e.listed = !(listed && listed->type == json::Value::Bool && !listed->boolean);
+            Placing(e.id, &e.category, &e.priority);
+            e.category = item.Str("category", e.category);
+            e.added = item.Str("added");
+            if (const json::Value* priority = item.Get("priority"); priority && priority->type == json::Value::Number)
+                e.priority = static_cast<int>(priority->number);
+            if (e.category.empty() && NeedsKit(e.id, e.dependencies)) e.category = "cosmetics";
+            if (e.category == "cosmetics") e.listed = false;      // the plugin manager's cosmetics page lists these
+            gEntries.push_back(e);
+        } else {
+            hostlog::Warn("registry: skipped an entry: " + why);
+        }
     }
     gState = "ready";
     hostlog::Info("registry: " + std::to_string(gEntries.size()) + " plugin(s) from " + url +
@@ -326,10 +374,14 @@ void InstallFailed(const Entry& e, const std::string& error) {
 void Apply(const Entry& e) {
     // The download is complete and verified: swap it in and start it. Plugins that depend on it are stopped with it
     // and started again after it (one that arrived first, while it was missing, starts now).
+    // (a cosmetic plugin goes into plugins\cosmetics: wherever it was before is cleared)
     const std::vector<std::string> dependents = plugins::Dependents(e.id);
+    const std::wstring before = plugins::FolderOf(e.id), target = InstallPath(e);
     plugins::Unload(e.id);
-    DeleteTree(PluginPath(e.id));
-    if (!MoveFileW(StagingPath(e.id).c_str(), PluginPath(e.id).c_str())) {
+    if (!before.empty() && before != target) DeleteTree(before);
+    DeleteTree(target);
+    if (target.compare(0, plugins::CosmeticsDir().size(), plugins::CosmeticsDir()) == 0) CreateDirectoryW(plugins::CosmeticsDir().c_str(), nullptr);
+    if (!MoveFileW(StagingPath(e.id).c_str(), target.c_str())) {
         gPending[e.id] = "error: could not move the plugin into place (" + std::to_string(GetLastError()) + ")";
         DeleteTree(StagingPath(e.id));
         return;
@@ -345,10 +397,18 @@ void Apply(const Entry& e) {
 
 std::string Pending(const std::string& id);
 
+bool IsCosmetic(const std::string& id, const std::vector<std::string>& dependencies) {
+    std::string category;
+    int priority = 0;
+    Placing(id, &category, &priority);
+    return category == "cosmetics" || (category.empty() && NeedsKit(id, dependencies));
+}
+
 void Frame() {
     for (const auto& id : gRemovals) {
+        const std::wstring dir = plugins::FolderOf(id);
         plugins::Unload(id);
-        DeleteTree(PluginPath(id));
+        if (!dir.empty()) DeleteTree(dir);
         gPending.erase(id);
         hostlog::Info("registry: removed " + id);
     }
@@ -372,10 +432,35 @@ void Refresh() {
     });
 }
 
+void Placing(const std::string& id, std::string* category, int* priority) {
+    *category = "";
+    *priority = 0;
+    if (id == "plugin-manager") {
+        *category = "core";
+        *priority = 100;
+        return;
+    }
+    for (const Entry& e : gEntries)                 // the registry's own, when it has them
+        if (e.id == id && !e.category.empty()) {
+            *category = e.category;
+            *priority = e.priority;
+        }
+}
+
+int CategoryRank(const std::string& category) {
+    if (category == "core") return 0;
+    if (category == "enhancements") return 1;
+    if (category == "utilities") return 2;
+    if (category == "fun") return 3;
+    if (category == "cosmetics") return 4;
+    return 5;
+}
+
 std::string State() { return gState; }
 const std::vector<Entry>& Entries() { return gEntries; }
 
 void Install(const std::string& id) {
+    if (id == "cosmetics") return hostlog::Error("registry: the id 'cosmetics' is reserved (the cosmetic plugins' folder): not installed");
     const Entry* found = nullptr;
     for (const auto& e : gEntries)
         if (e.id == id) found = &e;
@@ -383,15 +468,25 @@ void Install(const std::string& id) {
     if (!found || busy == "installing" || busy == "removing") return;
     if (!found->minHost.empty() && plugins::CompareVersions(found->minHost, plugins::kHostVersion) > 0) {
         gPending[id] = "error: needs host " + found->minHost;
+        hostlog::Error("registry: " + id + " needs plugin manager " + found->minHost + " (this is " + plugins::kHostVersion +
+                       "): not installed");
         return;
     }
     plugins::Info info;
     if (plugins::Find(id, &info) && info.essential) return;
-    // Its dependencies first, when they are not installed: they arrive before it, so it starts with them loaded.
+    // Its dependencies first, when they are not installed: they arrive before it, so it starts with them loaded. (Not
+    // deeper than 8: two entries needing each other recursed until the game crashed.)
+    static int depth = 0;
     for (const auto& dependency : found->dependencies)
         if (!plugins::Find(dependency, nullptr)) {
+            if (depth >= 8) {
+                hostlog::Error("registry: " + id + " needs " + dependency + ": dependencies too deep (a loop?), not followed");
+                continue;
+            }
             hostlog::Info("registry: " + id + " needs " + dependency + "; installing that first");
+            ++depth;
             Install(dependency);
+            --depth;
         }
     gPending[id] = "installing";
     const Entry e = *found;
