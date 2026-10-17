@@ -75,8 +75,11 @@ std::string gHostState;
 
 // Where a plugin goes in the plugin manager's lists is registry.json's "category" and "priority"; the plugin manager
 // itself is always first.
-bool NeedsKit(const std::vector<std::string>& dependencies) {
-    return std::any_of(dependencies.begin(), dependencies.end(), [](const std::string& d) { return d == "cosmetic-kit" || d == "cosmetic-kit-plus"; });
+bool IsKit(const std::string& id) { return id == "cosmetic-kit" || id == "cosmetic-kit-plus"; }
+// A plugin the registry doesn't place is a cosmetic when it needs a kit, unless it is a kit itself (Kit Plus needs
+// Cosmetic Kit). This is also all there is before the registry has loaded, when the loader sorts the folders.
+bool NeedsKit(const std::string& id, const std::vector<std::string>& dependencies) {
+    return !IsKit(id) && std::any_of(dependencies.begin(), dependencies.end(), IsKit);
 }
 std::vector<std::string> gRemovals;                  // applied at the start of the next Frame
 
@@ -346,7 +349,7 @@ void Loaded(const std::string& body, const std::string& fetchError, const std::s
             e.added = item.Str("added");
             if (const json::Value* priority = item.Get("priority"); priority && priority->type == json::Value::Number)
                 e.priority = static_cast<int>(priority->number);
-            if (e.category.empty() && NeedsKit(e.dependencies)) e.category = "cosmetics";
+            if (e.category.empty() && NeedsKit(e.id, e.dependencies)) e.category = "cosmetics";
             if (e.category == "cosmetics") e.listed = false;      // the plugin manager's cosmetics page lists these
             gEntries.push_back(e);
         } else {
@@ -398,7 +401,7 @@ bool IsCosmetic(const std::string& id, const std::vector<std::string>& dependenc
     std::string category;
     int priority = 0;
     Placing(id, &category, &priority);
-    return category == "cosmetics" || (category.empty() && NeedsKit(dependencies));
+    return category == "cosmetics" || (category.empty() && NeedsKit(id, dependencies));
 }
 
 void Frame() {
