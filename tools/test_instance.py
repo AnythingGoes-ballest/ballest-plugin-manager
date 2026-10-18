@@ -17,7 +17,8 @@ included.
 off and on (the test command `enable`), which reads its scripts from disk again. It waits for the plugin's "loaded"
 line or its errors in the slot's log. The plugin must already be in the slot (started with --plugin DIR).
 
-`install-player DIR` copies a plugin folder into the player's own game's plugins folder (nothing else changes). The
+`install-player DIR` copies a plugin folder into the player's own game's plugins folder (nothing else changes). A
+copy it replaces is moved to plugin-backups\<id>-<time> beside the plugins folder first (the last 3 per plugin kept). The
 game reads plugins only when it starts, and a tool never closes the player's game: it takes effect the next time the
 player starts it.
 
@@ -601,13 +602,32 @@ def reload(n, folder):
     return 0 if ok else 1
 
 
+BACKUPS_KEPT = 3
+
+
+def backup_plugin(dest, backups):
+    """Moves the plugin folder dest to backups/<id>-<time> and keeps that plugin's last BACKUPS_KEPT; the backup or None."""
+    if not dest.exists():
+        return None
+    backups.mkdir(parents=True, exist_ok=True)
+    backup = backups / f"{dest.name}-{time.strftime('%Y%m%d-%H%M%S')}"
+    shutil.move(str(dest), str(backup))
+    old = sorted(p for p in backups.iterdir() if p.is_dir() and re.fullmatch(re.escape(dest.name) + r"-\d{8}-\d{6}", p.name))
+    for p in old[:-BACKUPS_KEPT]:
+        shutil.rmtree(p)
+    return backup
+
+
 def install_player(folder):
-    """Copies a plugin folder into the player's own game. Never closes the game: it loads the plugin when next started."""
+    """Copies a plugin folder into the player's own game, backing up the copy it replaces. Never closes the game: it
+    loads the plugin when next started. Returns the backup's path, or None when there was nothing to replace."""
     src, pid = plugin_id(folder)
     dest = WIN64 / "plugins" / pid
+    backup = backup_plugin(dest, WIN64 / "plugin-backups")
     copy_plugin(src, dest)
-    print(f"installed {pid} from {src} into {dest}; it takes effect the next time the player starts the game")
-    return 0
+    print(f"installed {pid} from {src} into {dest}" + (f" (the old copy is in {backup})" if backup else "") +
+          "; it takes effect the next time the player starts the game")
+    return backup
 
 
 def play():
@@ -668,7 +688,8 @@ def main():
     if a.cmd == "reload":
         sys.exit(reload(a.slot, a.plugin))
     if a.cmd == "install-player":
-        sys.exit(install_player(a.plugin))
+        install_player(a.plugin)
+        sys.exit(0)
     if a.cmd == "stop":
         sys.exit(0 if stop(a.slot) else 1)
     for n in ([a.slot] if a.slot else range(1, 10)):

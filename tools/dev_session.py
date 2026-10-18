@@ -1,7 +1,7 @@
 """Measurement session: launches the game, optionally opens a map, then sends host test-channel commands.
 
-    python tools/dev_session.py commands.txt [--slot N] [--map Map_LethTrial_01] [--keep] [--force | --attach] [--quiet]
-    python tools/dev_session.py -c "state; press 34; waitstate E2; shot e2" --slot 1 --attach
+    python tools/dev_session.py commands.txt [--slot N] [--map <level>] [--keep] [--force | --attach] [--quiet]
+    python tools/dev_session.py -c "openworkshop 3805348161; wait race: track; shot track" --slot 1
 
 --slot N runs the commands on sandboxed test copy N (tools/test_instance.py), started for the session (or left
 running by an earlier --keep, with --attach) and stopped after it: any number of sessions at once, each on its own

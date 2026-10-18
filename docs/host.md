@@ -217,10 +217,10 @@ the saved map, `--keep` leaves the game open.
   examples. `start next --plugin <dir> --open 3805348161` starts a slot on the test map (race tests only there or on
   your own create-mode maps, `--map <file>.balledit`), `run <slot> -c "cmd; cmd"` sends test-channel commands and prints
   only their replies (plus `wait`, `waitstate <regex>` and `shot <name>`), `reload <slot> <dir>` reloads an edited
-  plugin in a running slot, `install-player <dir>` copies a plugin into the player's game for its next start (the game
-  is never closed), and `log` and `stop` do what they say. `sandbox.py setup-hook` (opt-in, the user runs it) makes each
-  Claude Code session start with that overview. It wraps `tools/test_instance.py` and `dev_session.py`, which still
-  work alone.
+  plugin in a running slot, `install-player <dir>` copies a plugin into the player's game for its next start, backing
+  up the copy it replaces (the game is never closed), and `log` and `stop` do what they say. `sandbox.py setup-hook`
+  (opt-in, the user runs it) makes each Claude Code session start with that overview. It wraps
+  `tools/test_instance.py` and `dev_session.py`, which still work alone.
 - `start --headless` runs a slot with no window at all (`-RenderOffscreen`, capped at 30 fps): the sandbox, plugins,
   runs and the race clock all work, and `shot` saves the engine's `HighResShot`, which draws the world without the HUD
   or plugin windows. `-nullrhi` is cheaper but no run starts under it and its pictures are black (measured 2026-10-18).

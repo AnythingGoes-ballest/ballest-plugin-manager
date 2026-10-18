@@ -578,8 +578,9 @@ def cmd_install_player(a):
         o.emit()
         return
     with progress():
-        ti.install_player(a.plugin)
+        backup = ti.install_player(a.plugin)
     o.kv("installed", str(dest))
+    o.kv("backup", str(backup) if backup else "none (nothing to replace)")
     # The game reads plugins only when it starts, and the player's game is never closed by a tool.
     o.kv("result", "installed; it takes effect the next time the player starts the game" +
          (" (the game is running now)" if player_game() else ""))
@@ -741,8 +742,8 @@ def build():
     p.add_argument("slot", type=int, choices=range(1, 10))
     p.add_argument("plugin", help="the plugin folder (the slot must already have it)")
 
-    p = add("install-player", "copy a plugin folder into the player's own game; it takes effect the next time they "
-            "start it (the game is never closed)", ["install-player ../ballest-plugins/plugins/checkpoint-finder"],
+    p = add("install-player", "copy a plugin folder into the player's own game, backing up the copy it replaces to "
+            "plugin-backups (the last 3 kept); it takes effect the next time they start it (the game is never closed)", ["install-player ../ballest-plugins/plugins/checkpoint-finder"],
             cmd_install_player)
     p.add_argument("plugin", help="the plugin folder")
 
