@@ -1,6 +1,23 @@
 {
   "plugins": [
     {
+      "id": "author-time-challenge",
+      "name": "Author Time Challenge",
+      "description": "Race random tracks against the clock. Every author time scores a point, gold lets you skip for free, and you get a few free skips.",
+      "author": "PetitRomeo",
+      "repo": "PetitRomeo/author-time-challenge",
+      "version": "0.7.0",
+      "commit": "218e6c52e989a0dd823772691b7fb8c996276ae6",
+      "min_host": "0.26.0",
+      "icon": "icon.png",
+      "dependencies": [],
+      "files": {
+        "info.toml": "8b9c422d65c2468c6cdda961b36f128f668875591655fcd652c96f6d7409e839",
+        "main.as": "e9268db03799b7bd7aefceab4100bd22051e5fb2c14214bd86e96b1b42e2d416",
+        "icon.png": "6b9c60554a49681d5378c3c28ef85d46d8582298054d82ee88ae1563b3661b51"
+      }
+    },
+    {
       "id": "chicken-cosmetic",
       "name": "Chicken Ball",
       "description": "Play Ballest as the chicken from Crossy Road!",
@@ -544,6 +561,27 @@
         "models/skull.glb": "18475b9d5690b5e3b9e762918aa01c181a9009a7f8c98f545a513d43a30bae1f",
         "models/skull_candle.glb": "8702bfad2e9eeec653a1b9a3a49427060936b8ec4b8dc7cd380f7133b2845e7f",
         "icon.png": "afa3f3f163d8630f6244794d959423119e6b66617bede6fa322755a22d0a6b60"
+      }
+    },
+    {
+      "id": "hd_lavaball",
+      "name": "HD Lava Ball",
+      "description": "A better lava ball with its own crack, flow and pulse values. Customizable in txt file.",
+      "author": "Lvcid",
+      "repo": "Lvcidx0-Ballest/ballest-hd_lavaball",
+      "version": "0.1.0",
+      "commit": "7a84df3ca620a481de53c7816ebae9dcdd79eb09",
+      "min_host": "0.27.0",
+      "icon": "icon.png",
+      "dependencies": [
+        "cosmetic-kit"
+      ],
+      "files": {
+        "info.toml": "6e19ad34601f00d61793a0df936a330d5a69bf682003efc387797bd383b140af",
+        "main.as": "c98a716f849931561b911870404db06bf7abd21cac6e75793a6c38deb3b824c1",
+        "preview.png": "0fdcfff0f014e83bf6c303575a9436128c8bb159937bce9686d0e01936775b6f",
+        "models/hd_lavaball.txt": "ea51a8c8d8ab69ca69947674e8ca49c8a0c5f8bdd4fcd404c48df219b1772d20",
+        "icon.png": "0fdcfff0f014e83bf6c303575a9436128c8bb159937bce9686d0e01936775b6f"
       }
     },
     {
