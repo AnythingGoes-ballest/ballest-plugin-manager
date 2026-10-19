@@ -577,8 +577,11 @@ def cmd_install_player(a):
         o.kv("result", "already installed (no-op)")
         o.emit()
         return
-    with progress():
-        backup = ti.install_player(a.plugin)
+    try:
+        with progress():
+            backup = ti.install_player(a.plugin)
+    except OSError as e:
+        fail(str(e), f"{CLI} install-player {a.plugin}")
     o.kv("installed", str(dest))
     o.kv("backup", str(backup) if backup else "none (nothing to replace)")
     # The game reads plugins only when it starts, and the player's game is never closed by a tool.

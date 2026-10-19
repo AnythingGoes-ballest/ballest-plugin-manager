@@ -263,6 +263,16 @@ def unmute_saved():
     return cleared
 
 
+def quit_by_command(n):
+    """Asks a game with no window (a headless slot, or one whose window is gone) to quit through the host's test channel:
+    the engine's own exit, recorded by the launcher as a normal one (measured: LastStatus=ReadyNormalExit, about 2 s)."""
+    try:
+        (data_dir(n) / "test_command.txt").write_text("console quit", encoding="utf-8")
+        return True
+    except OSError:
+        return False
+
+
 def stop(n, grace=20, wait_ready=90):
     """Ends the slot: once its game is ready, closed as a player would; forced only if it hangs."""
     pids = alive(n)
@@ -271,7 +281,7 @@ def stop(n, grace=20, wait_ready=90):
         end = time.time() + wait_ready
         while time.time() < end and info["game"] in alive(n) and not ready(n, info["game"]):
             time.sleep(0.5)
-    if info.get("game") in pids and close_windows(info["game"]):
+    if info.get("game") in pids and (close_windows(info["game"]) or quit_by_command(n)):
         end = time.time() + grace
         while time.time() < end and alive(n):
             time.sleep(0.25)
@@ -606,14 +616,19 @@ BACKUPS_KEPT = 3
 
 
 def backup_plugin(dest, backups):
-    """Moves the plugin folder dest to backups/<id>-<time> and keeps that plugin's last BACKUPS_KEPT; the backup or None."""
+    """Moves the plugin folder dest to backups/<id>-<time>[-<k>] and keeps that plugin's last BACKUPS_KEPT; the backup
+    or None. A second backup in the same second gets -2, -3, ...: moving onto a folder that exists would move into it."""
     if not dest.exists():
         return None
     backups.mkdir(parents=True, exist_ok=True)
-    backup = backups / f"{dest.name}-{time.strftime('%Y%m%d-%H%M%S')}"
+    name = re.compile(re.escape(dest.name) + r"-(\d{8}-\d{6})(?:-(\d+))?")
+    found = lambda: sorted((m.group(1), int(m.group(2) or 1), p) for p in backups.iterdir()
+                           if p.is_dir() and (m := name.fullmatch(p.name)))
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    k = max((k for s, k, _ in found() if s == stamp), default=0) + 1
+    backup = backups / (f"{dest.name}-{stamp}" + (f"-{k}" if k > 1 else ""))
     shutil.move(str(dest), str(backup))
-    old = sorted(p for p in backups.iterdir() if p.is_dir() and re.fullmatch(re.escape(dest.name) + r"-\d{8}-\d{6}", p.name))
-    for p in old[:-BACKUPS_KEPT]:
+    for *_, p in found()[:-BACKUPS_KEPT]:
         shutil.rmtree(p)
     return backup
 
@@ -624,7 +639,15 @@ def install_player(folder):
     src, pid = plugin_id(folder)
     dest = WIN64 / "plugins" / pid
     backup = backup_plugin(dest, WIN64 / "plugin-backups")
-    copy_plugin(src, dest)
+    try:
+        copy_plugin(src, dest)
+    except OSError as e:
+        # The player's game keeps the copy it had: what was copied goes, the backup moves back.
+        shutil.rmtree(dest, ignore_errors=True)
+        if backup:
+            shutil.move(str(backup), str(dest))
+        raise OSError(f"copying {pid} into {dest} failed ({e}); "
+                      + ("the old copy is back in place" if backup else "nothing was installed")) from e
     print(f"installed {pid} from {src} into {dest}" + (f" (the old copy is in {backup})" if backup else "") +
           "; it takes effect the next time the player starts the game")
     return backup
@@ -688,7 +711,10 @@ def main():
     if a.cmd == "reload":
         sys.exit(reload(a.slot, a.plugin))
     if a.cmd == "install-player":
-        install_player(a.plugin)
+        try:
+            install_player(a.plugin)
+        except OSError as e:
+            sys.exit(str(e))
         sys.exit(0)
     if a.cmd == "stop":
         sys.exit(0 if stop(a.slot) else 1)
