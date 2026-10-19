@@ -878,14 +878,31 @@
         "models/yellow.txt": "585b8d95af59eda238180dc178f9cfdbc057a285dab9bc3f37464899cd3efc9d",
         "icon.png": "fa18ed52b57fd27540e7b5560603290c787e9a5bafb70e0b1b4d306a66dad644"
       }
+    },
+    {
+      "id": "upside-down",
+      "name": "Upside Down",
+      "description": "Drive upside down: the world is turned on its head and left and right are swapped, so right still goes right on the screen.",
+      "author": "AnythingGoes",
+      "repo": "AnythingGoes-ballest/ballest-upside-down",
+      "version": "0.1.0",
+      "commit": "304e0ed42dfb37bfcf44b4a8bb2594d6f78267c0",
+      "min_host": "0.29.0",
+      "icon": "icon.png",
+      "dependencies": [],
+      "files": {
+        "info.toml": "8dd5d90372d751a2c08ee4a36e18fa5aad505c7c25f4e879468489a72c4222a6",
+        "main.as": "7f074e7990550e773f336290cbe92b2bf0c96bfa91840f8f1d605646e5459d03",
+        "icon.png": "79b4fb9125d9d0bc9fd4516ea583b0148de3a68c8c7b1114f5298a3c306f1372"
+      }
     }
   ],
   "host": {
-    "version": "0.28.0",
+    "version": "0.29.0",
     "repo": "AnythingGoes-ballest/ballest-plugin-manager",
-    "commit": "43071f69b80f863ace69ab5b7e570a579f80b814",
-    "dll": "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/download/v0.28.0/version.dll",
-    "dll_sha256": "e2de94af8c339b557c732da5e8e4c388c9670bbe3fac84bf244e882ca0ab4bac",
+    "commit": "dd8fe7a561a422b4d20f77574c67ab5445c8b935",
+    "dll": "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/download/v0.29.0/version.dll",
+    "dll_sha256": "2b3d9badb45afbaddc2ff987ec143bca4ac47f8d852be76df62b0cec9f88146c",
     "files": {
       "plugins/hello-world/info.toml": "5300e78277bc1e92d4d1626ce17ed15e938f37e692b2271b58c3c9c30b79be40",
       "plugins/hello-world/main.as": "24f510821cb3ea7825bfef6363d92e12fd493b9977038beb9e6c297a692fb23b",
