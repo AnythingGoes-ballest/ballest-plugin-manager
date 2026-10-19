@@ -112,7 +112,7 @@ The local copy serves them from disk through its `release_base`, which the host 
 | `src/host/input.*` | Keyboard, mouse and controllers (XInput), only while the game window has focus |
 | `src/host/race.*` | Whether a race is running, restarts (the ball's own counter), run id, finish, the track (name, author, author time, key), the player's input, pause, saving and loading the ball, practice runs |
 | `src/host/editor.*` | The track editor: pieces, selection, placements (from the handler's SpawnActor), clicks (from the pawn's click events), rotate modes (centre, mirrored), duplicate, Tab between transform boxes, the toolbar dropdowns and key list rows plugins add |
-| `src/host/hud.*` | The race HUD as parts plugins lay out: found in the race UI's trees, moved by slot, sized, off/on, blinking, part tints, plugin windows |
+| `src/host/hud.*` | The race HUD as parts plugins lay out: found in the race UI's trees, moved by slot, sized, off/on, blinking, part tints, plugin windows; the player's ball hidden, frozen, its camera rolled and its steering mirrored |
 | `src/host/replay.*` | Replay detection, playback clock, seeking, true length, camera modes (default, follow 3D, free) |
 | `src/host/ui.hpp` | The retained UI model plugins describe (footer buttons, panels, windows of views, rows and widgets) |
 | `src/host/widgets.*` | Building and styling the game's own UMG widgets |

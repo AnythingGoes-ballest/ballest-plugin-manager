@@ -257,6 +257,10 @@ void CallWithArgs(const std::string& cmd) {
             double v[3] = {0, 0, 0};
             std::sscanf(value.c_str(), "%lf,%lf,%lf", &v[0], &v[1], &v[2]);
             p.SetArg(index, v, sizeof v);
+        } else if (type == "v2") {                   // a Vector2D: x,y
+            double v[2] = {0, 0};
+            std::sscanf(value.c_str(), "%lf,%lf", &v[0], &v[1]);
+            p.SetArg(index, v, sizeof v);
         } else {
             return Report("callx: unknown argument type '" + type + "'");
         }

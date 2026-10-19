@@ -43,6 +43,10 @@ if (Camera::Project(0, 0, 100, sx, sy))
 `Race::FreezeBall(true)` also holds it still where it is (never in a run that can reach a leaderboard), and
 `Camera::Sweep` tells a plugin camera how far it can go before it hits a wall. These two need host 0.25.0.
 
+`Race::RollCamera(180)` turns the player's own camera upside down (only the 3D view: the HUD and menus stay as they
+are), and `Race::MirrorSteering(true)` swaps left and right steering so right still goes right on the rolled screen.
+Both are given back when the plugin stops. They need host 0.29.0.
+
 `Race::BallPosition` says where the ball being played is, in a race or a track editor test run (`Editor::IsTesting`
 says when one is on), for drawing its path as it goes. Both need host 0.15.2.
 

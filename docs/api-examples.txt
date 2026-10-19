@@ -1541,6 +1541,21 @@ before such a run starts is given back, and that run doesn't go to a leaderboard
 Race::HideBall(true);
 Race::FreezeBall(true);       // in an editor test run: the ball waits, hidden, where it is
 
+== Race::RollCamera
+Rolls the player's camera by `degrees` around the direction it looks (180: upside down), until set back to 0 or the
+plugin stops. Only the 3D view turns: the HUD, menus and plugin windows stay as they are. The game's own small camera
+tilts still play on top. If several plugins roll it, their rolls add up. Requires host 0.29.0.
+--
+Race::RollCamera(180);        // the world upside down
+
+== Race::MirrorSteering
+Swaps the player's left and right steering while `true` (keys, controller stick and anything else that steers the
+ball), until `false` or the plugin stops. Forward and back, jumping and turning the camera are not changed. With the
+camera rolled by 180 (`Race::RollCamera`), right still goes right on the screen. Requires host 0.29.0.
+--
+Race::RollCamera(180);
+Race::MirrorSteering(true);
+
 == Race::IsPractice
 Whether this run is a practice run.
 --
