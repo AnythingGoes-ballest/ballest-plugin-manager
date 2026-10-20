@@ -2,8 +2,13 @@
 // menu (WBP_MainMenu_UIManager_C), inside maps (WBP_RaceUIManager_C) and in the track editor (W_MapEditor_C,
 // measured); whichever is live is used, and the entries are rebuilt whenever the game replaces it. Measured tree: SizeBox > Overlay > [Image, HorizontalBox];
 // the HorizontalBox holds master volume, music, an empty Overlay (the flexible gap), Discord, language.
+#include <algorithm>
+#include <cmath>
+
+#include "draw.hpp"
 #include "game.hpp"
 #include "log.hpp"
+#include "manager.hpp"
 #include "ui.hpp"
 #include "widgets.hpp"
 
@@ -43,7 +48,10 @@ Obj FindLiveFooter() {
 void ForgetButton(FooterButton& b) {
     b.button = b.text = {};
     b.shownLabel.clear();
-    b.wasPressed = b.shownHover = false;
+    b.wasPressed = b.shownHover = b.shownActive = b.hovered = false;
+    b.pop = 0;
+    b.popEase = {};
+    b.shownPop = -1;
 }
 
 void ForgetWidgets() {
@@ -126,13 +134,36 @@ bool TrackButton(FooterButton& b) {
     return true;
 }
 
+double gDt = 0;                 // this frame's seconds (the hover's pop)
+// The hover sound (manager::PlayHoverSound) at full volume at the default level, as the game's discord button plays it
+// (Lvcid, 2026-10-11; matched against a recording with the decoded asset).
+constexpr double kHoverVolume = 1.0;
+
 void SyncButton(FooterButton& b) {
     if (!eng::Get(b.button) || !eng::Get(b.text)) BuildButton(b);
     if (!TrackButton(b)) return;
     Obj text = eng::Get(b.text);
-    if (b.hovered != b.shownHover) {
-        w::SetTextColor(text, b.hovered ? Color{1, 1, 1, 1} : b.normalColor);
+    // just hovered (it can be: nothing over it takes the pointer): the plugin manager's hover sound, as the game's own
+    // discord button sounds on its hover (Lvcid)
+    // (only a real new hover: one flickering frame to frame (a widget over it taking and giving back the pointer, as the
+    // plugin manager's click blocker during its intro) sounded every frame, a burst: Lvcid)
+    // (at the level set in the plugin manager's general settings, off with its hover sounds: AnythingGoes' review)
+    if (b.hovered && !b.shownHover && game::Seconds() - b.unhoveredAt > 0.2)
+        if (const double level = manager::HoverSoundLevel(); level > 0.001) manager::PlayHoverSound(kHoverVolume * level);
+    if (!b.hovered && b.shownHover) b.unhoveredAt = game::Seconds();
+    if (b.hovered != b.shownHover || b.active != b.shownActive) {
+        w::SetTextColor(text, b.hovered ? Color{1, 1, 1, 1} : b.active ? Color{0.55f, 0.55f, 0.55f, 1} : b.normalColor);
         b.shownHover = b.hovered;
+        b.shownActive = b.active;
+    }
+    // the pop: the plugin manager's top bar hover (manager::HoverEase); the words 3 units up and 4% bigger at the top
+    b.pop = b.popEase.Step(b.hovered, gDt);
+    if (b.pop != b.shownPop) {
+        const double k = b.pop;
+        if (b.shownPop < 0) eng::Call(text, "SetRenderTransformPivot", w::Vec2{0.5, 0.5});
+        eng::Call(text, "SetRenderTranslation", w::Vec2{0, -3 * k});
+        eng::Call(text, "SetRenderScale", w::Vec2{1 + 0.04 * k, 1 + 0.04 * k});
+        b.shownPop = b.pop;
     }
 }
 
@@ -243,6 +274,10 @@ void Frame() {
         }
     }
     if (!eng::Get(gFooter.footer)) return;
+    static double last = -1;
+    const double now = game::Seconds();
+    gDt = last < 0 ? 0 : std::min(0.1, now - last);
+    last = now;
     for (auto& b : gButtons) SyncButton(*b);
     for (auto& p : gPanels) SyncPanel(*p);
 }

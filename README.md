@@ -84,3 +84,12 @@ a first-plugin tutorial, guides, and the full API with an example for every func
 ## License
 
 MIT (see [LICENSE](LICENSE)). AngelScript is under its own zlib license (`third_party/angelscript/LICENSE.txt`).
+
+### The plugin manager's window
+
+The footer's **plugins** button opens a window the host draws (`src/host/manager.*`): the plugins (installed and
+browse), a **cosmetics** page (the registry's cosmetic plugins as packs, installed into `plugins\cosmetics`), settings
+(general and advanced, then each plugin's own) and the console. Its **Theme** setting picks the look: **Ballest Night**
+(the default), **Ballest Light**, **Lucid Lime**, or **Classic**, the old menu. With Cosmetic Kit on, the Customize page
+gets the local/public strip, loadouts and slot tabs. The script API adds `Plugins::ShowManager`,
+`Plugins::ManagerShown` and `Registry::Listed` (`docs/api-examples.txt`).

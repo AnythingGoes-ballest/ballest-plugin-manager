@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "engine.hpp"
+#include "files.hpp"
 #include "log.hpp"
 
 namespace storage {
@@ -46,9 +47,10 @@ Values& Load(const std::string& plugin) {
 
 void Save(const std::string& plugin, const Values& values) {
     CreateDirectoryW(Dir().c_str(), nullptr);       // fails harmlessly when it exists
-    std::ofstream out(FileOf(plugin).c_str(), std::ios::trunc);
-    for (const auto& [name, saved] : values) out << name << '=' << saved << '\n';
-    if (!out) hostlog::Warn("could not save storage for " + plugin);
+    // (written whole: a crash mid-save lost every stored value)
+    std::string text;
+    for (const auto& [name, saved] : values) text += name + "=" + saved + "\r\n";     // (as the text stream wrote it)
+    if (!files::WriteWhole(FileOf(plugin), text)) hostlog::Warn("could not save storage for " + plugin);
 }
 
 }  // namespace
@@ -73,5 +75,10 @@ void Erase(const std::string& plugin, const std::string& key) {
 }
 
 bool Has(const std::string& plugin, const std::string& key) { return Load(plugin).count(Key(key)) > 0; }
+
+void Forget(const std::string& plugin) {
+    gPlugins.erase(plugin);
+    DeleteFileW(FileOf(plugin).c_str());
+}
 
 }  // namespace storage

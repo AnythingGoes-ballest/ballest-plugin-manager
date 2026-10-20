@@ -64,4 +64,5 @@ A folder in the game's `plugins` folder with two files:
 - [Fit Window](https://github.com/AnythingGoes-ballest/ballest-fit-window): a few lines that maximize the game's
   window at startup when it doesn't fit the screen.
 - [Plugin Manager](https://github.com/AnythingGoes-ballest/ballest-plugin-manager/tree/main/plugins/plugin-manager):
-  the plugin browser, settings pages and console, built with cards and a tab header. This is the largest example.
+  its Classic theme's plugin browser, settings pages and console, built with cards and a tab header (the other themes
+  are drawn by the host). This is the largest example.

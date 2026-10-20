@@ -32,6 +32,10 @@ struct Entry {
     struct ReleaseFile { std::string name, url, sha; };
     std::vector<ReleaseFile> releaseFiles;
     std::string icon;                                       // local copy of the icon once downloaded, or ""
+    bool listed = true;                                     // offered in the plugin browser (false: installed only as a dependency)
+    std::string category;                                   // where it's listed (see Placing)
+    std::string added;                                      // "YYYY-MM-DD" it joined the registry, or "" (its NEW tag)
+    int priority = 0;                                       // higher first within its category
     std::string Page() const {
         return "https://github.com/" + repo + (path.empty() ? "" : "/tree/" + commit + "/" + path);
     }
@@ -48,6 +52,19 @@ void Remove(const std::string& id);         // unload and delete (not essential 
 std::string Pending(const std::string& id); // "", "installing", "removing", or "error: ..."
 
 std::string DefaultIcon();          // the plugin manager's default-icon.png, or ""
+
+// Where a plugin is listed in the plugin manager, in this order: "core" (the plugin manager), "enhancements",
+// "utilities", "fun", "cosmetics", then everything without one. "cosmetics": not in the plugin browser (the plugin
+// manager's cosmetics page lists them). registry.json's "category" and "priority" (higher first) say so for each
+// plugin (one the registry doesn't list, or without them: none); only the plugin manager itself is placed by the host
+// (core, first).
+void Placing(const std::string& id, std::string* category, int* priority);
+int CategoryRank(const std::string& category);         // 0 core .. 3 fun, 4 cosmetics, 5 anything else
+
+
+// A cosmetic plugin: placed in "cosmetics", or placed nowhere and needing Cosmetic Kit (or Plus). Listed on the cosmetics
+// page instead of the plugin browser, and kept in plugins\cosmetics\<id> (plugins::CosmeticsDir).
+bool IsCosmetic(const std::string& id, const std::vector<std::string>& dependencies);
 
 // The host itself. registry.json's "host" entry names the newest release:
 //   "host": { "version": "0.4.2", "repo": "owner/name", "commit": "<the tag's full SHA>",

@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <map>
 
@@ -10,6 +11,7 @@
 #include "layout.hpp"
 #include "log.hpp"
 #include "models.hpp"
+#include "packages.hpp"
 #include "widgets.hpp"
 
 using eng::Obj;
@@ -81,7 +83,17 @@ const char* const kKindName[3] = {"ball", "hat", "bfx"};
 eng::Weak gPage, gSectionPage;
 struct Section {                                    // a header and a grid of tiles in the page's scroll box
     eng::Weak header, border, grid;
+    eng::Weak buttons;                              // with Cosmetic Kit: the row of buttons under the custom tiles
 };
+// The custom section's button (the cosmetic browser): what it does, and a click waiting to be taken.
+struct SectionButton {
+    eng::Weak hitbox;
+    std::string action;
+    bool wasPressed = false;
+};
+std::vector<SectionButton> gSectionButtons;
+std::string gSectionClick;
+void EnsureNone(const std::string& slot);
 std::vector<Section> gSections;
 std::vector<eng::Weak> gTiles;
 uint8_t gTileVisibility = 4;
@@ -399,16 +411,65 @@ Obj ShownTile(Obj page, Kind kind) {
 
 void RemoveSection() {
     for (auto& section : gSections)
-        for (eng::Weak* weak : {&section.header, &section.border})
+        for (eng::Weak* weak : {&section.header, &section.border, &section.buttons})
             if (Obj widget = eng::Get(*weak)) eng::Call(widget, "RemoveFromParent");
     gSections.clear();
+    gSectionButtons.clear();
 }
 
 // The sections a tab shows: its custom cosmetics ("" in the list). Extras have tabs of their own (below).
 std::vector<std::string> SectionsOf(int tab) {
     std::vector<std::string> out;
-    if (tab >= 0 && tab < 3 && Count(static_cast<Kind>(tab)) > 0) out.push_back("");
+    // With Cosmetic Kit the section is always there: it has the cosmetic browser's button.
+    if (tab >= 0 && tab < 3 && (Count(static_cast<Kind>(tab)) > 0 || packages::KitOn())) out.push_back("");
     return out;
+}
+
+// The game's tab button's red hover dot (IconBub, read from WBP_TabButton) collapsed.
+void HideBub(Obj tab) {
+    if (tab && eng::FindProp(eng::ClassOf(tab), "IconBub")) w::SetVisibility(eng::ReadObj(tab, "IconBub"), w::kCollapsed);
+}
+
+// A row of the game's own tab buttons (coloured as the page's tabs) under the custom tiles: the cosmetic browser.
+Obj SectionButtons(Obj page, Obj scroll, Obj refBorder) {
+    Obj tree = eng::ReadObj(page, "WidgetTree"), reference = eng::ReadObj(page, "Skins_Tab");
+    Obj tabClass = eng::FindClass("WBP_TabButton_C");
+    Obj row = tree ? w::Spawn("HorizontalBox", tree) : nullptr;
+    if (!row || !reference || !tabClass) return nullptr;
+    const std::vector<std::pair<const char*, const char*>> wanted = {{"cosmetic browser", "browser"}};
+    bool first = true;
+    for (const auto& [label, action] : wanted) {
+        Obj button = eng::Call(Library("WidgetBlueprintLibrary"), "Create", page, tabClass, game::PlayerController()).ReturnObj();
+        if (!button) continue;
+        for (const char* p : {"BackgroundActiveColor", "BackgroundInactiveColor", "TextActiveColor", "TextInactiveColor",
+                              "TextHoverColor", "BubHoveredColor", "BubUnhoveredColor", "bLeftSide"})
+            CopyProperty(reference, button, p);
+        if (Obj text = eng::ReadObj(button, "ButtonText")) {
+            if (Obj ref = eng::ReadObj(reference, "ButtonText")) w::CopyFont(ref, text);
+            w::SetFontSize(text, 13);
+            w::SetText(text, label);
+        }
+        HideBub(button);
+        eng::Call(button, "SetIsActive", uint8_t{0});
+        if (Obj slot = w::AddToRow(row, button, first ? 0.0f : 8.0f)) eng::Call(slot, "SetVerticalAlignment", w::kAlignCenter);
+        first = false;
+        gSectionButtons.push_back({eng::MakeWeak(eng::ReadObj(button, "HitBox")), action});
+    }
+    Obj slot = eng::Call(scroll, "AddChild", row).ReturnObj();
+    CopySlot(eng::ReadObj(refBorder, "Slot"), slot);
+    if (slot) eng::Call(slot, "SetPadding", w::Margin{14, 8, 0, 14});
+    return row;
+}
+
+// A click is a press that ends while the pointer is still over the button.
+void WatchSectionButtons() {
+    for (auto& b : gSectionButtons) {
+        Obj hitbox = eng::Get(b.hitbox);
+        if (!hitbox) continue;
+        const bool pressed = eng::Call(hitbox, "IsPressed").ReturnBool();
+        if (b.wasPressed && !pressed && eng::Call(hitbox, "IsHovered").ReturnBool()) gSectionClick = b.action;
+        b.wasPressed = pressed;
+    }
 }
 
 // A tile of the page's own for a kind of cosmetic, shown or not (an extra's tab is built while another tab shows).
@@ -420,17 +481,12 @@ Obj AnyTile(Obj page, Kind kind) {
     return found;
 }
 
-// One section in a scroll box: a header like the collection's (its accent image and its text, with `label` as the
-// text) and a Border like the collection's around a UniformGridPanel of tiles, one for each custom cosmetic `wanted`
-// takes. The tiles are the game's own tile buttons, built like `refButton` and bound to the page's handlers as it is,
-// so choosing one goes through the game's own handler.
-template <class Wanted>
-Section AddSection(Obj page, Obj scroll, const std::string& label, Obj refButton, Wanted wanted, std::vector<eng::Weak>* tiles,
-                   int* made) {
+// The frame of a section in a scroll box: a header like the collection's (its accent image and its text, with `label`
+// as the text) and an empty Border like the collection's below it.
+std::pair<Obj, Obj> AddPanel(Obj page, Obj scroll, const std::string& label) {
     Obj tree = eng::ReadObj(page, "WidgetTree");
     Obj refHeader = eng::ReadObj(page, "HB_CollectionSubheader"), refText = eng::ReadObj(page, "CollectionCategory_Text");
-    Obj refGrid = eng::ReadObj(page, "CollectionCosmetics_Grid");
-    Obj refBorder = eng::Call(refGrid, "GetParent").ReturnObj();
+    Obj refBorder = eng::Call(eng::ReadObj(page, "CollectionCosmetics_Grid"), "GetParent").ReturnObj();
     Obj header = w::Spawn("HorizontalBox", tree);
     for (Obj slot : eng::ReadObjArray(refHeader, "Slots")) {
         Obj content = eng::ReadObj(slot, "Content");
@@ -447,13 +503,25 @@ Section AddSection(Obj page, Obj scroll, const std::string& label, Obj refButton
         if (!copy) continue;
         CopySlot(slot, eng::Call(header, "AddChildToHorizontalBox", copy).ReturnObj());
     }
-    Obj border = w::Spawn("Border", tree), grid = w::Spawn("UniformGridPanel", tree);
+    Obj border = w::Spawn("Border", tree);
     CopyBrush(refBorder, border, "Background");
     for (const char* prop : {"BrushColor", "Padding", "HorizontalAlignment", "VerticalAlignment"}) CopyProperty(refBorder, border, prop);
-    for (const char* prop : {"SlotPadding", "MinDesiredSlotWidth", "MinDesiredSlotHeight"}) CopyProperty(refGrid, grid, prop);
-    w::AddChild(border, grid);
     CopySlot(eng::ReadObj(refHeader, "Slot"), eng::Call(scroll, "AddChild", header).ReturnObj());
     CopySlot(eng::ReadObj(refBorder, "Slot"), eng::Call(scroll, "AddChild", border).ReturnObj());
+    return {header, border};
+}
+
+// One section in a scroll box: a panel (above) around a UniformGridPanel of tiles, one for each custom cosmetic
+// `wanted` takes. The tiles are the game's own tile buttons, built like `refButton` and bound to the page's handlers as
+// it is, so choosing one goes through the game's own handler.
+template <class Wanted>
+Section AddSection(Obj page, Obj scroll, const std::string& label, Obj refButton, Wanted wanted, std::vector<eng::Weak>* tiles,
+                   int* made) {
+    const auto [header, border] = AddPanel(page, scroll, label);
+    Obj refGrid = eng::ReadObj(page, "CollectionCosmetics_Grid");
+    Obj grid = w::Spawn("UniformGridPanel", eng::ReadObj(page, "WidgetTree"));
+    for (const char* prop : {"SlotPadding", "MinDesiredSlotWidth", "MinDesiredSlotHeight"}) CopyProperty(refGrid, grid, prop);
+    w::AddChild(border, grid);
     Obj buttonClass = eng::FindClass("WBP_CustomizeButton_C");
     int32_t n = 0;
     for (const auto& c : gCustoms) {
@@ -470,7 +538,7 @@ Section AddSection(Obj page, Obj scroll, const std::string& label, Obj refButton
         ++n;
     }
     *made += n;
-    return {eng::MakeWeak(header), eng::MakeWeak(border), eng::MakeWeak(grid)};
+    return {eng::MakeWeak(header), eng::MakeWeak(border), eng::MakeWeak(grid), {}};
 }
 
 void BuildSection(Obj page, int tab) {
@@ -496,9 +564,10 @@ void BuildSection(Obj page, int tab) {
     const Kind kind = static_cast<Kind>(tab);
     Section section = AddSection(page, scroll, "custom", refButton,
                                  [&](const Custom& c) { return c.kind == kind && c.extra.empty(); }, &gTiles, &total);
+    if (packages::KitOn()) section.buttons = eng::MakeWeak(SectionButtons(page, scroll, eng::Get(section.border)));
     gSections.push_back(section);
     if (gMode == kPublic)                           // custom cosmetics are only local choices
-        for (eng::Weak* weak : {&section.header, &section.border})
+        for (eng::Weak* weak : {&section.header, &section.border, &section.buttons})
             if (Obj widget = eng::Get(*weak)) w::SetVisibility(widget, w::kCollapsed);
     hostlog::Info("cosmetics: custom section with " + std::to_string(total) + " tile(s) on tab " + std::to_string(tab));
 }
@@ -1057,6 +1126,216 @@ void WearExplosion(Obj asset) {
     }
 }
 
+// --- gloss and texture, public and local ----------------------------------------------------------------------------
+// The page's gloss and texture rows (WBP_SettingsOption_C) edit its BallerSkinPrefsToSave, an SBallerSkinPreferences
+// (read from the struct's cooked package: BasicBallTextureSliderValue, a double, and the bools bBasicBallGloss and
+// bBasicBallTexture), which the page saves to the profile: the public choice. They only change the game's basic (colour)
+// balls: DetermineMIParams(prefs) sets them on the ball's BasicBallDMI. With Cosmetic Kit, local mode has gloss and
+// texture of its own (the active loadout's): the page's rows show and edit them, the page's pending prefs are put back
+// to the public ones as soon as it changes them (so only the public ones are ever saved), and the host gives the local
+// ones to the player's own balls.
+const char* const kPrefTexture = "BasicBallTextureSliderValue_6_6604CA68485620F190E2DFA095744AF2";
+const char* const kPrefGloss = "bBasicBallGloss_2_0E4D1A6D4FB6E8E35A46BAAE66A90B8C";
+const char* const kPrefTextureOn = "bBasicBallTexture_3_5EA7514D4D16821404AB47A4C9711183";
+
+SkinPrefs gLocalPrefs, gPublicPrefs;
+bool gLocalPrefsSet = false, gLocalPrefsChanged = false, gPublicKnown = false, gPageOpening = false;
+struct PrefsOn {                                    // what a ball was last given
+    eng::Weak ball, dmi;
+    SkinPrefs prefs;
+};
+std::vector<PrefsOn> gPrefsOn;
+
+bool SamePrefs(const SkinPrefs& a, const SkinPrefs& b) {
+    return a.gloss == b.gloss && a.textureOn == b.textureOn && std::fabs(a.texture - b.texture) < 1e-4;
+}
+
+// The members of an SBallerSkinPreferences property: their offsets in it, and its size; false if not as measured.
+struct PrefsLayout {
+    int texture = -1, gloss = -1, textureOn = -1, size = 0;
+};
+// The layout of a SBallerSkinPreferences property (an object's, or a function's parameter).
+bool LayoutOfProp(const eng::Prop& p, PrefsLayout* out, bool warn) {
+    Obj st = p ? eng::StructOf(p) : nullptr;
+    const eng::Prop t = st ? eng::FindProp(st, kPrefTexture) : eng::Prop{};
+    const eng::Prop g = st ? eng::FindProp(st, kPrefGloss) : eng::Prop{};
+    const eng::Prop on = st ? eng::FindProp(st, kPrefTextureOn) : eng::Prop{};
+    if (!t || !g || !on || t.size != 8 || g.size != 1 || on.size != 1) {
+        static bool logged = false;
+        if (!logged && warn) hostlog::Warn("cosmetics: gloss and texture are not laid out as measured; local mode shares the public ones");
+        logged = true;
+        return false;
+    }
+    *out = {t.offset, g.offset, on.offset, p.size};
+    return true;
+}
+bool LayoutOf(Obj o, const char* property, PrefsLayout* out) {
+    return LayoutOfProp(o ? eng::FindProp(eng::ClassOf(o), property) : eng::Prop{}, out, o != nullptr);
+}
+
+bool GetPrefs(Obj o, const char* property, SkinPrefs* out) {
+    PrefsLayout l;
+    if (!LayoutOf(o, property, &l)) return false;
+    std::vector<uint8_t> raw(static_cast<size_t>(l.size));
+    if (!eng::ReadBytes(o, property, raw.data(), raw.size())) return false;
+    std::memcpy(&out->texture, raw.data() + l.texture, 8);
+    out->gloss = raw[static_cast<size_t>(l.gloss)] != 0;
+    out->textureOn = raw[static_cast<size_t>(l.textureOn)] != 0;
+    return true;
+}
+
+// The struct's bytes with these values, starting from what `o` holds.
+bool PrefsBytes(Obj o, const char* property, const SkinPrefs& p, std::vector<uint8_t>* raw) {
+    PrefsLayout l;
+    if (!LayoutOf(o, property, &l)) return false;
+    raw->assign(static_cast<size_t>(l.size), 0);
+    eng::ReadBytes(o, property, raw->data(), raw->size());
+    std::memcpy(raw->data() + l.texture, &p.texture, 8);
+    (*raw)[static_cast<size_t>(l.gloss)] = p.gloss ? 1 : 0;
+    (*raw)[static_cast<size_t>(l.textureOn)] = p.textureOn ? 1 : 0;
+    return true;
+}
+
+bool PutPrefs(Obj o, const char* property, const SkinPrefs& p) {
+    std::vector<uint8_t> raw;
+    return PrefsBytes(o, property, p, &raw) && eng::WriteBytes(o, property, raw.data(), raw.size());
+}
+
+// A ball's basic material given these (DetermineMIParams, as the game itself gives a skin's), and the menu ball's applied
+// as the Customize page applies them (AssignBasicBallParams, read from the page's blueprint). The struct is laid out
+// from DetermineMIParams' own parameter, so it works with no Customize page about (a track, the menu before the page
+// was opened: AnythingGoes' review). False if it couldn't be applied.
+bool PrefsOnBall(Obj ball, const SkinPrefs& p, bool menu) {
+    Obj fn = ball ? eng::FunctionOn(ball, "DetermineMIParams") : nullptr;
+    if (!fn) return false;
+    std::string param;
+    for (const auto& a : eng::ParamsOf(fn))
+        if (!a.isReturn) {
+            param = a.name;
+            break;
+        }
+    PrefsLayout l;
+    if (param.empty() || !LayoutOfProp(eng::FindProp(fn, param), &l, true)) return false;
+    std::vector<uint8_t> raw(static_cast<size_t>(l.size), 0);     // (the struct holds only these three)
+    std::memcpy(raw.data() + l.texture, &p.texture, 8);
+    raw[static_cast<size_t>(l.gloss)] = p.gloss ? 1 : 0;
+    raw[static_cast<size_t>(l.textureOn)] = p.textureOn ? 1 : 0;
+    eng::Params call(fn);
+    if (!call.SetArg(0, raw.data(), raw.size())) return false;
+    eng::Invoke(ball, call);
+    if (menu) eng::Call(ball, "AssignBasicBallParams", Str(L"cosmetics: local gloss and texture"));
+    return true;
+}
+
+// Whether the menu ball shows a basic (colour) skin: its sphere wears its BasicBallDMI and no special skin's actor is
+// up. Only such a ball is given gloss and texture: AssignBasicBallParams puts the basic material back on, over a
+// material or special skin (public mode turned the galaxy ball into the last colour ball, gold and textured: reported).
+bool ShowsBasic(Obj ball) {
+    Obj dmi = eng::ReadObj(ball, "BasicBallDMI"), sphere = eng::ReadObj(ball, "Sphere");
+    if (!dmi || !sphere) return false;
+    if (Obj actor = SkinActor(ball); actor && !Hidden(actor)) return false;
+    return eng::Call(sphere, "GetMaterial", int32_t{0}).ReturnObj() == dmi;
+}
+
+// The page's gloss and texture rows showing these, and its menu ball wearing them (when it shows a basic skin).
+void ShowPrefs(Obj page, const SkinPrefs& p) {
+    if (Obj gloss = eng::ReadObj(page, "Gloss_SettingsOption")) eng::Call(gloss, "SetDisplayedToggleValue", static_cast<uint8_t>(p.gloss));
+    if (Obj texture = eng::ReadObj(page, "TextureSlider_SettingsOption"))
+        eng::Call(texture, "SetDisplayedSliderValue", static_cast<float>(p.texture));
+    Obj ball = eng::ReadObj(page, "As BP Menu Ball");
+    if (ball && eng::IsLive(ball) && ShowsBasic(ball)) PrefsOnBall(ball, p, true);
+    for (auto& on : gPrefsOn)
+        if (eng::Get(on.ball) == ball) on.prefs = p;
+}
+
+// What the page's rows show now, false if they can't be read.
+bool ShownPrefs(Obj page, SkinPrefs* out) {
+    Obj gloss = eng::ReadObj(page, "Gloss_SettingsOption"), texture = eng::ReadObj(page, "TextureSlider_SettingsOption");
+    if (!gloss || !texture || !eng::FindProp(eng::ClassOf(gloss), "bToggleOn") || !eng::FindProp(eng::ClassOf(texture), "SliderValue"))
+        return false;
+    bool on = false;
+    float value = 0;
+    eng::ReadBool(gloss, "bToggleOn", &on);
+    eng::ReadBytes(texture, "SliderValue", &value, sizeof value);
+    out->gloss = on;
+    out->texture = value;
+    return true;
+}
+
+// On a change of the page's mode: the rows show (and the menu ball wears) that mode's gloss and texture.
+void PrefsForMode(Obj page, int mode) {
+    if (!page || !packages::KitOn()) return;
+    SkinPrefs now;
+    const bool got = GetPrefs(page, "BallerSkinPrefsToSave", &now);
+    if (!got) return;
+    if (mode == kLocal) {
+        SkinPrefs profile;
+        Obj p = GameProfile();
+        // Opening the page: public is the saved one (the page may not have read it yet); from public mode: the pending one.
+        gPublicPrefs = gPageOpening && p && GetPrefs(p, "BallerSkinPreferences", &profile) ? profile : now;
+        gPublicKnown = true;
+        if (!gLocalPrefsSet) {                      // a loadout without its own yet: it starts as the public ones
+            gLocalPrefs = gPublicPrefs;
+            gLocalPrefsSet = gLocalPrefsChanged = true;
+        }
+        if (!SamePrefs(now, gPublicPrefs)) PutPrefs(page, "BallerSkinPrefsToSave", gPublicPrefs);
+        ShowPrefs(page, gLocalPrefs);
+    } else if (gPublicKnown) {
+        PutPrefs(page, "BallerSkinPrefsToSave", gPublicPrefs);
+        ShowPrefs(page, gPublicPrefs);
+    }
+}
+
+// Every frame the page is on screen: in local mode a change the rows made becomes the local gloss and texture, and the
+// page's pending ones go back to the public ones; in public mode the pending ones are the public ones.
+void WatchPrefs(Obj page) {
+    if (!page || !packages::KitOn() || !PageShown(page)) return;
+    SkinPrefs now;
+    if (!GetPrefs(page, "BallerSkinPrefsToSave", &now)) return;
+    if (gMode != kLocal || !gPublicKnown) {
+        gPublicPrefs = now;
+        gPublicKnown = true;
+        return;
+    }
+    if (!SamePrefs(now, gPublicPrefs)) {
+        if (!SamePrefs(now, gLocalPrefs)) {
+            gLocalPrefs = now;
+            gLocalPrefsSet = gLocalPrefsChanged = true;
+        }
+        PutPrefs(page, "BallerSkinPrefsToSave", gPublicPrefs);
+        return;
+    }
+    // The page showed the saved ones again by itself (as it opened): the rows show the local ones once more.
+    SkinPrefs rows;
+    if (ShownPrefs(page, &rows) && (rows.gloss != gLocalPrefs.gloss || std::fabs(rows.texture - gLocalPrefs.texture) > 1e-3))
+        ShowPrefs(page, gLocalPrefs);
+}
+
+// The player's own balls, showing a basic (colour) skin while worn locally, given the local gloss and texture.
+void WearPrefs(Obj ball, Obj sphere, bool menu) {
+    if (!gLocalPrefsSet || !gPublicKnown || !packages::KitOn()) return;
+    Obj dmi = eng::ReadObj(ball, "BasicBallDMI");
+    Obj shown = eng::Call(sphere, "GetMaterial", int32_t{0}).ReturnObj();
+    if (Obj original = FadeOriginal(ball, sphere, shown)) shown = original;           // the camera fade's copy of it
+    if (!dmi || shown != dmi) return;
+    PrefsOn* on = nullptr;
+    for (auto& p : gPrefsOn)
+        if (eng::Get(p.ball) == ball) on = &p;
+    if (!on) {
+        gPrefsOn.push_back({eng::MakeWeak(ball), {}, gPublicPrefs});
+        on = &gPrefsOn.back();
+    }
+    if (eng::Get(on->dmi) == dmi && SamePrefs(on->prefs, gLocalPrefs)) return;
+    if (eng::Get(on->dmi) != dmi && SamePrefs(gLocalPrefs, gPublicPrefs)) {
+        on->dmi = eng::MakeWeak(dmi);              // a new basic material, made with the public ones: they are the same
+        on->prefs = gLocalPrefs;
+        return;
+    }
+    if (!PrefsOnBall(ball, gLocalPrefs, menu)) return;      // not applied: tried again next time, not recorded as on
+    on->dmi = eng::MakeWeak(dmi);
+    on->prefs = gLocalPrefs;
+}
+
 void Wear() {
     const Custom* ball = Worn(Kind::Ball);
     const Custom* hat = Worn(Kind::Hat);
@@ -1071,7 +1350,8 @@ void Wear() {
         const bool menu = eng::ClassOf(actor) == menuClass;
         const bool local = !(menu && publicPreview);
         // The camera fade (racing balls): its originals go back before the look changes and it takes new snapshots
-        // after, with the models' actors (see FadeOf). Nothing is asked of it while the game's own look is worn.
+        // after, with the models' actors (see FadeOf). Nothing is asked of it while the game's own look is worn. (The
+        // local gloss / texture are part of the look: they change the basic material the fade copies.)
         Obj fade = menu ? nullptr : FadeOf(actor);
         std::string look;
         if (fade && local) {
@@ -1081,6 +1361,9 @@ void Wear() {
             if (gameHat) look += "accessory " + eng::PathOf(gameHat) + ";";
             for (const std::string& slotName : ExtraSlots())
                 if (const Custom* extra = WornExtra(slotName)) look += slotName + " " + extra->id + ";";
+            if (!ball && gLocalPrefsSet && packages::KitOn() && gPublicKnown && !SamePrefs(gLocalPrefs, gPublicPrefs))
+                look += "prefs " + std::to_string(gLocalPrefs.gloss) + std::to_string(gLocalPrefs.textureOn) +
+                        std::to_string(gLocalPrefs.texture) + ";";
         }
         FadeState* faded = fade ? &FadeStateOf(actor) : nullptr;
         const bool changing = faded && look != faded->look;
@@ -1097,6 +1380,7 @@ void Wear() {
                 }
                 const Custom* custom = local ? ball : nullptr;
                 WearBall(actor, sphere, custom);
+                if (local && !custom && !(menu && PageShown(eng::Get(gPage)))) WearPrefs(actor, sphere, menu);
                 if (custom && custom->hasModel) WearModel(sphere, custom, actor);
                 else RemoveModel(sphere);
                 // Extras (arms, ...): built on the sphere beside the ball's own model, local only like custom cosmetics.
@@ -1138,6 +1422,7 @@ void Wear() {
     }
     gFixMenuHat = false;
     gFades.erase(std::remove_if(gFades.begin(), gFades.end(), [](const FadeState& f) { return !eng::Get(f.ball); }), gFades.end());
+    gPrefsOn.erase(std::remove_if(gPrefsOn.begin(), gPrefsOn.end(), [](const PrefsOn& p) { return !eng::Get(p.ball); }), gPrefsOn.end());
     gForced.erase(std::remove_if(gForced.begin(), gForced.end(), [](const Forced& f) { return !eng::Get(f.ball); }), gForced.end());
     for (size_t i = gModels.size(); i-- > 0;)          // balls gone with their map
         if (!eng::Get(gModels[i].component)) {
@@ -1419,6 +1704,7 @@ void ShowExtraTab(Obj page, const std::string& slot) {
         hostlog::Warn("cosmetics: the Customize page is not laid out as measured; the " + slot + " tab can't be shown");
         return;
     }
+    EnsureNone(slot);                               // a slot with no extras yet still has its "none" tile
     // The host's list: a SizeBox like the page's (its sizes copied) holding a scroll box, in the same place.
     Obj box = eng::Get(gExtraBox), scroll = eng::Get(gExtraScroll);
     if (!box || !scroll || !Parent(box)) {
@@ -1492,10 +1778,11 @@ void SetMode(Obj page, int mode) {
         if (Obj tab = eng::Get(gModeButtons[i].tab)) eng::Call(tab, "SetIsActive", static_cast<uint8_t>(i == mode));
     // The custom sections are only for local choices.
     for (auto& section : gSections)
-        for (eng::Weak* weak : {&section.header, &section.border})
+        for (eng::Weak* weak : {&section.header, &section.border, &section.buttons})
             if (Obj widget = eng::Get(*weak)) w::SetVisibility(widget, mode == kLocal ? uint8_t{0} : w::kCollapsed);
     if (!page) return;
     ShowModeOnMenuBall(page);
+    PrefsForMode(page, mode);
     int32_t tab = 0;
     eng::ReadBytes(page, "ActiveTabIndex", &tab, sizeof tab);
     if (tab >= 0 && tab < 3) Highlight(page, tab);
@@ -1845,21 +2132,35 @@ void Frame() {
     if (page) {
         // The page opens in local mode each time it is shown.
         const bool shown = PageShown(page);
-        if (shown && !gPageWasShown) SetMode(page, kLocal);
+        if (shown && !gPageWasShown) {
+            gPageOpening = true;
+            SetMode(page, kLocal);
+            gPageOpening = false;
+        }
         gPageWasShown = shown;
-        if (!eng::Get(gModeBox) || !Parent(eng::Get(gModeBox))) BuildModeButtons(page);
-        WatchModeButtons(page);
+        WatchPrefs(page);
+        // With Cosmetic Kit the host's Customize page (customize.cpp) has the local/public strip and the slot tabs.
+        if (packages::KitOn()) {
+            if (eng::Get(gModeBox)) RemoveModeButtons();
+            if (!gExtraTabs.empty()) RemoveExtraTabs();
+        } else {
+            if (!eng::Get(gModeBox) || !Parent(eng::Get(gModeBox))) BuildModeButtons(page);
+            WatchModeButtons(page);
+        }
         WatchExtraTabs(page);
+        WatchSectionButtons();
     }
     Wear();
     static double lastLook = -100;
     if (game::Seconds() - lastLook < 0.2) return;
     lastLook = game::Seconds();
     if (!page) return;
-    UpdateModeButtons(page);
+    const bool kit = packages::KitOn();
+    if (!kit) UpdateModeButtons(page);
     // One tab per extra slot, rebuilt when the slots change or the page rebuilt its tabs (ours then lost their parent).
+    // With Cosmetic Kit the slot tabs are the host's own (customize.cpp).
     const size_t slots = ExtraSlots().size();
-    if (gExtraTabs.size() != slots || (slots > 0 && !Parent(eng::Get(gExtraTabs.front().box)))) BuildExtraTabs(page);
+    if (!kit && (gExtraTabs.size() != slots || (slots > 0 && !Parent(eng::Get(gExtraTabs.front().box))))) BuildExtraTabs(page);
     for (auto& t : gExtraTabs) {
         if (Obj text = eng::Get(t.text); text && w::ReadText(text) != t.slot) w::SetText(text, t.slot);   // (PreConstruct)
         // extras are local choices: their tabs show in local mode only
@@ -1911,6 +2212,126 @@ bool SetLocalMode(bool local) {
     if (!page) return false;
     SetMode(page, local ? kLocal : kPublic);
     return true;
+}
+
+// --- for Cosmetics 2 ---------------------------------------------------------------------------------------------------
+bool Has(Kind kind, const std::string& id) { return !id.empty() && Exists(kind, id); }
+
+bool SetLocalGamePath(Kind kind, const std::string& path) {
+    const int k = static_cast<int>(kind);
+    if (path.empty()) {
+        if (!gLocalPath[k].empty()) SetLocalGame(k, nullptr);
+        return true;
+    }
+    if (path == gLocalPath[k] && eng::Get(gLocalGame[k])) return true;
+    Obj asset = LoadAsset(eng::Widen(path));
+    if (!asset || !eng::IsA(asset, eng::FindClass(kAssetClass[k]))) return false;
+    KeepAlive(asset);
+    SetLocalGame(k, asset);
+    return true;
+}
+
+std::string LocalGamePath(Kind kind) { return gLocalPath[static_cast<int>(kind)]; }
+
+// (only slots holding a real extra: a "none" tile alone, made when its tab was first shown, doesn't count; else a slot
+// shown once while Cosmetic Kit Plus ran stayed after it was turned off)
+std::vector<std::string> ExtraSlotNames() {
+    std::vector<std::string> out;
+    for (const auto& c : gCustoms)
+        if (!c.extra.empty() && !c.none && std::find(out.begin(), out.end(), c.extra) == out.end()) out.push_back(c.extra);
+    return out;
+}
+
+Obj Page() { return eng::Get(gPage); }
+bool PageOnScreen() { return PageShown(eng::Get(gPage)); }
+bool LocalMode() { return gMode == kLocal; }
+
+std::string ShownSlot() {
+    if (!gShownExtra.empty()) return gShownExtra;
+    int32_t tab = 0;
+    if (Obj page = eng::Get(gPage)) eng::ReadBytes(page, "ActiveTabIndex", &tab, sizeof tab);
+    return tab >= 0 && tab < 3 ? kKindName[tab] : "ball";
+}
+
+void ShowSlot(const std::string& slot) {
+    Obj page = eng::Get(gPage);
+    if (!page) return;
+    for (int k = 0; k < 3; ++k)
+        if (slot == kKindName[k]) {
+            if (!gShownExtra.empty()) LeaveExtraTab(page, false);
+            eng::Call(page, "SwitchActiveTab", static_cast<int32_t>(k));
+            return;
+        }
+    if (slot != gShownExtra) ShowExtraTab(page, slot);
+}
+
+Obj WornPicture(const std::string& slot) {
+    Obj page = eng::Get(gPage);
+    for (int k = 0; k < 3; ++k) {
+        if (slot != kKindName[k]) continue;
+        Obj asset = gMode == kLocal ? LocalAsset(k) : nullptr;
+        if (!asset && page) asset = eng::ReadObj(page, kToSave[k]);
+        if (!asset) return nullptr;
+        if (k == 1 && !ByAsset(asset) && !HatMesh(asset)) return nullptr;      // "no hat"
+        return eng::ReadObj(asset, "PreviewTexture");
+    }
+    const Custom* c = gMode == kLocal ? WornExtra(slot) : nullptr;
+    Obj asset = c ? eng::Get(c->asset) : nullptr;
+    return asset ? eng::ReadObj(asset, "PreviewTexture") : nullptr;
+}
+
+Obj PreviewOf(const std::string& category, const std::string& id) {
+    for (const auto& c : gCustoms) {
+        const bool match = c.extra.empty() ? category == kKindName[static_cast<int>(c.kind)] : category == c.extra;
+        if (match && !c.none && c.id == id)
+            if (Obj asset = eng::Get(c.asset)) return eng::ReadObj(asset, "PreviewTexture");
+    }
+    return nullptr;
+}
+
+bool WearItem(const std::string& category, const std::string& id) {
+    for (int k = 0; k < 3; ++k)
+        if (category == kKindName[k]) {
+            if (!id.empty() && !Find(static_cast<Kind>(k), id)) return false;
+            if (Obj page = eng::Get(gPage); page && gMode != kLocal) SetMode(page, kLocal);
+            gEquipped[k] = id;
+            if (!id.empty()) SetLocalGame(k, nullptr);
+            return true;
+        }
+    if (!id.empty() && !FindExtra(category, id)) return false;
+    gEquippedExtra[category] = id;
+    gFixMenuHat = true;
+    return true;
+}
+
+std::string WornItem(const std::string& category) {
+    for (int k = 0; k < 3; ++k)
+        if (category == kKindName[k]) return gEquipped[k];
+    return EquippedExtra(category);
+}
+
+void SetLocalSkinPrefs(const SkinPrefs& prefs, bool set) {
+    gLocalPrefs = prefs;
+    gLocalPrefsSet = set;
+    gLocalPrefsChanged = false;
+    Obj page = eng::Get(gPage);
+    if (page && PageShown(page) && gMode == kLocal) {
+        if (!set) PrefsForMode(page, kLocal);       // starts as the public ones
+        else ShowPrefs(page, gLocalPrefs);
+    }
+}
+
+bool TakeLocalSkinPrefs(SkinPrefs* out) {
+    if (!gLocalPrefsChanged) return false;
+    gLocalPrefsChanged = false;
+    *out = gLocalPrefs;
+    return true;
+}
+
+std::string TakeSectionClick() {
+    std::string click = std::move(gSectionClick);
+    gSectionClick.clear();
+    return click;
 }
 
 std::string Equipped(Kind kind) { return gEquipped[static_cast<int>(kind)]; }

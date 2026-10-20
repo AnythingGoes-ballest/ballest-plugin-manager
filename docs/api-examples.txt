@@ -278,6 +278,18 @@ the next time the game starts. Use `HostUpdateState()` to follow the progress.
 if (updateButton.Clicked() && Registry::HostVersion() != Host::Version())
     Plugins::UpdateHost();
 
+== Plugins::ShowManager
+**Plugin manager only.** Opens (`true`) or closes the plugin manager window: the redesigned menu the host draws, with
+the plugins, their settings, the console and the cosmetics page.
+--
+if (button.Clicked())
+    Plugins::ShowManager(!Plugins::ManagerShown());
+
+== Plugins::ManagerShown
+Whether the plugin manager window is open.
+--
+bool open = Plugins::ManagerShown();
+
 == Plugins::HostUpdateState
 How a host update is going: `""`, `"downloading"`, `"restart"` (ready, restart the game), or `"error: ..."`.
 --
@@ -440,6 +452,14 @@ The path of the downloaded copy of the plugin's icon, or `""` while it hasn't be
 --
 window.AddImage(Registry::Icon(i) != "" ? Registry::Icon(i) : Plugins::DefaultIcon(), 64, 64);
 
+== Registry::Listed
+Whether the plugin is offered in the plugin browser: false for one that is only installed as another plugin's
+dependency (registry.json's `"listed": false`). Cosmetic plugins count as listed (the classic menu has no cosmetics
+page of its own).
+--
+for (uint i = 0; i < Registry::Count(); i++)
+    if (Registry::Listed(i)) AddCard(i);
+
 == Registry::HostVersion
 The newest plugin host version the registry lists.
 --
@@ -447,7 +467,7 @@ if (Registry::HostVersion() != "" && Registry::HostVersion() != Host::Version())
     statusText.text = "plugin manager " + Registry::HostVersion() + " is available";
 
 @@ Console
-Runs the host's own commands, the same ones as the in-game console (footer **plugins** > **console**).
+Runs the host's own commands, the same ones as the in-game console (the plugin manager's **>_** button).
 They're for measuring and debugging. The list is in `src/host/testchannel.hpp`.
 
 == Console::Run
@@ -1275,7 +1295,8 @@ the left stick pushed a direction (`PadStickUp`, ...). Controllers are read with
 through Steam Input). The Down arrow is `Input::Key::Down`, since `Input::Down` is also the function below.
 
 == Input::Pressed
-True in the frame the key goes down.
+True in the frame the key goes down. While the plugin manager's window is open it has the keyboard, mouse buttons and
+pads, so plugins see no keys then (`Input::Down` and `Input::AnyPressed` too).
 --
 // F6 toggles the window
 if (Input::Pressed(Input::F6))

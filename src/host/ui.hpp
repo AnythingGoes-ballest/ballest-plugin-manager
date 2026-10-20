@@ -17,6 +17,8 @@
 #pragma once
 #include <memory>
 #include <string>
+
+#include "manager.hpp"
 #include <vector>
 
 #include "engine.hpp"
@@ -38,6 +40,14 @@ struct FooterButton {
     std::string shownLabel;
     bool wasPressed = false, shownHover = false;
     Color normalColor{0.6f, 0.6f, 0.6f, 1};
+    // What it opens is open (set by its owner each frame: the plugin manager's own while its window is): its words a
+    // dimmer white than hovered, so the hover still shows (Lvcid).
+    bool active = false, shownActive = false;
+    // The hover's pop (a test, Lvcid 2026-10-10, after the game's own discord button): its words rise a little and
+    // grow a touch while hovered; 0..1 along its way, and what was last shown.
+    double pop = 0, shownPop = -1;
+    manager::HoverEase popEase;         // the pop (the window's top bar hover)
+    double unhoveredAt = -100;              // when the pointer last left it (a flickering hover doesn't sound again)
 };
 
 struct Panel {
@@ -129,7 +139,7 @@ struct Widget {
     int focusAttempts = 0;
     bool scrollToEnd = false;                                               // text area
     // live widgets and what they last showed (a text area's main is its ScrollBox, label its TextBlock)
-    eng::Weak main, label, iconA, iconB, iconC, iconD;    // icon buttons: play, pause, down, up
+    eng::Weak main, label, iconA, iconB, iconC, iconD, iconE;    // icon buttons: play, pause, down, up, cog
     eng::Weak outer;                    // what sits in the row (a SizeBox around sliders, images, ...)
     uint8_t normalVisibility = 0;       // the outer widget's visibility when shown
     bool shownVisible = true;

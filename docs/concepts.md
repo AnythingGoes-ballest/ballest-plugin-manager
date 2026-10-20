@@ -98,9 +98,9 @@ change.
 
 ## Turning plugins off
 
-- One plugin, for now: **turn off** on its card in the **installed** tab. It stays installed, with its settings and
+- One plugin, for now: its toggle on its row in the **installed** tab (**turn off** on its card in the Classic theme). It stays installed, with its settings and
   saved data, and stays off after a restart until you **turn on** again. Plugins that depend on it wait for it.
-- One plugin, for good: **remove** on its card, or delete its folder.
+- One plugin, for good: **remove** (the bin) on its row, or delete its folder.
 - All plugins: create an empty file named `DISABLED` in the plugins folder.
 - The whole plugin manager: delete `version.dll` from the game folder.
 

@@ -27,6 +27,7 @@
 #include "steam.hpp"
 #include "splitref.hpp"
 #include "log.hpp"
+#include "registry.hpp"
 #include "settings.hpp"
 #include "ui.hpp"
 
@@ -336,20 +337,46 @@ void LoadAll(const std::wstring& pluginsDir) {
     api::Register(gEngine);
     ReadOff();
 
-    WIN32_FIND_DATAW fd;
-    HANDLE find = FindFirstFileW((pluginsDir + L"\\*").c_str(), &fd);
-    if (find == INVALID_HANDLE_VALUE) {
+    // The plugins folder, then its cosmetics folder (a plugin in both: the first found is used).
+    const std::wstring cosmeticsDir = CosmeticsDir();
+    auto scan = [&](const std::wstring& dir, bool top) {
+        WIN32_FIND_DATAW fd;
+        HANDLE find = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+        if (find == INVALID_HANDLE_VALUE) return false;
+        do {
+            // Folders starting with '.' are the registry's work in progress (downloads not yet verified).
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || fd.cFileName[0] == L'.') continue;
+            const std::wstring name = fd.cFileName;
+            if (top && dir + L"\\" + name == cosmeticsDir) continue;
+            Plugin p;
+            if (!ReadManifest(dir + L"\\" + name, eng::Narrow(name.c_str(), static_cast<int>(name.size())), p)) continue;
+            if (std::any_of(gPlugins.begin(), gPlugins.end(), [&](const Plugin& q) { return q.id == p.id; })) {
+                hostlog::Warn("plugins: " + p.id + " is in both the plugins folder and its cosmetics folder; the first is used");
+                continue;
+            }
+            gPlugins.push_back(p);
+        } while (FindNextFileW(find, &fd));
+        FindClose(find);
+        return true;
+    };
+    if (!scan(pluginsDir, true)) {
         hostlog::Warn("no plugins folder at " + eng::Narrow(pluginsDir.c_str(), static_cast<int>(pluginsDir.size())));
         return;
     }
-    do {
-        // Folders starting with '.' are the registry's work in progress (downloads not yet verified).
-        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || fd.cFileName[0] == L'.') continue;
-        Plugin p;
-        const std::wstring name = fd.cFileName;
-        if (ReadManifest(pluginsDir + L"\\" + name, eng::Narrow(name.c_str(), static_cast<int>(name.size())), p)) gPlugins.push_back(p);
-    } while (FindNextFileW(find, &fd));
-    FindClose(find);
+    scan(cosmeticsDir, false);
+    // A cosmetic plugin still in the plugins folder itself (installed by an older host) moves into the cosmetics folder.
+    for (Plugin& p : gPlugins) {
+        if (p.dir != pluginsDir + L"\\" + eng::Widen(p.id) || !registry::IsCosmetic(p.id, p.dependencies)) continue;
+        CreateDirectoryW(cosmeticsDir.c_str(), nullptr);
+        const std::wstring to = cosmeticsDir + L"\\" + eng::Widen(p.id);
+        if (Exists(to) || !MoveFileExW(p.dir.c_str(), to.c_str(), 0)) {
+            hostlog::Warn("plugins: " + p.id + " could not be moved into the cosmetics folder; it loads from where it is");
+            continue;
+        }
+        Plugin moved;
+        if (ReadManifest(to, p.id, moved)) p = moved;
+        hostlog::Info("plugins: " + p.id + " moved into the plugins folder's cosmetics folder");
+    }
 
     // The plugin manager first, so its UI exists before the others report in; the rest by id, each after the plugins it
     // depends on (a dependency that is missing, or a cycle, leaves the plugin in place: Start reports it).
@@ -393,6 +420,13 @@ void Frame(float dt) {
 
 std::wstring Dir() { return gDir; }
 
+std::wstring CosmeticsDir() { return gDir.empty() ? L"" : gDir + L"\\cosmetics"; }
+
+std::wstring FolderOf(const std::string& id) {
+    const Plugin* p = Loaded(id);
+    return p ? p->dir : L"";
+}
+
 void OpenFolder() {
     // Starting Explorer can take longer than a plugin's whole time budget (measured: the plugin manager was stopped
     // for it), so it is started from a thread of its own and the caller returns at once.
@@ -417,7 +451,9 @@ void OpenFolder() {
 bool Load(const std::string& id) {
     if (gInFrame || !gEngine || Loaded(id)) return false;
     Plugin p;
-    if (!ReadManifest(gDir + L"\\" + eng::Widen(id), id, p)) return false;
+    std::wstring dir = gDir + L"\\" + eng::Widen(id);
+    if (!Exists(dir + L"\\info.toml")) dir = CosmeticsDir() + L"\\" + eng::Widen(id);
+    if (!ReadManifest(dir, id, p)) return false;
     gPlugins.push_back(p);
     Start(gPlugins.size() - 1);
     return gPlugins.back().running;
@@ -577,6 +613,8 @@ std::string CurrentId() {
     const int i = Current();
     return i >= 0 && i < static_cast<int>(gPlugins.size()) ? gPlugins[static_cast<size_t>(i)].id : "?";
 }
+
+std::string CallerId() { return IdAt(gRunning); }
 
 std::string IdAt(int index) {
     return index >= 0 && index < static_cast<int>(gPlugins.size()) ? gPlugins[static_cast<size_t>(index)].id : "";

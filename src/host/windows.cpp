@@ -19,6 +19,7 @@
 #include "plugins.hpp"
 #include "storage.hpp"
 #include "ui.hpp"
+#include "ux.hpp"
 #include "widgets.hpp"
 
 using eng::Obj;
@@ -107,7 +108,15 @@ Obj BuildIconButton(Obj tree, Widget& item) {
             if (Obj slot = eng::Call(box, "AddChildToVerticalBox", w::Block(tree, 2.0f + 2.5f * static_cast<float>(step), 2, ink)).ReturnObj())
                 eng::Call(slot, "SetHorizontalAlignment", w::kAlignCenter);
         }
-    for (Obj icon : {pause, play, down, up}) w::AddToOverlay(overlay, icon, w::kAlignCenter, w::kAlignCenter, {0, 0, 0, 0});
+    // the cog: the plugin manager's own picture (the classic menu's way into its settings)
+    Obj cogBox = w::Spawn("SizeBox", tree), cog = w::Spawn("Image", tree);
+    if (cogBox && cog) {
+        eng::Call(cogBox, "SetWidthOverride", 20.0f);
+        eng::Call(cogBox, "SetHeightOverride", 20.0f);
+        if (Obj texture = ux::Picture("pm-cog.png")) eng::Call(cog, "SetBrushFromTexture", texture, uint8_t{0});
+        w::AddChild(cogBox, cog);
+    }
+    for (Obj icon : {pause, play, down, up, cogBox}) w::AddToOverlay(overlay, icon, w::kAlignCenter, w::kAlignCenter, {0, 0, 0, 0});
     w::AddChild(frame, overlay);
     w::AddChild(button, frame);
     item.main = eng::MakeWeak(button);
@@ -115,6 +124,7 @@ Obj BuildIconButton(Obj tree, Widget& item) {
     item.iconB = eng::MakeWeak(pause);
     item.iconC = eng::MakeWeak(down);
     item.iconD = eng::MakeWeak(up);
+    item.iconE = eng::MakeWeak(cogBox);
     item.shownText.clear();                 // the right icon is shown on the first sync
     return button;
 }
@@ -354,7 +364,7 @@ void Forget(Window& win) {
     win.shownVisible = false;
     win.appliedView = -1;
     for (auto& item : win.items) {
-        item->main = item->label = item->iconA = item->iconB = item->iconC = item->iconD = item->outer = {};
+        item->main = item->label = item->iconA = item->iconB = item->iconC = item->iconD = item->iconE = item->outer = {};
         item->wasPressed = item->dragging = item->focused = false;
     }
 }
@@ -663,9 +673,9 @@ void Sync(Widget& item) {
                 if (item.kind == Kind::Button) {
                     w::SetText(eng::Get(item.label), item.text);
                 } else {
-                    const std::string names[4] = {"play", "pause", "down", "up"};
-                    const eng::Weak* icons[4] = {&item.iconA, &item.iconB, &item.iconC, &item.iconD};
-                    for (int n = 0; n < 4; ++n)
+                    const std::string names[5] = {"play", "pause", "down", "up", "cog"};
+                    const eng::Weak* icons[5] = {&item.iconA, &item.iconB, &item.iconC, &item.iconD, &item.iconE};
+                    for (int n = 0; n < 5; ++n)
                         w::SetVisibility(eng::Get(*icons[n]), item.text == names[n] ? w::kHitTestInvisible : w::kCollapsed);
                 }
                 item.shownText = item.text;

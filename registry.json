@@ -30,6 +30,7 @@
       "dependencies": [
         "cosmetic-kit"
       ],
+      "category": "cosmetics",
       "files": {
         "info.toml": "04cd60ceca7703f5e86b16e4af41d20e5f58ef7fcaa26c4feb1d4419f24fc887",
         "main.as": "bf8d773be771573cc06af4b2e615eb367cc0d5b6fd66ea1d1e4522b8cc15adc4",
@@ -51,6 +52,7 @@
       "dependencies": [
         "cosmetic-kit"
       ],
+      "category": "cosmetics",
       "files": {
         "info.toml": "31817a7aa36c99fe0f5b9ec6d887e330d28bbc4ac80e39a7a2f0d65efc337491",
         "main.as": "57bdeaf5b2b15d9ac48885f1ba7c7856234b4bcff2ac9f55f8584130773425c6",
@@ -74,6 +76,8 @@
       "min_host": "0.8.0",
       "icon": "icon.png",
       "dependencies": [],
+      "category": "enhancements",
+      "priority": 30,
       "files": {
         "info.toml": "3cc2293d99dee9eb91265b1c0248fad6e6ff6e9c358a28633e550934b834c0fb",
         "main.as": "df675e35a640fd15e40193edafbfd3388e1d79f4fd94a5609f9efdf266ac4dc0",
@@ -93,6 +97,8 @@
       "dependencies": [
         "cosmetic-kit"
       ],
+      "category": "enhancements",
+      "priority": 25,
       "files": {
         "info.toml": "e55bf0d21fe2844336421d00d991e28db9bc8f82cb5ba8d2ae11070effa41145",
         "main.as": "05ccc5daeedd01166af8818af7f1302ce98a05f6f6a712eb840e29159f2771bb",
@@ -110,6 +116,8 @@
       "min_host": "0.23.7",
       "icon": "icon.png",
       "dependencies": [],
+      "category": "enhancements",
+      "priority": 40,
       "files": {
         "info.toml": "69b4ad6be3471c699715fdaf699826c28fb4ea5dac3f28ef0dcfe424019f17a1",
         "main.as": "b3ea312145f550209cf4db05247cf19019c098ff013d3a31d62226cabb650609",
@@ -129,6 +137,7 @@
       "dependencies": [
         "cosmetic-kit"
       ],
+      "category": "cosmetics",
       "files": {
         "info.toml": "02c57e926a7d44b44aa4fec6ffe1441c0c4ca5a1104a13dbc50cf1bd4ef3b1fc",
         "main.as": "b6b95e9f86efd7c420cedba311e5fee7d3602f0652ce450f055d0e87929e7174",
@@ -192,6 +201,7 @@
       "dependencies": [
         "cosmetic-kit-plus"
       ],
+      "category": "cosmetics",
       "files": {
         "info.toml": "b74bc9001661ef5a8e51cabedd8bbb9c0a5d6c5df03815e0e4b2d9120f83c509",
         "main.as": "ff559fd2c935aa107f8581c8e924e885aab587125de6091f5af52fcaeb86ac4d",
@@ -229,6 +239,7 @@
       "dependencies": [
         "cosmetic-kit-plus"
       ],
+      "category": "cosmetics",
       "files": {
         "info.toml": "d2a596d9751306493dd5009e37ed463322be22e6011c30f69d6f6704f504897f",
         "main.as": "84ad16df87d5ff9321740302f786748b5430ad4f4a64c58f1e79553c4e257f84",
@@ -301,6 +312,7 @@
       "dependencies": [
         "cosmetic-kit"
       ],
+      "category": "cosmetics",
       "files": {
         "info.toml": "d6a04440dbe53e5d446414c38775a2a4ab3d28a8f3572c96cb687c8a5e35b244",
         "main.as": "0f62e74c93185b48a698fbd726b696dab13d516113462604e77ab03d8810dbf9",
@@ -342,6 +354,7 @@
       "dependencies": [
         "cosmetic-kit"
       ],
+      "category": "cosmetics",
       "files": {
         "info.toml": "e6146158ac4dbb0a8e263d3d91fcd1def7be5d48640a87eedf11d8f5aa636ad1",
         "main.as": "8bdf773032ab9b279cf9451e612f9f55fa0e126940fc2fb9129ea7f7487793a2",
@@ -373,6 +386,8 @@
       "min_host": "0.15.1",
       "icon": "",
       "dependencies": [],
+      "category": "utilities",
+      "priority": 10,
       "files": {
         "info.toml": "03e43baaf46a5c1008fa6687138638f4eb263f50a0fdcfe936c080a6dabb489e",
         "main.as": "8202f10a209c7e4116aa61387b8b435c2e0717805ceaef5eb309a6e0909ecf38"
@@ -391,6 +406,7 @@
       "dependencies": [
         "cosmetic-kit"
       ],
+      "category": "cosmetics",
       "files": {
         "info.toml": "759fb12f0c05abaa960f9b86fd82fb571103b0876047bafde2fa76dd7148c418",
         "main.as": "78bdca6f5fef089dbac0d90958a553dfd39f5279c3897e2aa7b3555fd4ab388f",
@@ -441,6 +457,7 @@
       "dependencies": [
         "cosmetic-kit"
       ],
+      "category": "cosmetics",
       "files": {
         "info.toml": "5412cbe1e159c0052a97060b8e837f8312a572f98a5c453a0e56499ded374a64",
         "main.as": "fd59c08add9c9139ca63fef990e62e32c7b99b6c8578bc911859b78c8baa42d6",
@@ -481,6 +498,8 @@
       "min_host": "0.23.6",
       "icon": "icon.png",
       "dependencies": [],
+      "category": "utilities",
+      "priority": 30,
       "files": {
         "info.toml": "c16365ccea1312ebf568071e0e2db6dfec1dec3299c711b53f495fd70031a6e3",
         "main.as": "7a065b8fc904addadd18f9bb8270d128f0dd0dbd5a82d4e34777779ed42e6027",
@@ -497,6 +516,8 @@
       "commit": "da3cf649684a8bba63b653f1c92c36bc93458cb1",
       "min_host": "0.4.0",
       "icon": "icon.png",
+      "category": "utilities",
+      "priority": 20,
       "files": {
         "info.toml": "4aa6ffb4cfef05e8a0abed8daa4a3ab828588e46bb18ba779fd8574c0f4ddb92",
         "main.as": "5e4e8bdcc747f5a95d49cc7f822a251f61bf8fe36651354f05994fb895519ba1",
@@ -516,6 +537,7 @@
       "dependencies": [
         "cosmetic-kit"
       ],
+      "category": "cosmetics",
       "files": {
         "info.toml": "2b28ca4658793e8107d64a0a10bc406d572abf0230f5ce2050fb6d2adf9dc811",
         "main.as": "2654a7920dbf0d5e691a92858b396618cd1782730b8be1a69f6c1db2ce3fa074",
@@ -595,6 +617,8 @@
       "min_host": "0.23.0",
       "icon": "icon.png",
       "dependencies": [],
+      "category": "enhancements",
+      "priority": 50,
       "files": {
         "info.toml": "a423276d56fb14160c54e91f580ce716095a75ba51943b17e87b6d144773cd16",
         "main.as": "23c8de1f142f09ec32522b1bdc6829693f4e111a4b58a50da3978fb525057c09",
@@ -711,6 +735,7 @@
       "dependencies": [
         "cosmetic-kit"
       ],
+      "category": "cosmetics",
       "files": {
         "info.toml": "5784261f87691dfc8e9dd2fc54f30a32a19b4b1400228741d89d2f507ee9a575",
         "main.as": "06734ea8408bc05fcf9cf83c6c3fc7863a032041e0f8e97d90374f1bf8c39b46",
@@ -738,6 +763,7 @@
       "dependencies": [
         "cosmetic-kit"
       ],
+      "category": "cosmetics",
       "files": {
         "info.toml": "3a21374ed4476577f8ba4667281f5bbe15eef7bdaaa42cb20ba71f1267472052",
         "main.as": "2da4fd575c74adb1fa9e3d5b924a4418c1b4a67871c69e0a773a374acce2cf6b",
@@ -757,6 +783,8 @@
       "min_host": "0.22.0",
       "icon": "icon.png",
       "dependencies": [],
+      "category": "enhancements",
+      "priority": 10,
       "files": {
         "info.toml": "8e2dd13eaab375388e73a8a6b3a3e089a48b17b8b0e0ccab4b1beb276280f6a2",
         "main.as": "00e972dca56acbc7fe9d07ee6db72a1d27e481b738b2092635d0c392e3bd2312",
@@ -775,6 +803,8 @@
       "min_host": "0.12.0",
       "icon": "icon.png",
       "dependencies": [],
+      "category": "utilities",
+      "priority": 40,
       "files": {
         "info.toml": "805ad28cfc1869c60a17eda8381ea0418ee5a143f304fd0f32a616d36f683007",
         "main.as": "2ddba9f3cec5318170a24523c948552ca44033c42e18989e1b0640ef6e954cf0",
@@ -797,6 +827,7 @@
       "dependencies": [
         "cosmetic-kit"
       ],
+      "category": "cosmetics",
       "files": {
         "info.toml": "d1059ee84962fa51f59f2706ccf9cace6b665590c96a62afed2badd3118e3451",
         "main.as": "d859e8067dc2e7e8bda285b742d9f7dcd4b15eb24950e231f8d2d2580418539c",
@@ -817,6 +848,8 @@
       "min_host": "0.9.0",
       "icon": "icon.png",
       "dependencies": [],
+      "category": "utilities",
+      "priority": 50,
       "files": {
         "info.toml": "dd395c11c9f8efff7bcf602a3dc34c2eb41c5f2725d796449312da85642b3f6c",
         "main.as": "b338ca8886429c555292c021a97d8fb8b5b28947b60b00f15cb283756e40c3c7",
@@ -834,6 +867,8 @@
       "min_host": "0.21.0",
       "icon": "icon.png",
       "dependencies": [],
+      "category": "fun",
+      "priority": 10,
       "files": {
         "info.toml": "1a88382f6ecf274d0dca71d1b6068306b9a2668169df37eb2c1035a58d1758a7",
         "main.as": "079ac4782082d1a98416b25e68150dadb926192ca717c93ccdb45f5a1d87b603",
@@ -853,6 +888,7 @@
       "dependencies": [
         "cosmetic-kit"
       ],
+      "category": "cosmetics",
       "files": {
         "info.toml": "e07ff2ce02fee97e20e25997b7a9abcf32af290a84d0dad29578687fa411ad4b",
         "main.as": "87a538503491ea94b2067b64b9fad12ef98d44cd989adb6a8057ce829a67e18a",
