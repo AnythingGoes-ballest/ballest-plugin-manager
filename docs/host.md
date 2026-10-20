@@ -122,7 +122,8 @@ The local copy serves them from disk through its `release_base`, which the host 
 | `src/host/engine.*` | Reflection: objects, names, properties, calling functions (`eng::Call`), weak references, text |
 | `src/host/main.cpp` | Loading, the build check, the per-frame hook, and the frame order |
 | `src/host/game.*` | World context, player controller, map changes, time, cursor, typing input mode, opening maps, the game's window |
-| `src/host/input.*` | Keyboard, mouse and controllers (XInput), only while the game window has focus |
+| `src/host/input.*` | Keyboard, mouse and controllers (XInput), only while the game window has focus; the primary mouse button (swapped buttons) |
+| `src/host/files.*` | Files written whole: to a `.part` file, then moved over the old one (written through, retried briefly), for downloads, icons, storage and the cosmetics' files |
 | `src/host/race.*` | Whether a race is running, restarts (the ball's own counter), run id, finish, the track (name, author, author time, key), the player's input, pause, saving and loading the ball, practice runs |
 | `src/host/editor.*` | The track editor: pieces, selection, placements (from the handler's SpawnActor), clicks (from the pawn's click events), rotate modes (centre, mirrored), duplicate, Tab between transform boxes, the toolbar dropdowns and key list rows plugins add |
 | `src/host/hud.*` | The race HUD as parts plugins lay out: found in the race UI's trees, moved by slot, sized, off/on, blinking, part tints, plugin windows |

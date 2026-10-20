@@ -17,6 +17,8 @@
 #pragma once
 #include <memory>
 #include <string>
+
+#include "manager.hpp"
 #include <vector>
 
 #include "engine.hpp"
@@ -43,8 +45,8 @@ struct FooterButton {
     bool active = false, shownActive = false;
     // The hover's pop (a test, Lvcid 2026-10-10, after the game's own discord button): its words rise a little and
     // grow a touch while hovered; 0..1 along its way, and what was last shown.
-    double pop = 0, shownPop = -1, popFrom = 0, popT = 0;
-    bool popOn = false;
+    double pop = 0, shownPop = -1;
+    manager::HoverEase popEase;         // the pop (the window's top bar hover)
     double unhoveredAt = -100;              // when the pointer last left it (a flickering hover doesn't sound again)
 };
 

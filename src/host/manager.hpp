@@ -25,6 +25,20 @@ void Close();
 bool IsOpen();
 bool TookInputThisFrame();                   // open now, or closed during this host frame (its closing key or click)
 double HoverSoundLevel();                    // its hover sounds' level as set in general (0 when off; 1 = the default)
+
+// Shared with the footer's plugins button, so it stays in step with the window:
+// - the hover sound, the game's own (its main menu buttons', WBP_ButtonBase: the engine's Flashlight_Switch, double
+//   pitch, from 0.11 s in, as its discord button plays it; Lvcid), at this volume;
+void PlayHoverSound(double volume);
+// - a hover's 0..1 (Lvcid: liquid smooth and responsive, no lag either way): both ways it moves at once and settles into
+//   its end (no ease in, an ease out), in over `up` seconds, out over `down` (resting a little slower than the quick
+//   hover). Turning back midway it sets off from where it is, over the share of the way left, so it never jumps.
+constexpr double kHoverIn = 0.16, kHoverOut = 0.3;  // the top bar's (cog, pages, keys) and the footer button's
+struct HoverEase {
+    double v = 0, from = 0, t = 0;
+    bool on = false;
+    double Step(bool hovered, double dt, double up = kHoverIn, double down = kHoverOut);
+};
 bool NewLook();                              // a theme other than Classic (the Plugin Manager plugin's Theme setting)
 void Frame();                                // every frame, after ui::Frame (it sets the typing widget after windows)
 

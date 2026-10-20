@@ -183,7 +183,7 @@ Layer& Begin(ux::Screen& screen, double scale) {
         rx += offX;
         ry += offY;
     }
-    const bool down = input::Down(VK_LBUTTON);
+    const bool down = input::Down(input::PrimaryButton());     // (swapped buttons: the one that clicks)
     // the real mouse moved or clicked: the focus is off, the pointer the mouse's again
     gMouseMoved = std::fabs(rx - gRealX) + std::fabs(ry - gRealY) > 3 || (down && !gPointer.down);
     if (gNav && gMouseMoved) gNav = false;

@@ -124,6 +124,8 @@ void Frame() {
 
 bool Down(int key) { return Valid(key) && gDown[key]; }
 double Wheel() { return gWheel; }
+int PrimaryButton() { return GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON; }
+int SecondaryButton() { return GetSystemMetrics(SM_SWAPBUTTON) ? VK_LBUTTON : VK_RBUTTON; }
 bool Pressed(int key) { return Valid(key) && gDown[key] && !gWasDown[key]; }
 void Simulate(int key) { gSimulated = Valid(key) ? key : 0; }
 void SimulateHeld(int key, bool held) {

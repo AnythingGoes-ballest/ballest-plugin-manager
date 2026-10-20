@@ -52,6 +52,20 @@ void UpdateCursor(Obj controller) {
     }
 }
 
+// The menus' own input mode, set again as the game sets it (its input manager component's SetInput_MainMenu), so a
+// pad navigates the menus after the plugin manager closes as before it opened (AnythingGoes' review: closing it forced
+// GameAndUI). False if the game's way isn't there.
+bool MenuInputBack(Obj controller) {
+    Obj cls = eng::FindClass("AC_InputManager_C");
+    Obj manager = cls ? eng::Call(controller, "GetComponentByClass", cls).ReturnObj() : nullptr;
+    Obj fn = manager ? eng::FindFunction(eng::ClassOf(manager), "SetInput_MainMenu") : nullptr;
+    if (!fn) return false;
+    for (const auto& a : eng::ParamsOf(fn))
+        if (!a.isReturn) return false;                  // (measured without parameters; anything else: not called)
+    eng::Call(manager, "SetInput_MainMenu");
+    return true;
+}
+
 void UpdateTyping(Obj controller) {
     Obj widgets = eng::FindCdo("WidgetBlueprintLibrary");
     // Only on a track, where the game's keys (R, Backspace...) would act on what's typed. The menus route keys to
@@ -67,6 +81,8 @@ void UpdateTyping(Obj controller) {
         // No mouse lock, input not flushed.
         eng::Call(widgets, "SetInputMode_UIOnlyEx", controller, focus, uint8_t{0}, uint8_t{0});
         if (!gTypingMode) hostlog::Info(modal ? "input: UI-only for the plugin manager" : "typing: input is UI-only");
+    } else if (!race::OnTrack() && MenuInputBack(controller)) {
+        hostlog::Info("input: the menus' own again");
     } else {
         eng::Call(widgets, "SetInputMode_GameAndUIEx", controller);
         hostlog::Info("input: game and UI again");

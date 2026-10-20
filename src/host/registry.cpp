@@ -11,9 +11,11 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <sstream>
 #include <thread>
 
 #include "engine.hpp"
+#include "files.hpp"
 #include "json.hpp"
 #include "log.hpp"
 #include "net.hpp"
@@ -146,20 +148,37 @@ void DeleteTree(const std::wstring& dir) {
 
 // Written whole or not at all: to a ".part" file, then moved over the real one (a crash mid-write left a cut-off file
 // under the right name, e.g. an icon never fetched again).
-bool WriteAll(const std::wstring& path, const std::string& data) {
-    const std::wstring part = path + L".part";
-    {
-        std::ofstream f(part.c_str(), std::ios::binary | std::ios::trunc);
-        f.write(data.data(), static_cast<std::streamsize>(data.size()));
-        if (!f) {
-            f.close();
-            DeleteFileW(part.c_str());
-            return false;
-        }
+bool WriteAll(const std::wstring& path, const std::string& data) { return files::WriteWhole(path, data); }
+
+// Each plugin's place (category, priority) as the registry last gave it, kept in the cache folder: the loader sorts
+// plugins into plugins\cosmetics before the registry has loaded, and decides by these then, so it agrees with the
+// installs (AnythingGoes' review: a plugin needing a kit but listed elsewhere went back and forth).
+std::map<std::string, std::pair<std::string, int>> gCachedPlaces;
+bool gCachedPlacesRead = false;
+std::wstring PlacesFile() { return IconCache() + L"\\places.txt"; }
+
+const std::map<std::string, std::pair<std::string, int>>& CachedPlaces() {
+    if (gCachedPlacesRead) return gCachedPlaces;
+    gCachedPlacesRead = true;
+    std::ifstream in(PlacesFile().c_str());
+    for (std::string line; std::getline(in, line);) {
+        std::istringstream words(line);
+        std::string id, category;
+        int priority = 0;
+        if (words >> id >> category >> priority) gCachedPlaces[id] = {category, priority};
     }
-    if (MoveFileExW(part.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) return true;
-    DeleteFileW(part.c_str());
-    return false;
+    return gCachedPlaces;
+}
+
+void CachePlaces(const std::vector<Entry>& entries) {
+    std::map<std::string, std::pair<std::string, int>> places;
+    for (const Entry& e : entries)
+        if (!e.category.empty()) places[e.id] = {e.category, e.priority};
+    if (places == CachedPlaces()) return;           // (written only when it changes)
+    std::string text;
+    for (const auto& [id, place] : places) text += id + " " + place.first + " " + std::to_string(place.second) + "\n";
+    CreateDirectoryW(IconCache().c_str(), nullptr);
+    if (WriteAll(PlacesFile(), text)) gCachedPlaces = places;
 }
 
 // A SHA-256 as net::Sha256 writes it (lower case): the registry's own may be upper case.
@@ -357,6 +376,7 @@ void Loaded(const std::string& body, const std::string& fetchError, const std::s
         }
     }
     gState = "ready";
+    CachePlaces(gEntries);
     hostlog::Info("registry: " + std::to_string(gEntries.size()) + " plugin(s) from " + url +
                   (gHost.version.empty() ? "" : "; host " + gHost.version + " (this is " + plugins::kHostVersion + ")"));
     for (const auto& e : gEntries)
@@ -445,6 +465,12 @@ void Placing(const std::string& id, std::string* category, int* priority) {
             *category = e.category;
             *priority = e.priority;
         }
+    if (!gEntries.empty()) return;
+    const auto& cached = CachedPlaces();              // before it has loaded: as it was last time
+    if (const auto it = cached.find(id); it != cached.end()) {
+        *category = it->second.first;
+        *priority = it->second.second;
+    }
 }
 
 int CategoryRank(const std::string& category) {
@@ -474,21 +500,15 @@ void Install(const std::string& id) {
     }
     plugins::Info info;
     if (plugins::Find(id, &info) && info.essential) return;
-    // Its dependencies first, when they are not installed: they arrive before it, so it starts with them loaded. (Not
-    // deeper than 8: two entries needing each other recursed until the game crashed.)
-    static int depth = 0;
-    for (const auto& dependency : found->dependencies)
-        if (!plugins::Find(dependency, nullptr)) {
-            if (depth >= 8) {
-                hostlog::Error("registry: " + id + " needs " + dependency + ": dependencies too deep (a loop?), not followed");
-                continue;
-            }
-            hostlog::Info("registry: " + id + " needs " + dependency + "; installing that first");
-            ++depth;
-            Install(dependency);
-            --depth;
-        }
+    // Marked as installing before its dependencies are followed, so a loop (A needs B, B needs A) stops at the first
+    // repeat: the busy check above turns it away.
     gPending[id] = "installing";
+    // Its dependencies first, when they are not installed: they arrive before it, so it starts with them loaded.
+    for (const auto& dependency : found->dependencies)
+        if (!plugins::Find(dependency, nullptr) && Pending(dependency) != "installing") {
+            hostlog::Info("registry: " + id + " needs " + dependency + "; installing that first");
+            Install(dependency);
+        }
     const Entry e = *found;
     std::vector<std::pair<std::string, std::string>> urls;
     for (const auto& [file, sha] : e.files) urls.emplace_back(file, FileUrl(e, file));

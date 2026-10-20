@@ -10,6 +10,7 @@
 #include <sstream>
 
 #include "cosmetics.hpp"
+#include "files.hpp"
 #include "game.hpp"
 #include "log.hpp"
 #include "plugins.hpp"
@@ -41,19 +42,7 @@ bool ReadAll(const std::wstring& file, std::string* out, size_t limit = 4 * 1024
 }
 
 // Written to a temporary file and moved over the old one, so a failed write never leaves half a file.
-bool WriteAll(const std::wstring& file, const std::string& text) {
-    const std::wstring temp = file + L".tmp";
-    HANDLE h = CreateFileW(temp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    DWORD written = 0;
-    const bool ok = WriteFile(h, text.data(), static_cast<DWORD>(text.size()), &written, nullptr) && written == text.size();
-    CloseHandle(h);
-    if (!ok || !MoveFileExW(temp.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        DeleteFileW(temp.c_str());
-        return false;
-    }
-    return true;
-}
+bool WriteAll(const std::wstring& file, const std::string& text) { return files::WriteWhole(file, text); }
 
 // --- settings.txt: the small part of TOML it uses --------------------------------------------------------------------
 std::string Trim(const std::string& s) {
@@ -162,26 +151,30 @@ std::string PluginOf(const std::wstring& file) {
     return "";
 }
 
-// One of a plugin's cosmetics: an item of its plugin's pack (the pack is the plugin's id).
+// One of a plugin's cosmetics: an item of its plugin's pack (the pack is the plugin's id). Noted again by the same plugin
+// (after an update, a restart of it), its details are refreshed; the same id from another plugin is an item of that
+// pack too (AnythingGoes' review: the first note was kept for good, and a second pack left it out).
 void AddNote(const std::string& category, const std::string& id, const std::string& name, const std::wstring& preview,
              const std::wstring& model, const std::wstring& anyFile) {
-    if (Find(category, id)) return;
-    Item item;
+    std::string plugin = PluginOf(anyFile);
+    if (plugin.empty()) plugin = plugins::CallerId();               // a cosmetic with no files of its own
+    auto it = std::find_if(gItems.begin(), gItems.end(),
+                           [&](const Item& i) { return i.category == category && i.id == id && i.plugin == plugin; });
+    const bool fresh = it == gItems.end();
+    Item& item = fresh ? gItems.emplace_back() : *it;
     item.id = id;
     item.name = name;
     item.category = category;
-    item.plugin = PluginOf(anyFile);
-    if (item.plugin.empty()) item.plugin = plugins::CallerId();     // a cosmetic with no files of its own
-    item.pack = item.plugin;
+    item.plugin = plugin;
+    item.pack = plugin;
     item.preview = preview;
     item.model = model;
     plugins::Info info;
-    if (plugins::Find(item.plugin, &info)) {
+    if (plugins::Find(plugin, &info)) {
         item.author = info.author;
         item.version = info.version;
     }
-    gItems.push_back(item);
-    ++gNoted;
+    if (fresh) ++gNoted;
 }
 
 double gReadyAt = -1;                      // when the game was first ready (Cosmetic Kit on)
@@ -196,10 +189,19 @@ std::vector<Loadout> gLoadouts;
 int gActive = 0;
 bool gLoadoutsLoaded = false;
 double gSaveAt = -1;
+// A choice of the active loadout not wearable yet (its cosmetic is not added). Past the restore window it is kept as
+// waiting: tried every few seconds (its plugin may be turned on later), and what is worn meanwhile (the stand-in) is
+// not written over the loadout; only the player choosing something else in that slot replaces it (AnythingGoes' review:
+// a plugin off for a session, or loading slowly, lost the loadout's ball for good).
 struct PendingChoice {
     std::string slot, value;
+    bool waiting = false;                   // past the restore window
+    double since = 0, nextTry = 0;          // when it started waiting; when it is tried again
+    std::string standIn;                    // what was worn in its place as it started waiting
 };
-std::vector<PendingChoice> gPending;        // choices of the active loadout not wearable yet (their cosmetic is not added)
+std::vector<PendingChoice> gPending;
+constexpr double kWaitingRetry = 2;         // seconds between tries of a waiting choice
+constexpr double kStandInSettle = 1;        // seconds after it starts waiting in which the stand-in may still change
 double gRestoreUntil = -1;
 double gLastTrack = -100;
 
@@ -333,7 +335,7 @@ void Apply(int index) {
     for (const std::string& slot : slots) {
         const auto it = l.values.find(slot);
         const std::string value = it == l.values.end() ? "" : it->second;
-        if (!WearChoice(slot, value)) gPending.push_back({slot, value});
+        if (!WearChoice(slot, value)) gPending.push_back({slot, value, false, 0, 0, {}});
     }
 }
 
@@ -363,8 +365,14 @@ void Track() {
     // having "nothing worn" written over it once its pending wear gives up)
     const std::vector<std::string> slots = ShownSlots(true);
     for (const std::string& slot : slots) {
-        if (std::any_of(gPending.begin(), gPending.end(), [&](const PendingChoice& p) { return p.slot == slot; })) continue;
         const std::string now = WornNow(slot);
+        const auto pending = std::find_if(gPending.begin(), gPending.end(), [&](const PendingChoice& p) { return p.slot == slot; });
+        if (pending != gPending.end()) {
+            if (!pending->waiting) continue;                              // still being restored
+            if (game::Seconds() - pending->since < kStandInSettle) pending->standIn = now;
+            if (now == pending->standIn) continue;                        // the stand-in: the loadout keeps its choice
+            gPending.erase(pending);                                      // the player chose something else here
+        }
         const auto it = l.values.find(slot);
         const std::string kept = it == l.values.end() ? "" : it->second;
         if (now == kept) continue;
@@ -398,14 +406,29 @@ std::string LabelOf(const std::string& slot) {
     return slot;
 }
 
-bool KitOn() {
+// Whether Cosmetic Kit and Cosmetic Kit Plus run: worked out once a frame (packages::Frame), as they are asked many
+// times a frame (each ball's wear, the Customize page, the cosmetics page: AnythingGoes' review).
+namespace {
+bool gKitOn = false, gPlusOn = false, gOnKnown = false;
+bool Running(const char* id) {
     plugins::Info info;
-    return plugins::Find("cosmetic-kit", &info) && !plugins::IsOff("cosmetic-kit") && info.status == "running";
+    return plugins::Find(id, &info) && !plugins::IsOff(id) && info.status == "running";
+}
+void WorkOutOn() {
+    gKitOn = Running("cosmetic-kit");
+    gPlusOn = gKitOn && Running("cosmetic-kit-plus");
+    gOnKnown = true;
+}
+}  // namespace
+
+bool KitOn() {
+    if (!gOnKnown) WorkOutOn();
+    return gKitOn;
 }
 
 bool PlusOn() {
-    plugins::Info info;
-    return KitOn() && plugins::Find("cosmetic-kit-plus", &info) && !plugins::IsOff("cosmetic-kit-plus") && info.status == "running";
+    if (!gOnKnown) WorkOutOn();
+    return gPlusOn;
 }
 
 const Settings& Config() {
@@ -485,7 +508,8 @@ int AddLoadout() {
 }
 
 void Frame() {
-    const bool on = KitOn();
+    WorkOutOn();
+    const bool on = gKitOn;
     if (on != gKitWasOn) {
         gKitWasOn = on;
         hostlog::Info(std::string("cosmetics: Cosmetic Kit ") + (on ? "on: loadouts and the new Customize page" : "off"));
@@ -502,11 +526,25 @@ void Frame() {
         gRestoreUntil = game::Seconds() + kRestoreSeconds;
     }
     if (!gPending.empty()) {
-        for (size_t i = gPending.size(); i-- > 0;)
-            if (WearChoice(gPending[i].slot, gPending[i].value)) gPending.erase(gPending.begin() + static_cast<std::ptrdiff_t>(i));
-        if (!gPending.empty() && game::Seconds() > gRestoreUntil) {
-            for (const auto& p : gPending) hostlog::Info("cosmetics: loadout " + std::to_string(gActive + 1) + ": " + p.slot + " " + p.value + " is not there");
-            gPending.clear();
+        const double now = game::Seconds();
+        for (size_t i = gPending.size(); i-- > 0;) {
+            PendingChoice& p = gPending[i];
+            if (p.waiting && now < p.nextTry) continue;
+            if (WearChoice(p.slot, p.value)) {
+                if (p.waiting) hostlog::Info("cosmetics: loadout " + std::to_string(gActive + 1) + ": " + p.slot + " " + p.value + " is back");
+                gPending.erase(gPending.begin() + static_cast<std::ptrdiff_t>(i));
+                continue;
+            }
+            if (p.waiting) {
+                p.nextTry = now + kWaitingRetry;
+            } else if (now > gRestoreUntil) {
+                hostlog::Info("cosmetics: loadout " + std::to_string(gActive + 1) + ": " + p.slot + " " + p.value +
+                              " is not there; kept for when it is");
+                p.waiting = true;
+                p.since = now;
+                p.nextTry = now + kWaitingRetry;
+                p.standIn = WornNow(p.slot);
+            }
         }
     }
     if (gLoadoutsLoaded) Track();

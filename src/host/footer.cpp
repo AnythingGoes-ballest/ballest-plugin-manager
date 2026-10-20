@@ -48,8 +48,9 @@ Obj FindLiveFooter() {
 void ForgetButton(FooterButton& b) {
     b.button = b.text = {};
     b.shownLabel.clear();
-    b.wasPressed = b.shownHover = b.shownActive = b.hovered = b.popOn = false;
-    b.pop = b.popFrom = b.popT = 0;
+    b.wasPressed = b.shownHover = b.shownActive = b.hovered = false;
+    b.pop = 0;
+    b.popEase = {};
     b.shownPop = -1;
 }
 
@@ -134,10 +135,9 @@ bool TrackButton(FooterButton& b) {
 }
 
 double gDt = 0;                 // this frame's seconds (the hover's pop)
-// The hover sound, exactly as the game's discord button plays it (Lvcid, 2026-10-11; matched against a recording with
-// the decoded asset): the engine's Flashlight_Switch at full volume (Lvcid: that matches it), double pitch, from 0.11 s into it.
-constexpr const char* kHoverSound = "/Engine/VREditor/Sounds/UI/Flashlight_Switch.Flashlight_Switch";
-constexpr double kHoverVolume = 1.0, kHoverPitch = 2.0, kHoverStart = 0.11;
+// The hover sound (manager::PlayHoverSound) at full volume at the default level, as the game's discord button plays it
+// (Lvcid, 2026-10-11; matched against a recording with the decoded asset).
+constexpr double kHoverVolume = 1.0;
 
 void SyncButton(FooterButton& b) {
     if (!eng::Get(b.button) || !eng::Get(b.text)) BuildButton(b);
@@ -149,24 +149,15 @@ void SyncButton(FooterButton& b) {
     // plugin manager's click blocker during its intro) sounded every frame, a burst: Lvcid)
     // (at the level set in the plugin manager's general settings, off with its hover sounds: AnythingGoes' review)
     if (b.hovered && !b.shownHover && game::Seconds() - b.unhoveredAt > 0.2)
-        if (const double level = manager::HoverSoundLevel(); level > 0.001) draw::UiSound(kHoverSound, kHoverVolume * level, kHoverPitch, kHoverStart);
+        if (const double level = manager::HoverSoundLevel(); level > 0.001) manager::PlayHoverSound(kHoverVolume * level);
     if (!b.hovered && b.shownHover) b.unhoveredAt = game::Seconds();
     if (b.hovered != b.shownHover || b.active != b.shownActive) {
         w::SetTextColor(text, b.hovered ? Color{1, 1, 1, 1} : b.active ? Color{0.55f, 0.55f, 0.55f, 1} : b.normalColor);
         b.shownHover = b.hovered;
         b.shownActive = b.active;
     }
-    // the pop: in over 0.16 s, out over 0.3 s, both ways at once and settling (an ease out), as the plugin manager's top
-    // bar; the words 3 units up and 4% bigger at the top
-    if (b.hovered != b.popOn) {
-        b.popOn = b.hovered;
-        b.popFrom = b.pop;
-        b.popT = 0;
-    }
-    b.popT += gDt;
-    const double length = b.popOn ? 0.16 * (1 - b.popFrom) : 0.3 * b.popFrom;
-    const double u = length <= 1e-6 ? 1.0 : std::clamp(b.popT / length, 0.0, 1.0), e = 1 - std::pow(1 - u, 2.5);
-    b.pop = b.popOn ? b.popFrom + (1 - b.popFrom) * e : b.popFrom * (1 - e);
+    // the pop: the plugin manager's top bar hover (manager::HoverEase); the words 3 units up and 4% bigger at the top
+    b.pop = b.popEase.Step(b.hovered, gDt);
     if (b.pop != b.shownPop) {
         const double k = b.pop;
         if (b.shownPop < 0) eng::Call(text, "SetRenderTransformPivot", w::Vec2{0.5, 0.5});

@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "engine.hpp"
+#include "files.hpp"
 #include "log.hpp"
 
 namespace storage {
@@ -46,19 +47,10 @@ Values& Load(const std::string& plugin) {
 
 void Save(const std::string& plugin, const Values& values) {
     CreateDirectoryW(Dir().c_str(), nullptr);       // fails harmlessly when it exists
-    // (written to a ".part" file, then moved over the real one: a crash mid-save lost every stored value)
-    const std::wstring file = FileOf(plugin), part = file + L".part";
-    bool ok = false;
-    {
-        std::ofstream out(part.c_str(), std::ios::trunc);
-        for (const auto& [name, saved] : values) out << name << '=' << saved << '\n';
-        ok = static_cast<bool>(out);
-    }
-    if (ok) ok = MoveFileExW(part.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
-    if (!ok) {
-        DeleteFileW(part.c_str());
-        hostlog::Warn("could not save storage for " + plugin);
-    }
+    // (written whole: a crash mid-save lost every stored value)
+    std::string text;
+    for (const auto& [name, saved] : values) text += name + "=" + saved + "\r\n";     // (as the text stream wrote it)
+    if (!files::WriteWhole(FileOf(plugin), text)) hostlog::Warn("could not save storage for " + plugin);
 }
 
 }  // namespace

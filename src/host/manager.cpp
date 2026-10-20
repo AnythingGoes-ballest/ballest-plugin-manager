@@ -687,47 +687,25 @@ double EaseUpDown(const std::string& key, bool on, double up, double down) {
     return a.value;
 }
 
-// A hover's 0..1 (Lvcid: liquid smooth and responsive, no lag either way): both ways it moves at once and settles into
-// its end (no ease in, an ease out): in over `up` seconds, out over `down` (resting a little slower than the quick
-// hover). Turning back midway it sets off from where it is, over the share of the way left, so it never jumps.
-constexpr double kHoverIn = 0.16, kHoverOut = 0.3;   // the top bar's (cog, pages, keys)
-struct HoverWay {
-    double v = 0, from = 0, t = 0;
-    bool on = false;
-};
-std::map<std::string, HoverWay> gHoverWays;
+// A hover's 0..1 by its key (HoverEase, manager.hpp).
+std::map<std::string, HoverEase> gHoverWays;
 // (the top bar's hovers start from rest when the window opens: the x clicked to close it stayed lit on the next open)
 void HoverReset(const std::string& prefix) {
     for (auto& [k, w] : gHoverWays)
-        if (k.rfind(prefix, 0) == 0) w = HoverWay{};
+        if (k.rfind(prefix, 0) == 0) w = HoverEase{};
 }
-double HoverCurve(const std::string& key, bool on, double up, double down) {
-    HoverWay& w = gHoverWays[key];
-    if (on != w.on) {
-        w.on = on;
-        w.from = w.v;
-        w.t = 0;
-    }
-    w.t += pmui::Dt();
-    const double length = on ? up * (1 - w.from) : down * w.from;
-    const double u = length <= 1e-6 ? 1.0 : std::clamp(w.t / length, 0.0, 1.0);
-    const double e = 1 - std::pow(1 - u, 2.5);
-    w.v = on ? w.from + (1 - w.from) * e : w.from * (1 - e);
-    return w.v;
-}
+double HoverCurve(const std::string& key, bool on, double up, double down) { return gHoverWays[key].Step(on, pmui::Dt(), up, down); }
 
 // The game's own hover sound (its main menu buttons', WBP_ButtonBase: the engine's Flashlight_Switch; Lvcid, 2026-10-10)
 // as the pointer comes onto anything that can be clicked (every button, card, tab and key, the logo; pmui tells us:
 // OnHoverStart), never more than one every 45 ms (sweeping down the list). Scroll bars, sliders, the resize edges and the
 // window's own background are quiet.
-constexpr const char* kHoverSound = "/Engine/VREditor/Sounds/UI/Flashlight_Switch.Flashlight_Switch";
 void HoverSound(const std::string& /*id*/) {
     if (!gPrefs.hoverSound || gPrefs.hoverVol <= 0.001) return;      // (general's hover sounds: on by default, 69%)
     static double lastAt = -1;
     if (game::Seconds() - lastAt <= 0.045) return;
     lastAt = game::Seconds();
-    // (as the game's discord button plays it: double pitch, from 0.11 s in; its volume the slider's, 69% by default)
-    draw::UiSound(kHoverSound, gPrefs.hoverVol, 2.0, 0.11);
+    PlayHoverSound(gPrefs.hoverVol);                                 // (its volume the slider's, 69% by default)
 }
 
 double Measured(Layer& l, const std::string& key, const std::string& s, double px) {
@@ -3355,7 +3333,7 @@ bool Slider(Layer& pane, const std::string& key, const Rect& track, double* t, c
     };
     const double mouseT = (pmui::Mouse().x - pane.ox - track.x) / track.w;
     if (testable && gSliderTest.key.empty() && !pmui::Held(id)) {
-        const bool mouse = input::Pressed(VK_RBUTTON) && pmui::Over(pane, hit), pad = focused && input::Pressed(input::kPadX);
+        const bool mouse = input::Pressed(input::SecondaryButton()) && pmui::Over(pane, hit), pad = focused && input::Pressed(input::kPadX);
         if (mouse || pad) {
             gSliderTest = {key, *t, pad, game::Seconds(), -1, 0, gPrefs};
             hostlog::Info("manager: test-drag " + key);
@@ -3372,7 +3350,7 @@ bool Slider(Layer& pane, const std::string& key, const Rect& track, double* t, c
                 set(gSliderTest.orig);      // (exactly back)
                 gSliderTest.key.clear();
             }
-        } else if (!(gSliderTest.pad ? input::Down(input::kPadX) : input::Down(VK_RBUTTON))) {
+        } else if (!(gSliderTest.pad ? input::Down(input::kPadX) : input::Down(input::SecondaryButton()))) {
             gSliderTest.backFrom = *t;      // (let go: it goes back where it was)
             gSliderTest.backAt = game::Seconds();
         } else if (!gSliderTest.pad) {
@@ -3885,7 +3863,7 @@ double General(Layer& pane, Layer& overlay, double w) {
         const int pct = static_cast<int>(std::lround(gPrefs.hoverVol * 100));
         if (lastPct < 0) lastPct = pct;
         if (pct != lastPct && game::Seconds() - lastAt >= 0.045) {
-            draw::UiSound(kHoverSound, gPrefs.hoverVol, 2.0, 0.11);
+            PlayHoverSound(gPrefs.hoverVol);
             lastAt = game::Seconds();
             lastPct = pct;
         }
@@ -5218,12 +5196,32 @@ void Close() {
 
 bool IsOpen() { return gS.open; }
 
+void PlayHoverSound(double volume) {
+    draw::UiSound("/Engine/VREditor/Sounds/UI/Flashlight_Switch.Flashlight_Switch", volume, 2.0, 0.11);
+}
+
+double HoverEase::Step(bool hovered, double dt, double up, double down) {
+    if (hovered != on) {
+        on = hovered;
+        from = v;
+        t = 0;
+    }
+    t += dt;
+    const double length = on ? up * (1 - from) : down * from;
+    const double u = length <= 1e-6 ? 1.0 : std::clamp(t / length, 0.0, 1.0);
+    const double e = 1 - std::pow(1 - u, 2.5);
+    v = on ? from + (1 - from) * e : from * (1 - e);
+    return v;
+}
+
 double HoverSoundLevel() {
     if (!gPrefsRead) ReadPrefs();
     return gPrefs.hoverSound ? gPrefs.hoverVol / kDefaultHoverVol : 0.0;
 }
 
-bool TookInputThisFrame() { return gS.open || gClosedFrameNo == gFrameNo; }
+// (until Release, kReleaseDelay after closing: the modal widget takes the game's input until then, so plugins don't get
+// keys the game doesn't: AnythingGoes' review)
+bool TookInputThisFrame() { return gS.open || !gReleased || gClosedFrameNo == gFrameNo; }
 
 bool NewLook() {
     const int nl = NewLookIndex();

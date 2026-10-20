@@ -1154,20 +1154,23 @@ bool SamePrefs(const SkinPrefs& a, const SkinPrefs& b) {
 struct PrefsLayout {
     int texture = -1, gloss = -1, textureOn = -1, size = 0;
 };
-bool LayoutOf(Obj o, const char* property, PrefsLayout* out) {
-    const eng::Prop p = o ? eng::FindProp(eng::ClassOf(o), property) : eng::Prop{};
+// The layout of a SBallerSkinPreferences property (an object's, or a function's parameter).
+bool LayoutOfProp(const eng::Prop& p, PrefsLayout* out, bool warn) {
     Obj st = p ? eng::StructOf(p) : nullptr;
     const eng::Prop t = st ? eng::FindProp(st, kPrefTexture) : eng::Prop{};
     const eng::Prop g = st ? eng::FindProp(st, kPrefGloss) : eng::Prop{};
     const eng::Prop on = st ? eng::FindProp(st, kPrefTextureOn) : eng::Prop{};
     if (!t || !g || !on || t.size != 8 || g.size != 1 || on.size != 1) {
         static bool logged = false;
-        if (!logged && o) hostlog::Warn("cosmetics: gloss and texture are not laid out as measured; local mode shares the public ones");
+        if (!logged && warn) hostlog::Warn("cosmetics: gloss and texture are not laid out as measured; local mode shares the public ones");
         logged = true;
         return false;
     }
     *out = {t.offset, g.offset, on.offset, p.size};
     return true;
+}
+bool LayoutOf(Obj o, const char* property, PrefsLayout* out) {
+    return LayoutOfProp(o ? eng::FindProp(eng::ClassOf(o), property) : eng::Prop{}, out, o != nullptr);
 }
 
 bool GetPrefs(Obj o, const char* property, SkinPrefs* out) {
@@ -1199,15 +1202,29 @@ bool PutPrefs(Obj o, const char* property, const SkinPrefs& p) {
 }
 
 // A ball's basic material given these (DetermineMIParams, as the game itself gives a skin's), and the menu ball's applied
-// as the Customize page applies them (AssignBasicBallParams, read from the page's blueprint).
-void PrefsOnBall(Obj ball, const SkinPrefs& p, bool menu) {
-    Obj page = eng::Get(gPage);
-    std::vector<uint8_t> raw;
-    if (!page || !PrefsBytes(page, "BallerSkinPrefsToSave", p, &raw)) return;
-    eng::Params call(eng::FunctionOn(ball, "DetermineMIParams"));
-    if (!call.SetArg(0, raw.data(), raw.size())) return;
+// as the Customize page applies them (AssignBasicBallParams, read from the page's blueprint). The struct is laid out
+// from DetermineMIParams' own parameter, so it works with no Customize page about (a track, the menu before the page
+// was opened: AnythingGoes' review). False if it couldn't be applied.
+bool PrefsOnBall(Obj ball, const SkinPrefs& p, bool menu) {
+    Obj fn = ball ? eng::FunctionOn(ball, "DetermineMIParams") : nullptr;
+    if (!fn) return false;
+    std::string param;
+    for (const auto& a : eng::ParamsOf(fn))
+        if (!a.isReturn) {
+            param = a.name;
+            break;
+        }
+    PrefsLayout l;
+    if (param.empty() || !LayoutOfProp(eng::FindProp(fn, param), &l, true)) return false;
+    std::vector<uint8_t> raw(static_cast<size_t>(l.size), 0);     // (the struct holds only these three)
+    std::memcpy(raw.data() + l.texture, &p.texture, 8);
+    raw[static_cast<size_t>(l.gloss)] = p.gloss ? 1 : 0;
+    raw[static_cast<size_t>(l.textureOn)] = p.textureOn ? 1 : 0;
+    eng::Params call(fn);
+    if (!call.SetArg(0, raw.data(), raw.size())) return false;
     eng::Invoke(ball, call);
     if (menu) eng::Call(ball, "AssignBasicBallParams", Str(L"cosmetics: local gloss and texture"));
+    return true;
 }
 
 // Whether the menu ball shows a basic (colour) skin: its sphere wears its BasicBallDMI and no special skin's actor is
@@ -1314,7 +1331,7 @@ void WearPrefs(Obj ball, Obj sphere, bool menu) {
         on->prefs = gLocalPrefs;
         return;
     }
-    PrefsOnBall(ball, gLocalPrefs, menu);
+    if (!PrefsOnBall(ball, gLocalPrefs, menu)) return;      // not applied: tried again next time, not recorded as on
     on->dmi = eng::MakeWeak(dmi);
     on->prefs = gLocalPrefs;
 }

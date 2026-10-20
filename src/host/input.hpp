@@ -16,6 +16,10 @@ bool Down(int key);
 bool Pressed(int key);          // went down this frame
 int AnyPressed();               // a key that went down this frame, or 0
 double Wheel();                 // mouse wheel notches turned this frame (up is positive), from the game window's messages
+// The mouse button that clicks (VK_LBUTTON, or VK_RBUTTON when Windows swaps the buttons: GetAsyncKeyState reads the
+// physical ones), and the other one.
+int PrimaryButton();
+int SecondaryButton();
 void Simulate(int key);         // test hook: reported as pressed on the next frame
 void SimulateHeld(int key, bool held);     // test hook: reported as held until released (clicks posted to the window)
 
