@@ -145,7 +145,9 @@ def main():
     saves_before, maps_before = snapshot(SAVED / "SaveGames"), snapshot(SAVED / "UserSavedMaps")
 
     # Only the test plugin runs (the plugin manager can't be turned off; it is part of the host's own setup).
-    others = [p.name for p in PLUGINS.iterdir() if p.is_dir() and p.name not in (ID, "plugin-manager")]
+    # (host 0.30.0 keeps cosmetic plugins in plugins\cosmetics\<id>: those are turned off too, the folder itself isn't one)
+    others = [p.name for folder in (PLUGINS, PLUGINS / "cosmetics") if folder.is_dir() for p in folder.iterdir()
+              if p.is_dir() and (p / "info.toml").exists() and p.name not in (ID, "plugin-manager")]
     (DATA / "off.txt").write_text("\n".join(sorted(others)) + "\n", encoding="utf-8")
     shutil.rmtree(PLUGINS / ID, ignore_errors=True)
     shutil.copytree(SOURCE, PLUGINS / ID)

@@ -331,10 +331,30 @@ def clean(n):
         shutil.rmtree(item) if item.is_dir() else item.unlink()
 
 
+COSMETICS = "cosmetics"         # host 0.30.0: cosmetic plugins are kept in plugins\cosmetics\<id>
+
+
+def plugin_ids(plugins):
+    """The plugins in a plugins folder: plugins\\<id>, and the cosmetic ones in plugins\\cosmetics\\<id>."""
+    ids = set()
+    for folder in (plugins, plugins / COSMETICS):
+        try:
+            ids |= {p.name for p in folder.iterdir() if p.is_dir() and (p / "info.toml").exists()}
+        except OSError:
+            pass
+    return sorted(ids)
+
+
+def plugin_dir(plugins, pid):
+    """Where a plugin is in a plugins folder: plugins\\cosmetics\\<id> when the host moved it there, else plugins\\<id>
+    (also for a new one: the host moves a cosmetic one over when it starts). If both exist, the host uses plugins\\<id>."""
+    moved = plugins / COSMETICS / pid
+    return moved if moved.exists() and not (plugins / pid).exists() else plugins / pid
+
+
 def only(n, ids):
     """Every plugin in the slot but these (and the plugin manager, which can't be turned off) turned off."""
-    folder = data_dir(n) / "plugins"
-    off = sorted(p.name for p in folder.iterdir() if p.is_dir() and p.name not in set(ids) | {"plugin-manager"})
+    off = [i for i in plugin_ids(data_dir(n) / "plugins") if i not in set(ids) | {"plugin-manager"}]
     (data_dir(n) / "off.txt").write_text("".join(i + "\n" for i in off), encoding="utf-8")
 
 
@@ -342,7 +362,7 @@ def install_plugins(n, folders):
     ids = []
     for folder in folders or []:
         src, pid = plugin_id(folder)
-        copy_plugin(src, data_dir(n) / "plugins" / pid)
+        copy_plugin(src, plugin_dir(data_dir(n) / "plugins", pid))
         print(f"slot {n}: plugin {pid} from {src}")
         ids.append(pid)
     return ids
@@ -578,7 +598,7 @@ def reload(n, folder):
     if not alive(n):
         sys.exit(f"slot {n} isn't running")
     src, pid = plugin_id(folder)
-    dest = data_dir(n) / "plugins" / pid
+    dest = plugin_dir(data_dir(n) / "plugins", pid)
     if not dest.exists():
         sys.exit(f"slot {n} doesn't have {pid}: start it with --plugin {folder}")
     copy_plugin(src, dest)
@@ -604,7 +624,7 @@ def reload(n, folder):
 def install_player(folder):
     """Copies a plugin folder into the player's own game. Never closes the game: it loads the plugin when next started."""
     src, pid = plugin_id(folder)
-    dest = WIN64 / "plugins" / pid
+    dest = plugin_dir(WIN64 / "plugins", pid)
     copy_plugin(src, dest)
     print(f"installed {pid} from {src} into {dest}; it takes effect the next time the player starts the game")
     return 0

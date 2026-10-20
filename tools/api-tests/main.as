@@ -100,8 +100,25 @@ void AddPhase(const string &in name, PhaseFn@ enter, double timeout = 90)
 
 // --- helpers ------------------------------------------------------------------------------------------------------------
 // The track phase's track: opened, and whether it's the one on screen.
+// The phases' track: the Track setting (the test map, from tools/api_tests.py), else Leth Trial 01 (it has checkpoints
+// besides the finish, so its runs have splits), else the first track. "" while the game has no track list yet.
+string ChooseLevel()
+{
+    if (Track != "")
+        return Track;
+    array<string>@ levels = Tracks::Official();
+    if (levels.length() == 0)
+        return "";
+    return levels.find("Map_LethTrial_01") >= 0 ? "Map_LethTrial_01" : levels[0];
+}
+
+// (the race phase run without the track phase chooses it here: an empty level name crashed the game)
 void OpenLevel()
 {
+    if (level == "")
+        level = ChooseLevel();
+    if (level == "")
+        return;
     if (level.findFirst("workshop:") == 0)
         Tracks::OpenWorkshop(level.substr(9));          // a workshop track (a test map of the project's own)
     else
@@ -344,11 +361,9 @@ void Register()
         if (pstep != 10)
         {
             Console::Run("fakereplay off");
-            array<string>@ levels = Tracks::Official();
-            if (levels.length() == 0)
+            level = ChooseLevel();
+            if (level == "")
                 return false;
-            // Leth Trial 01 has checkpoints besides the finish (so its runs have splits); else the first track.
-            level = Track != "" ? Track : levels.find("Map_LethTrial_01") >= 0 ? "Map_LethTrial_01" : levels[0];
             OpenLevel();
             pstep = 10;
             pt = Host::Time();

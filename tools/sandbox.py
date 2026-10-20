@@ -173,10 +173,7 @@ def log_errors(lines):
 
 
 def plugins_in(folder, off_file=None):
-    try:
-        ids = sorted(p.name for p in folder.iterdir() if p.is_dir() and (p / "info.toml").exists())
-    except OSError:
-        return []
+    ids = ti.plugin_ids(folder)         # (plugins\cosmetics\<id> too)
     off = set()
     if off_file and off_file.exists():
         off = set(off_file.read_text(encoding="utf-8").split())
@@ -483,7 +480,7 @@ def cmd_reload(a):
     if not (Path(a.plugin) / "info.toml").exists():
         fail(f"{a.plugin}: no info.toml there", f"{CLI} reload {a.slot} <a folder with info.toml>", code=2)
     src, pid = ti.plugin_id(a.plugin)
-    if not (ti.data_dir(a.slot) / "plugins" / pid).exists():
+    if not ti.plugin_dir(ti.data_dir(a.slot) / "plugins", pid).exists():
         fail(f"slot {a.slot} doesn't have {pid}", f"{CLI} stop {a.slot}", f"{CLI} start {a.slot} --plugin {a.plugin}")
     log = ti.data_dir(a.slot) / "host.log"
     before = len(read_log(log))
@@ -508,7 +505,7 @@ def cmd_install_player(a):
     if not (Path(a.plugin) / "info.toml").exists():
         fail(f"{a.plugin}: no info.toml there", f"{CLI} install-player <a folder with info.toml>", code=2)
     src, pid = ti.plugin_id(a.plugin)
-    dest = ti.WIN64 / "plugins" / pid
+    dest = ti.plugin_dir(ti.WIN64 / "plugins", pid)
     o = Out()
     o.kv("plugin", pid)
     if dest.exists() and same_tree(src, dest):
