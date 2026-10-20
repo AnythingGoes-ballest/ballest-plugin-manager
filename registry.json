@@ -1,6 +1,23 @@
 {
   "plugins": [
     {
+      "id": "author-time-challenge",
+      "name": "Author Time Challenge",
+      "description": "Race random tracks against the clock. Every author time scores a point, gold lets you skip for free, and you get a few free skips.",
+      "author": "PetitRomeo",
+      "repo": "PetitRomeo/author-time-challenge",
+      "version": "0.7.0",
+      "commit": "218e6c52e989a0dd823772691b7fb8c996276ae6",
+      "min_host": "0.26.0",
+      "icon": "icon.png",
+      "dependencies": [],
+      "files": {
+        "info.toml": "8b9c422d65c2468c6cdda961b36f128f668875591655fcd652c96f6d7409e839",
+        "main.as": "e9268db03799b7bd7aefceab4100bd22051e5fb2c14214bd86e96b1b42e2d416",
+        "icon.png": "6b9c60554a49681d5378c3c28ef85d46d8582298054d82ee88ae1563b3661b51"
+      }
+    },
+    {
       "id": "chicken-cosmetic",
       "name": "Chicken Ball",
       "description": "Play Ballest as the chicken from Crossy Road!",
@@ -569,6 +586,27 @@
       }
     },
     {
+      "id": "hd_lavaball",
+      "name": "HD Lava Ball",
+      "description": "A better lava ball with its own crack, flow and pulse values. Customizable in txt file.",
+      "author": "Lvcid",
+      "repo": "Lvcidx0-Ballest/ballest-hd_lavaball",
+      "version": "0.1.0",
+      "commit": "7a84df3ca620a481de53c7816ebae9dcdd79eb09",
+      "min_host": "0.27.0",
+      "icon": "icon.png",
+      "dependencies": [
+        "cosmetic-kit"
+      ],
+      "files": {
+        "info.toml": "6e19ad34601f00d61793a0df936a330d5a69bf682003efc387797bd383b140af",
+        "main.as": "c98a716f849931561b911870404db06bf7abd21cac6e75793a6c38deb3b824c1",
+        "preview.png": "0fdcfff0f014e83bf6c303575a9436128c8bb159937bce9686d0e01936775b6f",
+        "models/hd_lavaball.txt": "ea51a8c8d8ab69ca69947674e8ca49c8a0c5f8bdd4fcd404c48df219b1772d20",
+        "icon.png": "0fdcfff0f014e83bf6c303575a9436128c8bb159937bce9686d0e01936775b6f"
+      }
+    },
+    {
       "id": "hub-plus",
       "name": "Hub Plus",
       "description": "The game's track hub plus search: find maps by name or author as you type, see how many players have each map, extra sorts (trending windows, name, most subscribed), filter by your own progress.",
@@ -876,14 +914,31 @@
         "models/yellow.txt": "585b8d95af59eda238180dc178f9cfdbc057a285dab9bc3f37464899cd3efc9d",
         "icon.png": "fa18ed52b57fd27540e7b5560603290c787e9a5bafb70e0b1b4d306a66dad644"
       }
+    },
+    {
+      "id": "upside-down",
+      "name": "Upside Down",
+      "description": "Drive upside down: the world is turned on its head and left and right are swapped, so right still goes right on the screen.",
+      "author": "AnythingGoes",
+      "repo": "AnythingGoes-ballest/ballest-upside-down",
+      "version": "0.1.0",
+      "commit": "304e0ed42dfb37bfcf44b4a8bb2594d6f78267c0",
+      "min_host": "0.29.0",
+      "icon": "icon.png",
+      "dependencies": [],
+      "files": {
+        "info.toml": "8dd5d90372d751a2c08ee4a36e18fa5aad505c7c25f4e879468489a72c4222a6",
+        "main.as": "7f074e7990550e773f336290cbe92b2bf0c96bfa91840f8f1d605646e5459d03",
+        "icon.png": "79b4fb9125d9d0bc9fd4516ea583b0148de3a68c8c7b1114f5298a3c306f1372"
+      }
     }
   ],
   "host": {
-    "version": "0.28.0",
+    "version": "0.29.0",
     "repo": "AnythingGoes-ballest/ballest-plugin-manager",
-    "commit": "43071f69b80f863ace69ab5b7e570a579f80b814",
-    "dll": "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/download/v0.28.0/version.dll",
-    "dll_sha256": "e2de94af8c339b557c732da5e8e4c388c9670bbe3fac84bf244e882ca0ab4bac",
+    "commit": "dd8fe7a561a422b4d20f77574c67ab5445c8b935",
+    "dll": "https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/download/v0.29.0/version.dll",
+    "dll_sha256": "2b3d9badb45afbaddc2ff987ec143bca4ac47f8d852be76df62b0cec9f88146c",
     "files": {
       "plugins/hello-world/info.toml": "5300e78277bc1e92d4d1626ce17ed15e938f37e692b2271b58c3c9c30b79be40",
       "plugins/hello-world/main.as": "24f510821cb3ea7825bfef6363d92e12fd493b9977038beb9e6c297a692fb23b",

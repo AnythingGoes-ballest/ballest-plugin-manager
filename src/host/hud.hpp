@@ -51,6 +51,10 @@ void HideEditor(int owner, bool hidden);
 // The player's own ball and what's attached to it hidden (true) or given back (false), while any plugin wants it hidden.
 void HideBall(int owner, bool hidden);
 void FreezeBall(int owner, bool frozen);         // the player's ball: no input, no physics (given back as it was)
+// The player's camera rolled by the sum of what plugins asked, in degrees (0: as the game has it); only the 3D view.
+void RollCamera(int owner, double degrees);
+// The player's steering mirrored left/right while any plugin asks: x of every move the ball gets is negated.
+void MirrorSteering(int owner, bool mirrored);
 void RemoveOwner(int owner);
 
 }  // namespace hud

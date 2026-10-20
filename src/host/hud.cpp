@@ -11,6 +11,7 @@
 #include "cosmetics.hpp"
 #include "engine.hpp"
 #include "game.hpp"
+#include "layout.hpp"
 #include "log.hpp"
 #include "race.hpp"
 #include "ui.hpp"
@@ -629,7 +630,134 @@ void FreezeBallFrame() {
         gFrozen->controller = eng::MakeWeak(controller);
     }
 }
+
+// The player's camera rolled for plugins that asked (Race::RollCamera). The ball (BP_RollingBall) sets its Camera's
+// relative rotation every frame from CamStartingRelRot composed with its own small tilts
+// (AddFinalFloatingCamDisplacement), so the roll goes into CamStartingRelRot: the game keeps applying it, tilts
+// included. Only the 3D view turns; the HUD and menus are drawn over it as they are. Given back when no plugin asks.
+struct Rotator {
+    double pitch = 0, yaw = 0, roll = 0;
+};
+std::map<int, double> gCameraRolls;
+struct RolledBall {
+    eng::Weak ball;
+    double ownRoll = 0;                     // the ball's own roll before ours
+};
+std::optional<RolledBall> gRolled;
+
+void UnrollCamera() {
+    if (!gRolled) return;
+    if (Obj ball = eng::Get(gRolled->ball)) {
+        Rotator r;
+        if (eng::ReadBytes(ball, "CamStartingRelRot", &r, sizeof r)) {
+            r.roll = gRolled->ownRoll;
+            eng::WriteBytes(ball, "CamStartingRelRot", &r, sizeof r);
+        }
+    }
+    gRolled.reset();
+}
+
+void RollCameraFrame() {
+    double roll = 0;
+    for (const auto& [owner, degrees] : gCameraRolls) roll += degrees;
+    roll = std::remainder(roll, 360.0);
+    if (std::fabs(roll) < 1e-6) return UnrollCamera();
+    Obj ball = race::PlayedBallActor();
+    if (gRolled && ball && eng::Get(gRolled->ball) != ball) UnrollCamera();     // another ball: the old one back first
+    Rotator r;
+    if (!ball || !eng::ReadBytes(ball, "CamStartingRelRot", &r, sizeof r)) return;
+    if (!gRolled) {
+        gRolled = RolledBall{eng::MakeWeak(ball), r.roll};
+        hostlog::Info("hud: rolled the camera of " + eng::ObjName(ball) + " by " + std::to_string(roll));
+    }
+    r.roll = gRolled->ownRoll + roll;
+    eng::WriteBytes(ball, "CamStartingRelRot", &r, sizeof r);
+}
+
+// The player's steering mirrored left/right for plugins that asked (Race::MirrorSteering). Every move reaches the ball
+// through its Server_ExecuteMove(ActionValue), which the player controller calls with IA_Move's value (x right,
+// y forward, relative to the camera); everything the ball does with it (the ground and air moves, the camera's turning
+// tilt) reads that parameter. The UFunction's native entry is wrapped, as the cosmetics page's handler is, and x is
+// negated for the player's own ball only.
+using NativeFunction = void (*)(Obj context, uint8_t* frame, void* result);
+std::set<int> gSteeringMirrors;
+NativeFunction gMoveOriginal = nullptr;
+Obj gMoveFunction = nullptr;
+int gMoveValueOffset = -1;
+bool gMoveHookFailed = false;
+Obj gMirroredBall = nullptr;                // compared only, never read from inside the game's call
+double gNextMirror = 0;
+
+// Runs inside the game's own call, outside the host's frame: reads and writes only.
+void HookedMove(Obj context, uint8_t* frame, void* result) {
+    Obj node = nullptr, self = nullptr;
+    uint8_t* params = nullptr;
+    if (frame) {
+        std::memcpy(&node, frame + layout::kFFrameFunctionOffset, sizeof node);
+        std::memcpy(&self, frame + layout::kFFrameObjectOffset, sizeof self);
+        std::memcpy(&params, frame + layout::kFFrameParametersOffset, sizeof params);
+    }
+    if (gMirroredBall && context == gMirroredBall && node == gMoveFunction && self == context && params && gMoveValueOffset >= 0) {
+        double x = 0;
+        std::memcpy(&x, params + gMoveValueOffset, sizeof x);
+        x = -x;
+        std::memcpy(params + gMoveValueOffset, &x, sizeof x);
+    }
+    gMoveOriginal(context, frame, result);
+}
+
+void HookMove() {
+    if (gMoveHookFailed) return;
+    Obj cls = eng::FindClass("BP_RollingBall_C");
+    Obj fn = eng::FindFunction(cls, "Server_ExecuteMove"), other = eng::FindFunction(cls, "MoveOnGround");
+    if (!fn || !other) return;
+    NativeFunction entry = nullptr, otherEntry = nullptr;
+    std::memcpy(&entry, fn + layout::kUFunctionNativeFunctionOffset, sizeof entry);
+    std::memcpy(&otherEntry, other + layout::kUFunctionNativeFunctionOffset, sizeof otherEntry);
+    if (fn == gMoveFunction && entry == &HookedMove) return;              // in place
+    int offset = -1;
+    for (const auto& param : eng::ParamsOf(fn))
+        if (param.name == "ActionValue" && param.size == 16) offset = param.offset;
+    // Both are Blueprint functions, so both enter the same interpreter entry in the game exe; anything else means the
+    // layout is not as measured.
+    if (!entry || entry != otherEntry || !eng::InImage(reinterpret_cast<void*>(entry)) || offset < 0) {
+        gMoveHookFailed = true;
+        hostlog::Warn("hud: the ball's Server_ExecuteMove is not as measured; steering can't be mirrored");
+        return;
+    }
+    gMoveFunction = fn;
+    gMoveOriginal = entry;
+    gMoveValueOffset = offset;
+    const NativeFunction hooked = &HookedMove;
+    std::memcpy(fn + layout::kUFunctionNativeFunctionOffset, &hooked, sizeof hooked);
+    hostlog::Info("hud: watching the ball's moves (steering mirror)");
+}
+
+void MirrorSteeringFrame() {
+    if (gSteeringMirrors.empty()) {
+        gMirroredBall = nullptr;
+        return;
+    }
+    const double now = game::Seconds();
+    if (now < gNextMirror) return;
+    gNextMirror = now + 0.1;
+    HookMove();                             // (again if the ball's class was loaded anew)
+    gMirroredBall = race::PlayedBallActor();
+}
 }  // namespace
+
+void RollCamera(int owner, double degrees) {
+    if (std::fabs(std::remainder(degrees, 360.0)) < 1e-6) gCameraRolls.erase(owner);
+    else gCameraRolls[owner] = degrees;
+    RollCameraFrame();
+}
+
+void MirrorSteering(int owner, bool mirrored) {
+    if (mirrored) gSteeringMirrors.insert(owner);
+    else gSteeringMirrors.erase(owner);
+    gNextMirror = 0;
+    MirrorSteeringFrame();
+}
 
 void FreezeBall(int owner, bool frozen) {
     if (frozen) gBallFreezers.insert(owner);
@@ -652,6 +780,8 @@ void HideEditorFrame();
 void HideGameFrame() {
     HideBallFrame();
     FreezeBallFrame();
+    RollCameraFrame();
+    MirrorSteeringFrame();
     HideEditorFrame();
     if (gHiders.empty()) return RestoreGame();
     const double now = game::Seconds();
@@ -796,6 +926,8 @@ void RemoveOwner(int owner) {
     HideEditor(owner, false);
     HideBall(owner, false);
     FreezeBall(owner, false);
+    RollCamera(owner, 0);
+    MirrorSteering(owner, false);
 }
 
 }  // namespace hud

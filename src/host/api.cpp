@@ -906,6 +906,8 @@ bool RaceSetPaused(bool paused) {
 bool RacePaused() { return race::Paused(); }
 void RaceHideBall(bool hidden) { hud::HideBall(plugins::Current(), hidden); }
 void RaceFreezeBall(bool frozen) { hud::FreezeBall(plugins::Current(), frozen); }
+void RaceRollCamera(double degrees) { hud::RollCamera(plugins::Current(), degrees); }
+void RaceMirrorSteering(bool mirrored) { hud::MirrorSteering(plugins::Current(), mirrored); }
 std::string RaceSaveBall() {
     plugins::GameWork work;
     return race::SaveBall();
@@ -975,6 +977,8 @@ void RegisterRace() {
     Global("bool IsPractice()", asFUNCTION(race::Practice));
     Global("void HideBall(bool)", asFUNCTION(RaceHideBall));
     Global("void FreezeBall(bool)", asFUNCTION(RaceFreezeBall));
+    Global("void RollCamera(double degrees)", asFUNCTION(RaceRollCamera));
+    Global("void MirrorSteering(bool mirrored = true)", asFUNCTION(RaceMirrorSteering));
     Global("bool BallPosition(double &out, double &out, double &out)", asFUNCTION(RaceBallPosition));
     Global("bool BallVelocity(double &out, double &out, double &out)", asFUNCTION(RaceBallVelocity));
     Global("bool AddBallVelocity(double, double, double)", asFUNCTION(RaceAddBallVelocity));
