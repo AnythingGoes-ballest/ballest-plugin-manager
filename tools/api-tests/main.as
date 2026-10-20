@@ -2201,6 +2201,59 @@ void RegisterRace()
         Race::FreezeBall(false);
         return Is(!frozen, "Race::FreezeBall froze the ball in a run that counts");
     }, 8);
+    Add("race", "Race::RollCamera turns the view over", "Race::RollCamera", function() {
+        // A point above the ball is drawn in the screen's upper part; with the camera rolled by 180 it moves below.
+        double x, y, z;
+        float sx, sy;
+        if (!Race::BallPosition(x, y, z))
+            return "no ball position";
+        if (step == 0)
+        {
+            if (!Camera::Project(x, y, z + 300, sx, sy))
+                return "Camera::Project of a point above the ball false";
+            d1 = sy;
+            Race::RollCamera(180);
+            step = 1;
+            return WAIT;
+        }
+        if (step == 1)
+        {
+            if (Elapsed() < 1)
+                return WAIT;
+            bool seen = Camera::Project(x, y, z + 300, sx, sy);
+            d2 = sy;
+            Race::RollCamera(0);
+            if (!seen)
+                return "Camera::Project of a point above the ball false with the camera rolled";
+            step = 2;
+            return WAIT;
+        }
+        if (Elapsed() < 2)
+            return WAIT;
+        Camera::Project(x, y, z + 300, sx, sy);
+        array<string> c = {Is(LogSince("hud: rolled the camera"), "no 'rolled the camera' line"),
+                           Is(d2 > d1 + 20, "the point above the ball at y " + int(d1) + ", rolled 180 at " + int(d2) + " (want it lower)"),
+                           Is(Math::abs(sy - d1) < 20, "back at y " + int(sy) + " after Race::RollCamera(0), want " + int(d1))};
+        return All(c);
+    }, 8);
+    Add("race", "Race::MirrorSteering hooks the ball's moves", "Race::MirrorSteering", function() {
+        if (step == 0)
+        {
+            Race::MirrorSteering(true);
+            step = 1;
+            return WAIT;
+        }
+        if (LogSince("steering can't be mirrored"))
+        {
+            Race::MirrorSteering(false);
+            return "Race::MirrorSteering: the ball's Server_ExecuteMove is not as measured";
+        }
+        if (!LogSince("watching the ball's moves (steering mirror)") && Elapsed() < 3)
+            return WAIT;
+        bool hooked = LogSince("watching the ball's moves (steering mirror)");
+        Race::MirrorSteering(false);
+        return Is(hooked, "Race::MirrorSteering: the ball's moves were not hooked");
+    }, 8);
     Add("race", "Race running", "Race::IsActive,Race::RunId,Race::GetInput,Race::BallPosition", function() {
         double x, y, jumpX;
         bool jump;
