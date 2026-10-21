@@ -216,19 +216,28 @@ def close_windows(pid):
 LAUNCHER_STATE = PLAYER_SAVED / "BallestLauncher"
 
 
+FOOTER_GRACE = 20                   # seconds after the footer that a copy counts as ready without its own ready status
+_footer_seen = {}                   # pid -> when its footer buttons were first seen
+
+
 def ready(n, pid):
-    """The game's main menu is up: its ready status (one file for every copy, so a later copy's overwrites it) or
-    the host's footer buttons on the main menu (placed once the menu's widgets exist)."""
+    """The game's main menu is up and the launcher has it as ready: its ready status (MainMenuReady with its pid).
+    Measured 2026-10-21: that comes about 9 s after the host's footer buttons, and a copy opened elsewhere or closed
+    before it is recorded as Aborted (ready=0). The file is one for every copy, so a later copy's can overwrite it:
+    FOOTER_GRACE after the footer is there, the copy counts as ready anyway."""
     try:
         text = (LAUNCHER_STATE / "DirectLightingShadowReadyStatus.txt").read_text(encoding="utf-8", errors="replace")
-        if f"ProcessId={pid}" in text and "Phase=MainMenuReady" in text:
+        if f"ProcessId={pid}\n" in text + "\n" and "Phase=MainMenuReady" in text:
             return True
     except OSError:
         pass
     try:
-        return "footer button 'plugins' placed" in (data_dir(n) / "host.log").read_text(encoding="utf-8", errors="replace")
+        footer = "footer button 'plugins' placed" in (data_dir(n) / "host.log").read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
+    if not footer:
+        return False
+    return time.time() - _footer_seen.setdefault(pid, time.time()) >= FOOTER_GRACE
 
 
 # Sandbox mode mutes a copy's sound in Windows (its own audio session), and Windows saves per-app mute by program
