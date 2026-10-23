@@ -478,9 +478,19 @@ def start(n, args, plugins_from, shared, timeout, reseed=False, plugin_dirs=None
     return code
 
 
+def steam_running():
+    out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq steam.exe", "/NH"], capture_output=True, text=True).stdout
+    return "steam.exe" in out.lower()
+
+
 def start_claimed(n, args, plugins_from, shared, timeout, reseed, plugin_dirs, wipe, only_mine, host, interactive):
     if not (WIN64 / "version.dll").exists():
         sys.exit("no plugin host installed (Win64\\version.dll)")
+    # A copy started while Steam is closed starts Steam itself, with the copy's environment (LOCALAPPDATA = the slot's
+    # folder): every game the player then starts from Steam runs as that slot, sandboxed and muted (2026-10-23).
+    if not steam_running():
+        sys.exit("Steam isn't running: start Steam yourself first (a test copy would start it with its own settings, "
+                 "and the player's game would then run as that copy, muted)")
     if wipe:
         clean(n)
     prepare(n, plugins_from, shared, reseed)
