@@ -4,6 +4,8 @@ frame each, through the host's agent pipe (\\\\.\\pipe\\ballest-test-<game pid>,
     python tools/agent.py <slot> state                      the state as JSON (ball, camera, race, track, UI)
     python tools/agent.py <slot> render [name]              a PNG of the whole screen (HUD and plugin windows too)
     python tools/agent.py <slot> drive <x> <y> <frames> [jump]   steer (x right, y forward, -1..1) for that many frames
+    python tools/agent.py <slot> tap <x> <y>                click at a pixel of the render picture (no window needed)
+    python tools/agent.py <slot> hover <x> <y> | hover off  the pointer held there (hovers) / the real mouse again
     python tools/agent.py <slot> -c "cmd; cmd; ..."         any test commands, sent together, each one's replies
     python tools/agent.py <slot> repl                       one command per stdin line, one JSON answer per line
 
@@ -109,6 +111,16 @@ class Slot:
         """Holds the steering until the next drive / hold (hold(0, 0) lets go)."""
         return self.cmd(f"drive {x} {y}")
 
+    def tap(self, x, y):
+        """A click at pixel (x, y) of the screen, as a render picture shows it, with no window or mouse needed: the plugin
+        manager's window if open, else a plugin window's button, else the game's own button there. What it clicked."""
+        lines = self.cmd(f"tap {x} {y}")
+        return lines[-1] if lines else ""
+
+    def hover(self, x, y=None):
+        """The pointer held at pixel (x, y) (hover effects, tooltips); hover("off") gives the real mouse back."""
+        return self.cmd("hover off" if x == "off" else f"hover {x} {y}")
+
     def wait(self, frames):
         """Answers once that many frames have run."""
         return self.cmd(f"waitframes {int(frames)}")
@@ -127,6 +139,11 @@ def main():
             elif verb == "drive":
                 x, y, frames = float(rest[0]), float(rest[1]), int(rest[2])
                 print(json.dumps(s.drive(x, y, frames, "jump" in rest[3:]), indent=1))
+            elif verb == "tap":
+                print(s.tap(float(rest[0]), float(rest[1])))
+            elif verb == "hover":
+                for line in s.hover("off") if rest[0] == "off" else s.hover(float(rest[0]), float(rest[1])):
+                    print(line)
             elif verb == "-c":
                 for answer in s.send(*" ".join(rest).split(";")):
                     for line in answer["lines"]:

@@ -18,6 +18,9 @@ bool SimulateClick(const std::string& label) {
     return footer::SimulateClick(label) || menu::SimulateClick(label) || windows::SimulateClick(label);
 }
 bool SimulateSelect(const std::string& firstOption, int index) { return windows::SimulateSelect(firstOption, index); }
+bool SimulateClickAt(double x, double y, std::string* what) {
+    return footer::SimulateClickAt(x, y, what) || windows::SimulateClickAt(x, y, what);
+}
 void SimulateSlider(float value) { windows::SimulateSlider(value); }
 bool SimulateSubmit(const std::string& text) { return windows::SimulateSubmit(text); }
 bool SimulateType(const std::string& text) { return windows::SimulateType(text); }

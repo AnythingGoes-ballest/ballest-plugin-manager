@@ -235,6 +235,9 @@ std::vector<HudWindow> HudWindows();
 void Frame();                                   // game thread, every frame
 bool SimulateClick(const std::string& label);   // a footer or window button by label ("icon", "window:<label>")
 bool SimulateSelect(const std::string& firstOption, int index);     // a dropdown, found by its first option
+// A click at a viewport position (widget units) on the top plugin-window button, check box or icon button there
+// (what: its label); false if no window has one there.
+bool SimulateClickAt(double x, double y, std::string* what);
 void SimulateSlider(float value);               // every slider reports this value as dragged, for one frame
 bool SimulateSubmit(const std::string& text);   // the first text input reports this text as submitted
 bool SimulateType(const std::string& text);     // the first (or "@hint|") text input gets this text as if typed
@@ -245,6 +248,7 @@ void Frame();
 void RemoveOwner(int owner);
 void HideOwner(int owner);
 bool SimulateClick(const std::string& label);
+bool SimulateClickAt(double x, double y, std::string* what);    // a footer button at that viewport position
 std::string Status();
 double Height();                        // the footer bar's height on screen (UI units), 0 when there is none
 const std::vector<std::unique_ptr<FooterButton>>& Buttons();     // every footer entry, for a screen to draw
@@ -261,6 +265,7 @@ std::string Status();
 namespace windows {
 void Frame();
 bool SimulateClick(const std::string& label);
+bool SimulateClickAt(double x, double y, std::string* what);
 bool SimulateSelect(const std::string& firstOption, int index);
 void SimulateSlider(float value);
 bool SimulateSubmit(const std::string& text);

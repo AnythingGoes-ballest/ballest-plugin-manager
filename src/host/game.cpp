@@ -158,7 +158,20 @@ bool OpenLevel(const std::string& map) {
     return eng::Invoke(statics, open);
 }
 
+bool gMouseOverride = false;
+double gOverrideX = 0, gOverrideY = 0;
+void SetMouseOverride(bool on, double x, double y) {
+    gMouseOverride = on;
+    gOverrideX = x;
+    gOverrideY = y;
+}
+
 bool MousePosition(double* x, double* y) {
+    if (gMouseOverride) {
+        *x = gOverrideX;
+        *y = gOverrideY;
+        return true;
+    }
     Obj controller = PlayerController();
     if (!controller) return false;
     struct Vec2d {

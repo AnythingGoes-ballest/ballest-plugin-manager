@@ -1091,6 +1091,27 @@ bool SimulateClick(const std::string& label) {
     return false;
 }
 
+bool SimulateClickAt(double x, double y, std::string* what) {
+    // the smallest button there (one inside another's area is on top of it), in a window on screen
+    Widget* best = nullptr;
+    double bestArea = 1e18;
+    for (auto& win : gWindows) {
+        if (!win->shownVisible) continue;
+        for (auto& item : win->items) {
+            if (item->retired || !(item->kind == Kind::Button || item->kind == Kind::IconButton || item->kind == Kind::CheckBox)) continue;
+            const ux::Rect r = ux::Bounds(eng::Get(item->main));
+            if (!r.ok || x < r.x || y < r.y || x > r.x + r.w || y > r.y + r.h || r.w * r.h >= bestArea) continue;
+            best = item.get();
+            bestArea = r.w * r.h;
+        }
+    }
+    if (!best) return false;
+    if (what) *what = best->text.empty() ? "icon button" : best->text;
+    if (best->kind != Kind::CheckBox) return best->clickPending = true;
+    best->checked = !best->checked;
+    return best->changedPending = true;
+}
+
 bool SimulateSelect(const std::string& firstOption, int index) {
     // Windows on screen first: a hidden window of another plugin can have a dropdown with the same options.
     for (int pass = 0; pass < 2; ++pass)

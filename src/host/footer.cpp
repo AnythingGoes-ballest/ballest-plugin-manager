@@ -10,6 +10,7 @@
 #include "log.hpp"
 #include "manager.hpp"
 #include "ui.hpp"
+#include "ux.hpp"
 #include "widgets.hpp"
 
 using eng::Obj;
@@ -312,6 +313,21 @@ bool SimulateClick(const std::string& label) {
     for (auto& p : gPanels)
         for (auto& b : p->buttons)
             if (b->label == label) return b->clickPending = true;
+    return false;
+}
+
+bool SimulateClickAt(double x, double y, std::string* what) {
+    auto hit = [&](FooterButton& b) {
+        const ux::Rect r = ux::Bounds(eng::Get(b.button));
+        if (!r.ok || x < r.x || y < r.y || x > r.x + r.w || y > r.y + r.h) return false;
+        if (what) *what = b.label;
+        return b.clickPending = true;
+    };
+    for (auto& b : gButtons)
+        if (hit(*b)) return true;
+    for (auto& p : gPanels)
+        for (auto& b : p->buttons)
+            if (hit(*b)) return true;
     return false;
 }
 

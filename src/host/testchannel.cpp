@@ -33,6 +33,8 @@
 #include "leaderboard.hpp"
 #include "log.hpp"
 #include "editor.hpp"
+#include "manager.hpp"
+#include "ux.hpp"
 #include "widgets.hpp"
 #include "models.hpp"
 #include "plugins.hpp"
@@ -477,6 +479,120 @@ void DriveFrame() {
     SendMove(0, 0);
     gDrive.on = false;
     Finish(gDrive.request, "drive -> done " + AgentState());
+}
+
+
+// "tap <x> <y>" and "hover <x> <y> | hover off": a click (or the pointer) at a position in the screen's pixels, the same
+// pixels as a "render" picture, without a window or a mouse (a headless copy has neither). It goes to what's on top
+// there: the plugin manager's window (it reads the pointer: a simulated one, pressed and let go over two frames), then a
+// plugin window's button, then the game's own buttons (the smallest UMG Button there that is visible all the way up:
+// its OnPressed, OnReleased and OnClicked handlers called in that order, as a click calls them).
+double PixelsPerUnit() {
+    const double scale = game::ViewportScale();
+    return scale > 0.01 ? scale : 1.0;
+}
+
+struct Tap {
+    long long request = 0;
+    int step = -1;                          // frames since it began; -1: none
+    double x = 0, y = 0;                    // widget units
+} gTap;
+bool gHovering = false;
+
+bool VisibleAllTheWayUp(eng::Obj widget) {
+    for (int depth = 0; widget && depth < 64; ++depth) {
+        if (!eng::Call(widget, "IsVisible").ReturnBool()) return false;
+        eng::Obj parent = eng::Call(widget, "GetParent").ReturnObj();
+        widget = parent;
+    }
+    return true;
+}
+
+// The game's UMG Button at that position (widget units), the smallest of those visible there; null if none.
+eng::Obj GameButtonAt(double x, double y) {
+    eng::Obj cls = eng::FindClass("Button"), best = nullptr;
+    double bestArea = 1e18;
+    if (!cls) return nullptr;
+    std::vector<eng::Obj> candidates;
+    eng::ForEachObject([&](eng::Obj o) {
+        if (eng::IsA(o, cls) && !eng::IsDefaultObject(o)) candidates.push_back(o);
+        return true;
+    });
+    for (eng::Obj b : candidates) {
+        const ux::Rect r = ux::Bounds(b);
+        if (!r.ok || x < r.x || y < r.y || x > r.x + r.w || y > r.y + r.h || r.w * r.h >= bestArea) continue;
+        if (!eng::Call(b, "GetIsEnabled").ReturnBool() || !VisibleAllTheWayUp(b)) continue;
+        best = b;
+        bestArea = r.w * r.h;
+    }
+    return best;
+}
+
+// A dynamic multicast delegate's handlers (FMulticastScriptDelegate: a TArray of FScriptDelegate, each a weak object
+// pointer and a function name; 16 bytes, measured), each called with no parameters (a button's events take none).
+int CallHandlers(eng::Obj object, const char* property) {
+    struct Entry {
+        int32_t index, serial;
+        uint32_t name;
+        int32_t number;
+    };
+    struct { Entry* data; int32_t num, max; } list{};
+    if (!eng::ReadBytes(object, property, &list, sizeof list) || !list.data || list.num <= 0 || list.num > 64) return 0;
+    const std::vector<Entry> entries(list.data, list.data + list.num);
+    int called = 0;
+    for (const Entry& e : entries) {
+        eng::Obj target = eng::ObjectAt(e.index);
+        const std::string function = eng::Name(e.name, e.number);
+        if (target && !function.empty() && eng::FunctionOn(target, function.c_str()) && eng::Call(target, function.c_str()).Invoked()) ++called;
+    }
+    return called;
+}
+
+void StartTap(const Args& a, const std::string& c) {
+    const double px = std::atof(Arg(a, 1).c_str()), py = std::atof(Arg(a, 2).c_str());
+    const double x = px / PixelsPerUnit(), y = py / PixelsPerUnit();
+    if (manager::IsOpen()) {                // the plugin manager's window takes the pointer, inside or out (outside closes it)
+        if (gTap.step >= 0 && gTap.request) Finish(gTap.request, "tap -> replaced");
+        gTap = {Defer(), 0, x, y};
+        game::SetMouseOverride(true, x, y);
+        if (!gTap.request) Report(c + " -> the plugin manager's window");
+        return;
+    }
+    std::string what;
+    if (ui::SimulateClickAt(x, y, &what)) return Report(c + " -> plugin window button '" + what + "'");
+    if (eng::Obj button = GameButtonAt(x, y)) {
+        eng::Obj owner = eng::OuterOf(eng::OuterOf(button));     // (its widget tree, then the user widget)
+        const int pressed = CallHandlers(button, "OnPressed"), released = CallHandlers(button, "OnReleased"),
+                  clicked = CallHandlers(button, "OnClicked");
+        return Report(c + " -> game button " + eng::ObjName(button) + (owner ? " in " + eng::ObjName(owner) : std::string()) +
+                      " (handlers: pressed " + std::to_string(pressed) + ", released " + std::to_string(released) + ", clicked " +
+                      std::to_string(clicked) + ")");
+    }
+    Report(c + " -> nothing clickable there");
+}
+
+// The plugin manager's tap, one step a frame: the pointer there, then the button down, then up, then the real mouse back.
+void TapFrame() {
+    if (gTap.step < 0) return;
+    const int step = gTap.step++;
+    game::SetMouseOverride(true, gTap.x, gTap.y);
+    if (step == 1) input::SimulateHeld(input::PrimaryButton(), true);
+    if (step == 3) input::SimulateHeld(input::PrimaryButton(), false);
+    if (step < 5) return;
+    if (!gHovering) game::SetMouseOverride(false);
+    gTap.step = -1;
+    Finish(gTap.request, "tap -> the plugin manager's window");
+}
+
+void Hover(const Args& a, const std::string& c) {
+    if (Arg(a, 1) == "off") {
+        gHovering = false;
+        game::SetMouseOverride(false);
+        return Report(c + " -> the real mouse again");
+    }
+    gHovering = true;
+    game::SetMouseOverride(true, std::atof(Arg(a, 1).c_str()) / PixelsPerUnit(), std::atof(Arg(a, 2).c_str()) / PixelsPerUnit());
+    Report(c + " -> ok");
 }
 
 // --- measurement commands ------------------------------------------------------------------------------------------
@@ -1293,6 +1409,8 @@ void Run(const std::string& cmd) {
          }},
         {"render", [](const Args& a, const std::string&) { StartRender(Arg(a, 1)); }},
         {"drive", [](const Args& a, const std::string& c) { StartDrive(a, c); }},
+        {"tap", [](const Args& a, const std::string& c) { StartTap(a, c); }},
+        {"hover", [](const Args& a, const std::string& c) { Hover(a, c); }},
         {"openmap", [](const Args& a, const std::string& c) {     // openmap <file name fragment>: Create page entry -> editor
              for (eng::Obj o : Instances("WBP_TrackLibraryEntry_C", "Transient")) {
                  const eng::Prop p = eng::FindProp(eng::ClassOf(o), "AssociatedPath");
@@ -1661,6 +1779,7 @@ void Frame() {
     }
     gHostFramesForReply = gHostFrames;
     DriveFrame();
+    TapFrame();
     WatchRenders();
     // The agent pipe: started once the copy is a complete sandbox (it drives the game), then read every frame.
     if (!gPipeStarted && MutationsAllowed()) {

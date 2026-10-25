@@ -250,7 +250,10 @@ the saved map, `--keep` leaves the game open.
 - **Agents: `python tools/agent.py`** drives a slot through the host's agent pipe (host 0.31.0+, complete sandboxes
   only): `state` (the race, track, ball position/velocity/speed, input, camera and UI as JSON), `render [name]` (a PNG of
   the whole screen, HUD and plugin windows included, windowed or headless), `drive <x> <y> <frames> [jump]` (steering,
-  x right / y forward, for that many frames, then the state; `jump` presses the jump key as the game takes it) and
+  x right / y forward, for that many frames, then the state; `jump` presses the jump key as the game takes it),
+  `tap <x> <y>` (a click at a pixel of the render picture, no window or mouse needed: the plugin manager's window,
+  else a footer or plugin-window button, else the game's own button there; measured on a headless copy: menu and
+  Customize buttons, back, the footer and the plugin manager's tabs), `hover <x> <y>` / `hover off` and
   `-c "cmd; cmd"` (any test commands, run together). From Python, `from agent import Slot` keeps the pipe open: a
   command is about one frame (33 ms at the headless 30 fps), `state` about 8 ms, `render` about 0.1 s (measured
   2026-10-24; through the file channel one command took about 6 s). `sandbox.py run` and `shot` use the pipe

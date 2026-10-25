@@ -28,6 +28,9 @@ double MouseWheel();
 // The game's screen in widget units (those of window offsets and MousePosition): the viewport's size in pixels
 // (WidgetLayoutLibrary.GetViewportSize) over its DPI scale (GetViewportScale).
 bool ScreenSize(double* width, double* height);
+// Test hook (the agent pipe's "tap" / "hover"): the mouse reported at this viewport position (widget units) instead of
+// the real one, until cleared (a headless copy has no real pointer).
+void SetMouseOverride(bool on, double x = 0, double y = 0);
 double ViewportScale();                     // the screen's pixels per widget unit (2/3 at 720p, 1 at 1080p); 0 unknown
 // The game's own window (its top-level window, class UnrealWindow): whether it's maximized; whether it fits the usable
 // part of its screen (the taskbar left out), fullscreen and borderless always do; maximizing it.
