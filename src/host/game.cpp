@@ -166,6 +166,17 @@ void SetMouseOverride(bool on, double x, double y) {
     gOverrideY = y;
 }
 
+namespace {
+bool gMouseSimulated = false;
+double gMouseX = 0, gMouseY = 0;
+}  // namespace
+
+void SimulateMouse(bool on, double x, double y) {
+    gMouseSimulated = on;
+    gMouseX = x;
+    gMouseY = y;
+}
+
 bool MousePosition(double* x, double* y) {
     if (gMouseOverride) {
         *x = gOverrideX;
@@ -174,6 +185,11 @@ bool MousePosition(double* x, double* y) {
     }
     Obj controller = PlayerController();
     if (!controller) return false;
+    if (gMouseSimulated) {
+        *x = gMouseX;
+        *y = gMouseY;
+        return true;
+    }
     struct Vec2d {
         double x, y;
     };

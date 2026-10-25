@@ -1232,6 +1232,11 @@ void Run(const std::string& cmd) {
              PostMessageW(w, WM_LBUTTONUP, 0, at);
              Report(c + " -> ok");
          }},
+        {"mouseat", [](const Args& a, const std::string& c) {    // mouseat <x> <y> | mouseat off: where plugins see the mouse
+             const bool on = Arg(a, 1) != "off";                     // (widget units); the real mouse isn't moved
+             game::SimulateMouse(on, std::atof(Arg(a, 1).c_str()), std::atof(Arg(a, 2).c_str()));
+             Report(c);
+         }},
         {"hold", [](const Args& a, const std::string& c) {       // hold <vk> 1|0: a key or button held, for posted clicks
              input::SimulateHeld(std::atoi(Arg(a, 1).c_str()), Arg(a, 2) != "0");
              Report(c);

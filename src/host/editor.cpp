@@ -363,6 +363,7 @@ void WatchSaving();
 void KeepToolbarChoices();
 void KeepHotkeys();
 void KeepRestores();
+void MoveDrops();          // pieces from SpawnPieces falling into place: further down
 }  // namespace
 
 void Frame() {
@@ -385,6 +386,7 @@ void Frame() {
         gDetails = eng::MakeWeak(found);
     }
     FindPlacements();
+    MoveDrops();
     CycleTransformBoxes();
     RotateAboutCenter();
     WatchClicks();
@@ -426,6 +428,200 @@ bool SetLocation(int id, const Vec3& location) {
 bool SetRotation(int id, const Rot& rotation) {
     Obj a = Resolve(id);
     return a && eng::Call(a, "K2_SetActorRotation", rotation, uint8_t{0}).Invoked();
+}
+
+bool Undo() { return Handler() && eng::Call(Handler(), "Undo").Invoked(); }
+bool Redo() { return Handler() && eng::Call(Handler(), "Redo").Invoked(); }
+
+bool Scale(int id, Vec3* out) {
+    Obj a = Resolve(id);
+    if (a) *out = eng::Call(a, "GetActorScale3D").ReturnAs<Vec3>();
+    return a != nullptr;
+}
+
+namespace {
+struct Drop {
+    eng::Weak actor;
+    Vec3 to;
+    double start;
+};
+std::vector<Drop> gDrops;
+constexpr double kDropHeight = 600, kDropTime = 0.35, kDropStagger = 0.025;
+
+struct TransformBytes {
+    uint8_t bytes[96];
+};
+
+TransformBytes MakeTransform(const Vec3& at, const Rot& turn, const Vec3& scale) {
+    TransformBytes t{};
+    const eng::Params made = eng::Call(Math(), "MakeTransform", at, turn, scale);
+    if (const uint8_t* r = made.Return()) std::memcpy(t.bytes, r, sizeof t.bytes);
+    return t;
+}
+
+Obj PieceClass(const std::string& path) {
+    static std::map<std::string, eng::Weak> classes;
+    if (Obj cached = eng::Get(classes[path])) return cached;
+    const size_t dot = path.rfind('.');
+    Obj cls = eng::FindClass(dot == std::string::npos ? path : path.substr(dot + 1));
+    if (!cls) cls = cosmetics::LoadAsset(eng::Widen(path));
+    classes[path] = eng::MakeWeak(cls);
+    return cls;
+}
+
+void MoveDrops() {
+    const double now = game::Seconds();
+    for (auto it = gDrops.begin(); it != gDrops.end();) {
+        Obj a = eng::Get(it->actor);
+        const double t = (now - it->start) / kDropTime;
+        if (!a) {
+            it = gDrops.erase(it);
+            continue;
+        }
+        if (t < 0) {
+            ++it;
+            continue;
+        }
+        const double k = t >= 1 ? 0 : (1 - t) * (1 - t);           // eases in: falls faster as it lands
+        const Vec3 at{it->to.x, it->to.y, it->to.z + kDropHeight * k};
+        eng::Call(a, "K2_SetActorLocation", at, uint8_t{0});
+        if (t >= 1)
+            it = gDrops.erase(it);
+        else
+            ++it;
+    }
+}
+}  // namespace
+
+std::vector<int> SpawnPieces(const std::vector<Spawn>& pieces, bool drop) {
+    std::vector<int> made;
+    Obj handler = Handler();
+    if (!handler || pieces.empty()) return made;
+    // FSKGMLECopiedActor (measured layout in the types dump): class at 0, relative transform at 0x10, world scale at
+    // 0x70, the copied actor at 0x88; 0x90 bytes each.
+    struct CopiedActor {
+        Obj actorClass;
+        uint8_t pad0[8];
+        TransformBytes relative;
+        Vec3 worldScale;
+        Obj actor;
+    };
+    static_assert(sizeof(CopiedActor) == 0x90, "FSKGMLECopiedActor is 0x90 bytes");
+    std::vector<CopiedActor> list(pieces.size());
+    for (size_t k = 0; k < pieces.size(); ++k) {
+        Obj cls = PieceClass(pieces[k].classPath);
+        if (!cls) {
+            hostlog::Warn("editor: no piece class " + pieces[k].classPath);
+            return made;
+        }
+        std::memset(&list[k], 0, sizeof list[k]);
+        list[k].actorClass = cls;
+        // the paste applies the inverse of each relative transform (measured: pieces came out mirrored through
+        // the copied origin, turned the other way), so it is given the inverse of where the piece goes
+        const TransformBytes world = MakeTransform(pieces[k].location, pieces[k].rotation, pieces[k].scale);
+        const eng::Params inverted = eng::Call(Math(), "InvertTransform", world);
+        if (const uint8_t* r = inverted.Return()) std::memcpy(list[k].relative.bytes, r, sizeof list[k].relative.bytes);
+        list[k].worldScale = pieces[k].scale;
+    }
+    struct {
+        CopiedActor* data;                                          // FSKGMLECopiedActors: the TArray, then
+        int32_t num, max;                                           // CopiedTransform at 0x10; 0x80 bytes
+        TransformBytes copiedFrom;                                  // in all (measured: the handler's property)
+        uint8_t tail[16];
+    } copiedActors{};
+    static_assert(sizeof copiedActors == 0x80, "FSKGMLECopiedActors is 0x80 bytes");
+    copiedActors.data = list.data();
+    copiedActors.num = copiedActors.max = static_cast<int32_t>(list.size());
+    copiedActors.copiedFrom = MakeTransform({0, 0, 0}, {0, 0, 0}, {1, 1, 1});
+    std::set<int32_t> before;
+    for (Obj a : AllActors()) before.insert(IdOf(a));
+    // The editor's own Paste (which records the step in its undo history, then spawns through
+    // Server_SpawnActorPaste) pastes the handler's CopiedActors: this list goes there for the one call, and what was
+    // there (the player's own copy, in the engine's memory) is put back straight after, so the editor never keeps it.
+    static eng::Prop copiedProp;
+    if (!copiedProp) copiedProp = eng::FindProp(eng::ClassOf(handler), "CopiedActors");
+    if (!copiedProp || copiedProp.size != sizeof copiedActors) {
+        hostlog::Warn("editor: the handler's CopiedActors is not as measured");
+        return made;
+    }
+    uint8_t* slot = reinterpret_cast<uint8_t*>(handler) + copiedProp.offset;
+    uint8_t saved[sizeof copiedActors];
+    std::memcpy(saved, slot, sizeof saved);
+    std::memcpy(slot, &copiedActors, sizeof copiedActors);
+    const eng::FString none{L"", 1, 1};
+    // one step of the editor's undo history, as its own paste makes (a bare Paste records nothing undoable: measured)
+    const eng::Params description = eng::MakeText("Draw track");
+    size_t textSize = 0;
+    const uint8_t* text = description.Return(&textSize);
+    eng::Params begin(eng::FunctionOn(handler, "BeginHistory"));
+    const bool opened = text && begin.Set("Description", text, textSize) && eng::Invoke(handler, begin);
+    const bool pasted = eng::Call(handler, "Paste", uint8_t{1}, uint8_t{0}, none).Invoked();   // at the copied place
+    std::memcpy(slot, saved, sizeof saved);
+    if (!pasted) {
+        if (opened) eng::Call(handler, "EndHistory");
+        hostlog::Warn("editor: the paste call failed");
+        return made;
+    }
+    // The paste leaves every piece at scale 1 (measured: the copied scale isn't used), so each new piece is given its
+    // whole transform the way the editor's own gizmo does (Server_SetActorTransforms), in the same step of the history.
+    std::vector<Obj> fresh;
+    for (Obj a : AllActors())
+        if (!before.count(IdOf(a))) fresh.push_back(a);
+    struct ItemTransform {                                          // FSKGMLEItemTransform: the actor, then its
+        Obj actor;                                                  // transform at 0x10; 0x70 bytes
+        uint8_t pad[8];
+        TransformBytes transform;
+    };
+    static_assert(sizeof(ItemTransform) == 0x70, "FSKGMLEItemTransform is 0x70 bytes");
+    std::vector<ItemTransform> items;
+    std::vector<bool> used(pieces.size(), false);
+    for (Obj a : fresh) {
+        // the piece it is: the same class, nearest where it was meant to go
+        const Vec3 at = eng::Call(a, "K2_GetActorLocation").ReturnAs<Vec3>();
+        size_t best = pieces.size();
+        double bestD = 1e30;
+        for (size_t k = 0; k < pieces.size(); ++k) {
+            if (used[k] || eng::ClassOf(a) != list[k].actorClass) continue;
+            const double dx = at.x - pieces[k].location.x, dy = at.y - pieces[k].location.y, dz = at.z - pieces[k].location.z;
+            if (dx * dx + dy * dy + dz * dz < bestD) {
+                bestD = dx * dx + dy * dy + dz * dz;
+                best = k;
+            }
+        }
+        if (best == pieces.size()) continue;
+        used[best] = true;
+        ItemTransform item{};
+        item.actor = a;
+        item.transform = MakeTransform(pieces[best].location, pieces[best].rotation, pieces[best].scale);
+        items.push_back(item);
+    }
+    if (!items.empty()) {
+        struct {
+            ItemTransform* data;
+            int32_t num, max;
+        } transforms{items.data(), static_cast<int32_t>(items.size()), static_cast<int32_t>(items.size())};
+        eng::Params set(eng::FunctionOn(handler, "Server_SetActorTransforms"));
+        if (!set.Set("ActorTransforms", &transforms, sizeof transforms) || !eng::Invoke(handler, set))
+            hostlog::Warn("editor: the pieces' scale could not be set");
+    }
+    if (opened) eng::Call(handler, "EndHistory");
+    const double now = game::Seconds();
+    for (Obj a : AllActors()) {
+        if (before.count(IdOf(a))) continue;
+        const int id = IdOf(a);
+        made.push_back(id);
+        gKnown.insert(id);                                          // not placements from the palette
+        gFresh.erase(id);
+    }
+    // the paste order is the list's: each new actor's drop starts a little after the one before
+    if (drop)
+        for (size_t k = 0; k < made.size(); ++k)
+            if (Obj a = Resolve(made[k])) {
+                const Vec3 to = eng::Call(a, "K2_GetActorLocation").ReturnAs<Vec3>();
+                gDrops.push_back({eng::MakeWeak(a), to, now + kDropStagger * static_cast<double>(k)});
+                eng::Call(a, "K2_SetActorLocation", Vec3{to.x, to.y, to.z + kDropHeight}, uint8_t{0});
+            }
+    return made;
 }
 
 bool ScreenPosition(int id, double* x, double* y) {

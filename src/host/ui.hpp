@@ -139,7 +139,8 @@ struct Widget {
     int focusAttempts = 0;
     bool scrollToEnd = false;                                               // text area
     // live widgets and what they last showed (a text area's main is its ScrollBox, label its TextBlock)
-    eng::Weak main, label, iconA, iconB, iconC, iconD, iconE;    // icon buttons: play, pause, down, up, cog
+    eng::Weak main, label, iconA, iconB, iconC, iconD, iconE;    // icon buttons: play, pause, down, up, cog (or a picture)
+    eng::Weak iconPicture;                                       // icon buttons: the Image inside iconE
     eng::Weak outer;                    // what sits in the row (a SizeBox around sliders, images, ...)
     uint8_t normalVisibility = 0;       // the outer widget's visibility when shown
     bool shownVisible = true;
@@ -271,6 +272,7 @@ void SimulateSlider(float value);
 bool SimulateSubmit(const std::string& text);
 bool SimulateType(const std::string& text);
 bool Typing();
+bool Hovered(const Window* w);                   // the mouse is over the window as it was last drawn
 void RemoveOwner(int owner);
 void HideOwner(int owner);
 std::string Status();

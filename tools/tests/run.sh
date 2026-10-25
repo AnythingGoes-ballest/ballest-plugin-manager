@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Offline tests (no game): builds the host first, then
+#   asrun          builds tools/tests/asrun (runs a plugin's script tests without the game: asrun <plugin> <test.as>)
 #   ascheck        compiles every plugin folder given (default: the bundled ones) against the host's real API
 #   models_test    parses model texts: material statements (game materials, set, animate, plugin assets), rigs
 #   modcontainer_test  the gate on plugin-shipped cooked containers (set MOD_UTOC and MOD_NAME, else skipped)
@@ -15,6 +16,8 @@ AS=third_party/angelscript
 OBJS=$(ls build/host/*.o | grep -v "/main.o\|/exports.o\|/exports_stubs.o")
 $CXX -std=c++20 -O1 -isystem $AS/include -isystem $AS/add_on -c tools/tests/ascheck.cpp -o build/ascheck.o
 $CXX -static -o build/ascheck.exe build/ascheck.o $OBJS build/as/*.o -lkernel32 -luser32 -lws2_32 -lshell32 -lole32 -luuid
+$CXX -std=c++20 -O1 -isystem $AS/include -isystem $AS/add_on -c tools/tests/asrun.cpp -o build/asrun.o
+$CXX -static -o build/asrun.exe build/asrun.o $OBJS build/as/*.o -lkernel32 -luser32 -lws2_32 -lshell32 -lole32 -luuid
 $CXX -std=c++20 -O1 -isystem $AS/include -isystem $AS/add_on -c tools/tests/models_test.cpp -o build/models_test.o
 $CXX -static -o build/models_test.exe build/models_test.o $OBJS build/as/*.o -lkernel32 -luser32 -lws2_32 -lshell32 -lole32 -luuid
 build/models_test.exe

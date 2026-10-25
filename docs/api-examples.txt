@@ -759,10 +759,12 @@ UI::Button@ resetButton = window.AddButton("reset");
 
 == UI::Window.AddIconButton
 Adds a button that shows a drawn icon: `"play"`, `"pause"`, `"down"` or `"up"` (arrows, for showing and hiding
-more of a window). Change it with `icon`.
+more of a window). Change it with `icon`. From host 0.31.0 the icon can also be a picture file (a full path to a PNG,
+tinted by `SetTextColor`), or `""` for a plain button of its `SetSize`.
 --
 UI::Button@ playButton = window.AddIconButton("pause");
 // later: playButton.icon = paused ? "play" : "pause";
+UI::Button@ pencil = window.AddIconButton(Plugins::Folder() + "pencil.png");
 
 == UI::Window.AddSlider
 Adds a slider `width` pixels wide (`0`: the rest of the row, host 0.14.0). Its value runs from 0 to 1.
@@ -916,6 +918,13 @@ With `true`, the player can drag the window whenever the cursor is on screen. Wh
 --
 timerWindow.SetOffset(40, 40);
 timerWindow.movable = true;
+
+== UI::Window.hovered
+**Read only.** Whether the mouse is over the window, as it was last drawn: for a click on the window not to count as
+one on the game too. Requires host 0.31.0.
+--
+if (Input::Pressed(Input::MouseLeft) && !menu.hovered)
+    StartStroke();
 
 == UI::Window.ShowView
 Shows one view (a number from `StartView`) and hides the others.
@@ -1722,6 +1731,12 @@ A piece's rotation in degrees: pitch, yaw, roll. Returns false if the piece no l
 double pitch, yaw, roll;
 Editor::GetRotation(id, pitch, yaw, roll);
 
+== Editor::GetScale
+A piece's scale along its own x, y and z. False if there is no such piece. Requires host 0.31.0.
+--
+double sx, sy, sz;
+Editor::GetScale(id, sx, sy, sz);
+
 == Editor::SetLocation
 Moves a piece. After moving selected pieces, call `Select` with them so the editor's gizmo follows. Piece ids are the
 open editor's placed pieces only (host 0.23.4 and newer): anything else, or any id during a test run or outside the
@@ -1772,6 +1787,29 @@ Selects exactly these pieces, with the editor's own highlight and gizmo.
 --
 // Select the copies after duplicating
 Editor::Select(copies);
+
+== Editor::SpawnPieces
+New pieces, made the way the editor pastes: one step of its undo history, however many pieces. `classes` holds each
+piece's class path (as map files and the catalogue write it, "/Game/.../BP_Track_Short1.BP_Track_Short1_C");
+`transforms` holds nine numbers for each, one piece after another: location x, y, z, rotation pitch, yaw, roll
+(degrees) and scale x, y, z. With `drop`, the pieces fall the last few metres into place one after another (moved
+directly: the history and the saved map only see where they land). Returns the new pieces' ids; none if a class
+can't be loaded. The paste leaves the new pieces selected. Requires host 0.31.0.
+--
+array<string> classes = {"/Game/LevelEditor/PackageAssets/MultiplayerLevelEditor/ExampleObjects/BallestPieces/BP_Track_Short1.BP_Track_Short1_C"};
+array<double> transforms = {0, 0, 1000,  0, 90, 0,  1, 0.6, 1};
+array<int>@ made = Editor::SpawnPieces(classes, transforms, true);
+
+== Editor::Undo
+The editor's own undo, as Ctrl+Z (its handler's): pieces from `SpawnPieces` go as one step. False outside the editor.
+Requires host 0.31.0.
+--
+Editor::Undo();
+
+== Editor::Redo
+The editor's own redo, as Ctrl+Y. Requires host 0.31.0.
+--
+Editor::Redo();
 
 == Editor::DuplicateSelection
 Copies the selected pieces in place and returns the copies, which are left selected.
@@ -3090,6 +3128,40 @@ behind the camera.
 float sx, sy;
 if (Camera::Project(x, y, z, sx, sy))
     label.SetRect(sx - 80, sy - 26, 160, 26);
+
+== Camera::Deproject
+The other way from `Project`: the ray under a point on screen (in the units of `Input::MousePosition`), from the
+camera's position (`ox, oy, oz`) through that point (`dx, dy, dz`, length 1). With `Sweep`, it finds what's under the
+cursor. False when there's no player view. Requires host 0.31.0.
+--
+float mx, my;
+double ox, oy, oz, dx, dy, dz, hit;
+if (Input::MousePosition(mx, my) && Camera::Deproject(mx, my, ox, oy, oz, dx, dy, dz)
+    && Camera::Sweep(ox, oy, oz, ox + dx * 100000, oy + dy * 100000, oz + dz * 100000, 1, hit) && hit < 1)
+    Draw::Move(marker, ox + dx * 100000 * hit, oy + dy * 100000 * hit, oz + dz * 100000 * hit);
+
+== Camera::Pick
+What is under a point on screen (in the units of `Input::MousePosition`): the first thing the cursor's ray meets that
+can be seen (balls ignored), where (`x, y, z`), which way its face points (`nx, ny, nz`) and an id for that object
+(`surface`), the same for that object until the map changes. False when the ray meets nothing. Requires host 0.31.0.
+--
+double x, y, z, nx, ny, nz;
+int surface;
+if (Camera::Pick(mx, my, x, y, z, nx, ny, nz, surface))
+    lockedSurface = surface;
+
+== Camera::PickOn
+As `Pick`, but against one object alone (an id from `Pick`), whatever is in front of it: for a line drawn on a wall
+that keeps to the wall when a beam passes in front. False when the ray misses that object. Requires host 0.31.0.
+--
+if (Camera::PickOn(lockedSurface, mx, my, x, y, z, nx, ny, nz))
+    AddPoint(x + nx * radius, y + ny * radius, z + nz * radius);
+
+== Camera::Inspecting
+Whether the player is looking around in the game's inspect mode (T on a track: the free camera). False while a replay
+is watched. Requires host 0.31.0.
+--
+menu.visible = Camera::Inspecting();
 
 == Camera::Take
 Makes the game look through your camera, starting where the game's camera is. False if another plugin has it.

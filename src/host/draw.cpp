@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "cosmetics.hpp"
+#include "replay.hpp"
 
 #include "game.hpp"
 #include "log.hpp"
@@ -579,6 +580,34 @@ bool Project(double x, double y, double z, double* sx, double* sy) {
     *sx = screen.x;
     *sy = screen.y;
     return true;
+}
+
+bool Deproject(double sx, double sy, double* origin, double* direction) {
+    Obj controller = game::PlayerController();
+    Obj statics = eng::FindCdo("GameplayStatics");
+    const double scale = game::ViewportScale();
+    if (!controller || !statics || scale <= 0) return false;
+    eng::Params p(eng::FunctionOn(statics, "DeprojectScreenToWorld"));
+    p.Set("Player", controller);
+    struct {
+        double x, y;
+    } screen{sx * scale, sy * scale};               // the engine's screen position is in the viewport's pixels
+    p.Set("ScreenPosition", screen);
+    if (!eng::Invoke(statics, p) || !p.ReturnBool()) return false;
+    const uint8_t* at = p.Get("WorldPosition");
+    const uint8_t* dir = p.Get("WorldDirection");
+    if (!at || !dir) return false;
+    std::memcpy(origin, at, 3 * sizeof(double));
+    std::memcpy(direction, dir, 3 * sizeof(double));
+    return true;
+}
+
+bool Inspecting() {
+    if (replay::Active()) return false;
+    static Obj cls = nullptr;
+    if (!cls) cls = eng::FindClass("BP_FreeCam_C");
+    Obj pawn = Pawn();
+    return cls && pawn && eng::IsA(pawn, cls);
 }
 
 bool TakeCamera(int owner) {

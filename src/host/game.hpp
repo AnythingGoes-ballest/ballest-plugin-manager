@@ -22,6 +22,7 @@ void RequestCursor(int owner, bool visible);
 bool CursorShown();                         // the mouse cursor is on screen (menus, pause, a plugin asked)
 // The mouse on the game's viewport, in widget units (those of window offsets), top left 0,0. False if it is off it.
 bool MousePosition(double* x, double* y);
+void SimulateMouse(bool on, double x, double y);  // test hook: MousePosition reports this point (widget units) while on
 // How far the mouse wheel turned this frame, as the player controller sees the
 // MouseWheelAxis key (GetInputAnalogKeyState).
 double MouseWheel();

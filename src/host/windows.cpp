@@ -111,10 +111,12 @@ Obj BuildIconButton(Obj tree, Widget& item) {
     // the cog: the plugin manager's own picture (the classic menu's way into its settings)
     Obj cogBox = w::Spawn("SizeBox", tree), cog = w::Spawn("Image", tree);
     if (cogBox && cog) {
-        eng::Call(cogBox, "SetWidthOverride", 20.0f);
-        eng::Call(cogBox, "SetHeightOverride", 20.0f);
-        if (Obj texture = ux::Picture("pm-cog.png")) eng::Call(cog, "SetBrushFromTexture", texture, uint8_t{0});
+        // a picture of the plugin's own (a .png file named as the icon) is as tall as the play icon
+        const float side = sized ? item.iconH * 0.6f : 20.0f;
+        eng::Call(cogBox, "SetWidthOverride", side);
+        eng::Call(cogBox, "SetHeightOverride", side);
         w::AddChild(cogBox, cog);
+        item.iconPicture = eng::MakeWeak(cog);
     }
     for (Obj icon : {pause, play, down, up, cogBox}) w::AddToOverlay(overlay, icon, w::kAlignCenter, w::kAlignCenter, {0, 0, 0, 0});
     w::AddChild(frame, overlay);
@@ -125,7 +127,7 @@ Obj BuildIconButton(Obj tree, Widget& item) {
     item.iconC = eng::MakeWeak(down);
     item.iconD = eng::MakeWeak(up);
     item.iconE = eng::MakeWeak(cogBox);
-    item.shownText.clear();                 // the right icon is shown on the first sync
+    item.shownText = "";                // never an icon name: the right icon (or none) is shown on the first sync
     return button;
 }
 
@@ -669,14 +671,30 @@ void Sync(Widget& item) {
                 w::SetTextColor(eng::Get(item.label), item.color);
                 item.colorDirty = false;
             }
+            // an icon button's picture is tinted by its text colour (SetTextColor), as the drawn icons are
+            if (item.colorDirty && item.kind == Kind::IconButton && item.shownText == item.text)
+                if (Obj image = eng::Get(item.iconPicture)) {
+                    eng::Call(image, "SetColorAndOpacity", item.color);
+                    item.colorDirty = false;
+                }
             if (item.text != item.shownText) {
                 if (item.kind == Kind::Button) {
                     w::SetText(eng::Get(item.label), item.text);
                 } else {
                     const std::string names[5] = {"play", "pause", "down", "up", "cog"};
                     const eng::Weak* icons[5] = {&item.iconA, &item.iconB, &item.iconC, &item.iconD, &item.iconE};
+                    // any other name is a picture file, shown where the cog is; "" shows no icon (a plain button)
+                    const bool picture = !item.text.empty() && std::find(std::begin(names), std::end(names), item.text) == std::end(names);
+                    if (Obj image = eng::Get(item.iconPicture)) {
+                        if (picture) {
+                            ShowImage(image, item.text);
+                            if (item.colorSet) eng::Call(image, "SetColorAndOpacity", item.color);
+                        }
+                        else if (item.text == "cog")
+                            if (Obj texture = ux::Picture("pm-cog.png")) eng::Call(image, "SetBrushFromTexture", texture, uint8_t{0});
+                    }
                     for (int n = 0; n < 5; ++n)
-                        w::SetVisibility(eng::Get(*icons[n]), item.text == names[n] ? w::kHitTestInvisible : w::kCollapsed);
+                        w::SetVisibility(eng::Get(*icons[n]), item.text == names[n] || (n == 4 && picture) ? w::kHitTestInvisible : w::kCollapsed);
                 }
                 item.shownText = item.text;
             }
@@ -1054,6 +1072,15 @@ void Frame() {
 }
 
 bool Typing() { return gTyping; }
+
+bool Hovered(const Window* win) {
+    Obj border = win->visible ? eng::Get(win->border) : nullptr;
+    if (!border) return false;
+    const ux::Rect r = ux::Bounds(border);
+    double mx = 0, my = 0;
+    if (!r.ok || !game::MousePosition(&mx, &my)) return false;
+    return mx >= r.x && mx < r.Right() && my >= r.y && my < r.y + r.h;
+}
 
 void HideOwner(int owner) {
     for (auto& win : gWindows)

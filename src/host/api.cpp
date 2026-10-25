@@ -419,6 +419,7 @@ void SetWidgetVisible(ui::Widget* w, bool visible) { w->visible = visible; }
 bool GetWidgetVisible(ui::Widget* w) { return w->visible; }
 void WinSetMovable(ui::Window* w, bool movable) { ui::SetMovable(w, movable, plugins::CurrentId()); }
 bool WinGetMovable(ui::Window* w) { return w->movable; }
+bool WinGetHovered(ui::Window* w) { return ui::windows::Hovered(w); }
 std::string GetWidgetText(ui::Widget* w) { return w->text; }
 void TextColor(ui::Widget* w, float r, float g, float b, float a) {
     w->color = {r, g, b, a};
@@ -504,6 +505,35 @@ std::vector<int> IdVector(const CScriptArray* array) {
 }
 CScriptArray* EditorSelection() { return IdArray(editor::Selection()); }
 CScriptArray* EditorPlaced() { return IdArray(editor::Placed()); }
+bool EditorScale(int id, double& x, double& y, double& z) {
+    editor::Vec3 v{1, 1, 1};
+    const bool ok = editor::Scale(id, &v);
+    x = v.x, y = v.y, z = v.z;
+    return ok;
+}
+// pieces: one class path each; transforms: x, y, z, pitch, yaw, roll, scale x, y, z for each, one after another
+CScriptArray* EditorSpawnPieces(const CScriptArray* classes, const CScriptArray* transforms, bool drop) {
+    plugins::GameWork work;
+    std::vector<editor::Spawn> list;
+    for (asUINT k = 0; classes && transforms && k < classes->GetSize() && (k + 1) * 9 <= transforms->GetSize(); ++k) {
+        auto at = [&](asUINT i) { return *static_cast<const double*>(transforms->At(k * 9 + i)); };
+        editor::Spawn s;
+        s.classPath = *static_cast<const std::string*>(classes->At(k));
+        s.location = {at(0), at(1), at(2)};
+        s.rotation = {at(3), at(4), at(5)};
+        s.scale = {at(6), at(7), at(8)};
+        list.push_back(s);
+    }
+    return IdArray(editor::SpawnPieces(list, drop));
+}
+bool EditorUndo() {
+    plugins::GameWork work;             // the editor's own work, not the plugin's
+    return editor::Undo();
+}
+bool EditorRedo() {
+    plugins::GameWork work;
+    return editor::Redo();
+}
 CScriptArray* EditorDuplicate() {
     plugins::GameWork work;
     return IdArray(editor::DuplicateSelection());
@@ -772,6 +802,7 @@ void RegisterUi() {
     Method("Window", "int get_zOrder() property", asFUNCTION(WinGetZOrder));
     Method("Window", "void set_movable(bool) property", asFUNCTION(WinSetMovable));
     Method("Window", "bool get_movable() property", asFUNCTION(WinGetMovable));
+    Method("Window", "bool get_hovered() property", asFUNCTION(WinGetHovered));
     Method("Window", "void ShowView(int)", asFUNCTION(WinShowView));
     Method("Window", "void ClearView(int)", asFUNCTION(WinClearView));
     Method("Window", "void SetScrolling(int, bool)", asFUNCTION(WinSetScrolling));
@@ -1025,6 +1056,11 @@ void RegisterEditor() {
     Global("bool SetOutline(int, bool)", asFUNCTION(EditorSetOutline));
     Global("void Select(const array<int>@)", asFUNCTION(EditorSelect));
     Global("array<int>@ DuplicateSelection()", asFUNCTION(EditorDuplicate));
+    Global("bool GetScale(int, double &out, double &out, double &out)", asFUNCTION(EditorScale));
+    Global("bool Undo()", asFUNCTION(EditorUndo));
+    Global("bool Redo()", asFUNCTION(EditorRedo));
+    Global("array<int>@ SpawnPieces(const array<string>@ classes, const array<double>@ transforms, bool drop = false)",
+           asFUNCTION(EditorSpawnPieces));
     Global("void RotatePieces(const array<int>@, double, double, double, double, double, double)", asFUNCTION(EditorRotatePieces));
     Global("void SetTabCycling(bool)", asFUNCTION(editor::SetTabCycling));
     Global("void SetRotateAroundCenter(bool)", asFUNCTION(editor::SetRotateAroundCenter));
@@ -1511,23 +1547,24 @@ bool CameraProject(double x, double y, double z, float& sx, float& sy) {
     sy = static_cast<float>(b);
     return ok;
 }
+bool CameraDeproject(float sx, float sy, double& ox, double& oy, double& oz, double& dx, double& dy, double& dz) {
+    double o[3] = {0, 0, 0}, d[3] = {0, 0, 0};
+    const bool ok = draw::Deproject(sx, sy, o, d);
+    ox = o[0], oy = o[1], oz = o[2], dx = d[0], dy = d[1], dz = d[2];
+    return ok;
+}
+bool CameraInspecting() { return draw::Inspecting(); }
 bool CameraTake() { return draw::TakeCamera(plugins::Current()); }
 bool CameraSet(double x, double y, double z, double pitch, double yaw, double fov) {
     return draw::SetCamera(plugins::Current(), x, y, z, pitch, yaw, fov);
 }
 void CameraRelease() { draw::ReleaseCamera(plugins::Current()); }
 bool CameraHas() { return draw::HasCamera(plugins::Current()); }
-// Camera::Sweep: a sphere swept from (sx,sy,sz) to (ex,ey,ez) on the Camera trace channel, the player's ball ignored.
-// fraction = how far along it got before the first blocking hit (1 = clear). For plugin cameras: pull in when blocked.
-bool CameraSweep(double sx, double sy, double sz, double ex, double ey, double ez, double radius, double& fraction) {
-    fraction = 1;
-    plugins::GameWork work;
-    eng::Obj controller = game::PlayerController();
-    eng::Obj library = eng::FindCdo("KismetSystemLibrary");
-    if (!controller || !library) return false;
+// The actors camera traces ignore: the pawn and every ball (the player's, other balls on the track and their skin
+// actors): a plugin camera follows balls, so a ball between it and its target must not pull the shot in, and a line
+// drawn on the track goes under a ball, not over it. The list of balls is refreshed twice a second.
+std::vector<eng::Obj> TraceIgnored(eng::Obj controller) {
     eng::Obj pawn = eng::Call(controller, "K2_GetPawn").ReturnObj();
-    // every ball is ignored (the player's, other balls on the track and their skin actors): a plugin camera
-    // follows balls, so a ball between it and its target must not pull the shot in; the list is refreshed twice a second
     static std::vector<eng::Weak> balls;
     static double ballsAt = -1;
     const double now = game::Seconds();
@@ -1547,6 +1584,18 @@ bool CameraSweep(double sx, double sy, double sz, double ex, double ey, double e
     if (pawn) ignore.push_back(pawn);
     for (auto& w : balls)
         if (eng::Obj o = eng::Get(w)) ignore.push_back(o);
+    return ignore;
+}
+
+// Camera::Sweep: a sphere swept from (sx,sy,sz) to (ex,ey,ez) on the Camera trace channel, the balls ignored.
+// fraction = how far along it got before the first blocking hit (1 = clear). For plugin cameras: pull in when blocked.
+bool CameraSweep(double sx, double sy, double sz, double ex, double ey, double ez, double radius, double& fraction) {
+    fraction = 1;
+    plugins::GameWork work;
+    eng::Obj controller = game::PlayerController();
+    eng::Obj library = eng::FindCdo("KismetSystemLibrary");
+    if (!controller || !library) return false;
+    std::vector<eng::Obj> ignore = TraceIgnored(controller);
     struct {
         eng::Obj* data;
         int32_t num, max;
@@ -1569,6 +1618,94 @@ bool CameraSweep(double sx, double sy, double sz, double ex, double ey, double e
     float t = 1;
     std::memcpy(&t, hit + timeProp.offset, sizeof t);
     fraction = t < 0 ? 0 : t > 1 ? 1 : t;
+    return true;
+}
+
+// Camera::Pick / PickOn: what is under a point on screen. Pick is the first thing the cursor's ray meets on the
+// Visibility or Camera channel (balls ignored), with an id for the object (its component) that stays the same for that object until the map
+// changes; PickOn traces that one object alone, whatever is in front of it. For lines drawn on surfaces that keep to the
+// surface they started on.
+std::vector<eng::Weak> gPickSurfaces;
+int gPickGeneration = -1;
+
+int PickSurfaceId(eng::Obj component) {
+    if (gPickGeneration != game::Generation()) {
+        gPickSurfaces.clear();
+        gPickGeneration = game::Generation();
+    }
+    for (size_t k = 0; k < gPickSurfaces.size(); ++k)
+        if (eng::Get(gPickSurfaces[k]) == component) return static_cast<int>(k) + 1;
+    gPickSurfaces.push_back(eng::MakeWeak(component));
+    return static_cast<int>(gPickSurfaces.size());
+}
+
+constexpr double kPickReach = 1.0e6;
+
+bool CameraPick(float sx, float sy, double& x, double& y, double& z, double& nx, double& ny, double& nz, int& surface) {
+    x = y = z = nx = ny = nz = 0;
+    surface = 0;
+    plugins::GameWork work;
+    double o[3], d[3];
+    eng::Obj controller = game::PlayerController();
+    eng::Obj library = eng::FindCdo("KismetSystemLibrary"), statics = eng::FindCdo("GameplayStatics");
+    if (!controller || !library || !statics || !draw::Deproject(sx, sy, o, d)) return false;
+    std::vector<eng::Obj> ignore = TraceIgnored(controller);
+    struct {
+        eng::Obj* data;
+        int32_t num, max;
+    } actors{ignore.data(), static_cast<int32_t>(ignore.size()), static_cast<int32_t>(ignore.size())};
+    const editor::Vec3 a{o[0], o[1], o[2]}, b{o[0] + d[0] * kPickReach, o[1] + d[1] * kPickReach, o[2] + d[2] * kPickReach};
+    // The nearer hit of the Visibility and Camera channels: neither alone is what is seen (measured on stasis: the
+    // start pad blocks only Camera, so Visibility passes through it to the track under it; the arena floor blocks
+    // only Visibility).
+    float nearest = 2;
+    eng::Obj component = nullptr;
+    double at[3] = {0, 0, 0}, normal[3] = {0, 0, 0};
+    for (uint8_t channel : {uint8_t{0}, uint8_t{1}}) {      // TraceTypeQuery1 = ECC_Visibility, 2 = ECC_Camera
+        eng::Params trace(eng::FunctionOn(library, "LineTraceSingle"));
+        trace.Set("WorldContextObject", controller);
+        trace.Set("Start", a);
+        trace.Set("End", b);
+        trace.Set("TraceChannel", channel);
+        trace.Set("bTraceComplex", uint8_t{0});
+        trace.Set("ActorsToIgnore", actors);
+        trace.Set("bIgnoreSelf", uint8_t{1});
+        if (!eng::Invoke(library, trace) || !trace.ReturnBool()) continue;
+        size_t size = 0;
+        const uint8_t* hit = trace.Get("OutHit", &size);
+        eng::Params broken(eng::FunctionOn(statics, "BreakHitResult"));
+        if (!hit || !broken.Set("Hit", hit, size) || !eng::Invoke(statics, broken)) continue;
+        float time = 2;
+        if (const uint8_t* t = broken.Get("Time")) std::memcpy(&time, t, sizeof time);
+        if (time >= nearest) continue;
+        nearest = time;
+        component = broken.GetObj("HitComponent");
+        if (const uint8_t* l = broken.Get("ImpactPoint")) std::memcpy(at, l, sizeof at);
+        if (const uint8_t* n = broken.Get("ImpactNormal")) std::memcpy(normal, n, sizeof normal);
+    }
+    if (nearest > 1) return false;
+    x = at[0], y = at[1], z = at[2], nx = normal[0], ny = normal[1], nz = normal[2];
+    surface = component ? PickSurfaceId(component) : 0;
+    return true;
+}
+
+bool CameraPickOn(int surface, float sx, float sy, double& x, double& y, double& z, double& nx, double& ny, double& nz) {
+    x = y = z = nx = ny = nz = 0;
+    plugins::GameWork work;
+    if (gPickGeneration != game::Generation() || surface < 1 || surface > static_cast<int>(gPickSurfaces.size())) return false;
+    eng::Obj component = eng::Get(gPickSurfaces[static_cast<size_t>(surface - 1)]);
+    double o[3], d[3];
+    if (!component || !draw::Deproject(sx, sy, o, d)) return false;
+    const editor::Vec3 a{o[0], o[1], o[2]}, b{o[0] + d[0] * kPickReach, o[1] + d[1] * kPickReach, o[2] + d[2] * kPickReach};
+    eng::Params trace(eng::FunctionOn(component, "K2_LineTraceComponent"));
+    trace.Set("TraceStart", a);
+    trace.Set("TraceEnd", b);
+    trace.Set("bTraceComplex", uint8_t{0});
+    trace.Set("bShowTrace", uint8_t{0});
+    trace.Set("bPersistentShowTrace", uint8_t{0});
+    if (!eng::Invoke(component, trace) || !trace.ReturnBool()) return false;
+    if (const uint8_t* l = trace.Get("HitLocation")) std::memcpy(&x, l, sizeof x), std::memcpy(&y, l + 8, sizeof y), std::memcpy(&z, l + 16, sizeof z);
+    if (const uint8_t* n = trace.Get("HitNormal")) std::memcpy(&nx, n, sizeof nx), std::memcpy(&ny, n + 8, sizeof ny), std::memcpy(&nz, n + 16, sizeof nz);
     return true;
 }
 
@@ -1899,12 +2036,19 @@ void RegisterGhosts() {
     e->SetDefaultNamespace("Camera");
     Global("bool Shake(double scale = 1)", asFUNCTION(CameraShake));
     Global("bool Project(double, double, double, float &out, float &out)", asFUNCTION(CameraProject));
+    Global("bool Deproject(float, float, double &out, double &out, double &out, double &out, double &out, double &out)",
+           asFUNCTION(CameraDeproject));
+    Global("bool Inspecting()", asFUNCTION(CameraInspecting));
     Global("bool Take()", asFUNCTION(CameraTake));
     Global("bool Set(double x, double y, double z, double pitch, double yaw, double fov = 90)", asFUNCTION(CameraSet));
     Global("void Release()", asFUNCTION(CameraRelease));
     Global("bool IsTaken()", asFUNCTION(CameraHas));
     Global("bool Sweep(double sx, double sy, double sz, double ex, double ey, double ez, double radius, double &out fraction)",
            asFUNCTION(CameraSweep));
+    Global("bool Pick(float, float, double &out x, double &out y, double &out z, double &out nx, double &out ny, double &out nz, int &out surface)",
+           asFUNCTION(CameraPick));
+    Global("bool PickOn(int surface, float, float, double &out x, double &out y, double &out z, double &out nx, double &out ny, double &out nz)",
+           asFUNCTION(CameraPickOn));
 }
 
 void RegisterReplay() {

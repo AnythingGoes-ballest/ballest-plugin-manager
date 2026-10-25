@@ -37,6 +37,21 @@ bool Location(int id, Vec3* out);
 bool Rotation(int id, Rot* out);
 bool SetLocation(int id, const Vec3& location);
 bool SetRotation(int id, const Rot& rotation);
+bool Scale(int id, Vec3* out);
+// New pieces, made the way the editor pastes (one Server_SpawnActorPaste: one step of its undo history). Each class
+// is a class path ("/Game/.../BP_Track_Short1.BP_Track_Short1_C"); a piece's transform is where it goes in the world.
+// With `drop`, the pieces fall the last few metres into place one after another (moved directly, so the history and
+// the saved map only ever see where they land). Returns the new pieces, or none if any class can't be loaded.
+struct Spawn {
+    std::string classPath;
+    Vec3 location;
+    Rot rotation;
+    Vec3 scale{1, 1, 1};
+};
+std::vector<int> SpawnPieces(const std::vector<Spawn>& pieces, bool drop);
+// The editor's own undo and redo (its handler's, as Ctrl+Z and Ctrl+Y do); false outside the editor.
+bool Undo();
+bool Redo();
 Vec3 ViewForward();
 // Where a piece's middle (its bounds' centre) is on screen, in the units of window offsets and the mouse position
 // (the viewport's widget units, top left 0,0). False if it isn't in front of the camera.

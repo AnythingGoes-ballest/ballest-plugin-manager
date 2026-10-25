@@ -68,6 +68,12 @@ void Clear(int owner);
 // Where a point in the world is on screen, in widget units (those of window offsets and the mouse position).
 // False when it is behind the camera.
 bool Project(double x, double y, double z, double* sx, double* sy);
+// The other way: the ray under a point on screen (widget units), from the camera through that point
+// (GameplayStatics.DeprojectScreenToWorld); the direction has length 1. False if there is no player view.
+bool Deproject(double sx, double sy, double* origin, double* direction);
+// Whether the player is looking around in the game's inspect mode (T while racing): the controller possesses the
+// free camera pawn (BP_FreeCam_C, from the controller's Start_FreeCam). Never while a replay is watched.
+bool Inspecting();
 
 // The camera: taking it looks through a camera of the plugin's, placed with SetCamera; releasing goes back to the
 // game's own view. One plugin at a time.
