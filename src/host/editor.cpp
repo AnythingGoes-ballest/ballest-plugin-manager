@@ -601,6 +601,10 @@ std::vector<int> SpawnPieces(const std::vector<Spawn>& pieces, bool drop) {
     const bool opened = text && begin.Set("Description", text, textSize) && eng::Invoke(handler, begin);
     const bool pasted = eng::Call(handler, "Paste", uint8_t{1}, uint8_t{0}, none).Invoked();   // at the copied place
     std::memcpy(slot, saved, sizeof saved);
+    // The paste leaves the new pieces selected, and the editor then builds its Details panel for all of them (every
+    // material editor of every piece: a player's game made ~125,000 widgets for a 9-piece line, the lag after
+    // placing). They are let go here, still held, so the Details panel is built once, for nothing selected.
+    if (pasted) eng::Call(handler, "ReleaseAndDeselectAll");
     // the held refreshes run now: the editor pawn's own (one of them) is what lists the pasted pieces in the handler's
     // AllActors (measured: holding it past here, the pieces weren't listed until the end and kept scale 1)
     EndSpawnBatch();
