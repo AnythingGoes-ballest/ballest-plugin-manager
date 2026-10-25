@@ -32,6 +32,11 @@ class NoPipe(Exception):
     """The slot isn't running, isn't a complete sandbox yet, or its host has no agent pipe (older than 0.31.0)."""
 
 
+class Refused(Exception):
+    """The game didn't run a command: unknown, or refused (it changes the game outside a complete sandbox, or it's a
+    tool's own step)."""
+
+
 class Slot:
     def __init__(self, n, timeout=20):
         info = ti.instance(n) or {}
@@ -80,8 +85,12 @@ class Slot:
         return [self._line() for _ in commands]
 
     def cmd(self, command):
-        """One test command's reply lines."""
-        return self.send(command)[0]["lines"]
+        """One test command's reply lines. Raises Refused when the game didn't run it."""
+        lines = self.send(command)[0]["lines"]
+        for line in lines:
+            if line.startswith("unknown command") or line.startswith("refused"):
+                raise Refused(f"slot {self.n}: {line}")
+        return lines
 
     def state(self):
         """The game's state: frame, race (on_track, active, complete, run, checkpoint...), track, ball (pos, vel, speed),
@@ -121,9 +130,9 @@ class Slot:
         """The pointer held at pixel (x, y) (hover effects, tooltips); hover("off") gives the real mouse back."""
         return self.cmd("hover off" if x == "off" else f"hover {x} {y}")
 
-    def seq(self, *commands):
-        """The commands one a frame, in order; all their replies once the last has run."""
-        return self.cmd("seq " + " || ".join(commands))
+    def seq(self, *commands, gap=1):
+        """The commands one a frame (or one every `gap` frames), in order; all their replies once the last has run."""
+        return self.cmd("seq " + (f"{int(gap)} " if gap != 1 else "") + " || ".join(commands))
 
     def repeat(self, frames, command):
         """The same command on each of that many frames (sampling); all its replies."""
@@ -140,6 +149,20 @@ class Slot:
             if line.startswith("editorcam {"):
                 return json.loads(line[len("editorcam "):])
         raise NoPipe(f"slot {self.n}: not in the track editor")
+
+    def look_at(self, x, y, z):
+        """The track editor's camera turned to face that point; the camera after."""
+        return self._cam(self.cmd(f"editorcam lookat {x} {y} {z}"))
+
+    def frame_piece(self, piece_id, distance=1500):
+        """The track editor's camera moved back from a piece (an editor id) along its view, facing it; the camera after."""
+        return self._cam(self.cmd(f"editorcam frame {piece_id} {distance}"))
+
+    def _cam(self, lines):
+        for line in lines:
+            if line.startswith("editorcam {"):
+                return json.loads(line[len("editorcam "):])
+        raise Refused(f"slot {self.n}: {lines[-1] if lines else 'no answer'}")
 
     def wait(self, frames):
         """Answers once that many frames have run."""
@@ -174,7 +197,7 @@ def main():
                         print(json.dumps(s.send(line)[0]), flush=True)
             else:
                 sys.exit(__doc__)
-    except NoPipe as e:
+    except (NoPipe, Refused) as e:
         sys.exit(str(e))
 
 

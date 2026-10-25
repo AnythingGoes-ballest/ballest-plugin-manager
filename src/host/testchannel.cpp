@@ -270,7 +270,9 @@ void RunPipeRequests() {
     for (const auto& [id, command] : requests) {
         std::vector<std::string> lines;
         std::string why;
-        if (ToolPrefix(command.substr(0, command.find(' ')), &why)) {
+        // (dev_session.py's "reply <cmd>" and "quick <cmd>": through the pipe every command is answered, so the command runs)
+        const std::string run = command.rfind("reply ", 0) == 0 || command.rfind("quick ", 0) == 0 ? command.substr(6) : command;
+        if (ToolPrefix(run.substr(0, run.find(' ')), &why)) {
             hostlog::Warn("test: refused '" + command + "' through the agent pipe: " + why);
             Answer(id, {"refused: " + why});
             continue;
@@ -278,7 +280,7 @@ void RunPipeRequests() {
         gCapture = &lines;
         gRunningRequest = id;
         gDeferred = false;
-        Run(command);
+        Run(run);
         gCapture = nullptr;
         gRunningRequest = 0;
         if (gDeferred) gWaiting[id] = lines;
@@ -612,22 +614,31 @@ struct Sequence {
     long long request = 0;
     std::vector<std::string> steps;
     size_t next = 0;
+    int gap = 1;                            // frames from one step to the next
+    int wait = 0;                           // frames left before the next step
     std::vector<std::string> lines;
 };
 std::vector<Sequence> gSequences;
 
-void StartSequence(std::vector<std::string> steps, const std::string& c) {
+void StartSequence(std::vector<std::string> steps, const std::string& c, int gap = 1) {
     if (steps.empty()) return Report(c + " -> nothing to run");
     if (steps.size() > 10000) return Report(c + " -> too many steps (10000 at most)");
     Sequence s;
     s.request = Defer();
     s.steps = std::move(steps);
+    s.gap = std::clamp(gap, 1, 600);
     gSequences.push_back(std::move(s));
 }
 
 void SequenceFrame() {
     for (size_t i = 0; i < gSequences.size();) {
         Sequence& s = gSequences[i];
+        if (s.wait > 0) {
+            --s.wait;
+            ++i;
+            continue;
+        }
+        s.wait = s.gap - 1;
         std::vector<std::string>* const outerCapture = gCapture;
         const long long outerRequest = gRunningRequest;
         gCapture = &s.lines;
@@ -743,6 +754,30 @@ void EditorCamCommand(const Args& a, const std::string& c) {
     eng::Obj controller = game::PlayerController();
     eng::Obj pawn = controller ? eng::Call(controller, "K2_GetPawn").ReturnObj() : nullptr;
     if (!pawn || !editor::Open()) return Report(c + " -> not in the track editor");
+    // "editorcam lookat <x> <y> <z>": turned to face that point; "editorcam frame <piece id> [distance]": moved back from
+    // that piece along the way the camera looks (default 1500), facing it
+    if (Arg(a, 1) == "lookat" || Arg(a, 1) == "frame") {
+        editor::Vec3 target;
+        if (Arg(a, 1) == "lookat") {
+            target = {std::atof(Arg(a, 2).c_str()), std::atof(Arg(a, 3).c_str()), std::atof(Arg(a, 4).c_str())};
+        } else {
+            const int id = std::atoi(Arg(a, 2).c_str());
+            eng::Obj piece = id >= 0 && id < eng::NumObjects() ? eng::ObjectAt(id) : nullptr;
+            if (!piece || !eng::FunctionOn(piece, "K2_GetActorLocation")) return Report(c + " -> no piece " + Arg(a, 2));
+            target = eng::Call(piece, "K2_GetActorLocation").ReturnAs<editor::Vec3>();
+            const double distance = a.size() > 3 ? std::atof(Arg(a, 3).c_str()) : 1500.0;
+            const editor::Vec3 f = editor::ViewForward();
+            eng::Params p(eng::FunctionOn(pawn, "K2_SetActorLocation"));
+            p.Set("NewLocation", editor::Vec3{target.x - f.x * distance, target.y - f.y * distance, target.z - f.z * distance});
+            p.Set("bSweep", uint8_t{0});
+            p.Set("bTeleport", uint8_t{1});
+            eng::Invoke(pawn, p);
+        }
+        const editor::Vec3 at = eng::Call(pawn, "K2_GetActorLocation").ReturnAs<editor::Vec3>();
+        const editor::Rot look = eng::Call(eng::FindCdo("KismetMathLibrary"), "FindLookAtRotation", at, target).ReturnAs<editor::Rot>();
+        eng::Call(controller, "SetControlRotation", editor::Rot{look.pitch, look.yaw, 0});
+        return Report("editorcam " + EditorCam());
+    }
     if (a.size() >= 4) {
         eng::Params p(eng::FunctionOn(pawn, "K2_SetActorLocation"));
         p.Set("NewLocation", editor::Vec3{std::atof(Arg(a, 1).c_str()), std::atof(Arg(a, 2).c_str()), std::atof(Arg(a, 3).c_str())});
@@ -761,8 +796,6 @@ void EditorCamCommand(const Args& a, const std::string& c) {
 // with what to send instead.
 bool ToolPrefix(const std::string& word, std::string* why) {
     static const std::map<std::string, std::string> kTools = {
-        {"reply", "'reply <cmd>' is dev_session.py's \"send and wait for its answer\": through the pipe every command is answered, send '<cmd>' alone"},
-        {"quick", "'quick <cmd>' is dev_session.py / sandbox.py's \"send without waiting\": through the pipe send '<cmd>' alone"},
         {"sleep", "'sleep <s>' is a tool step: through the pipe use 'waitframes <n>' (30 frames a second headless)"},
         {"waiteditor", "'waiteditor' is a dev_session.py step: through the pipe poll 'agentstate' (\"editor\": true) or use reloadmap / openmap and wait"},
         {"waitstate", "'waitstate <regex>' is a tool step: through the pipe poll 'state' or 'agentstate'"},
@@ -1593,7 +1626,17 @@ void Run(const std::string& cmd) {
         {"render", [](const Args& a, const std::string&) { StartRender(Arg(a, 1)); }},
         {"drive", [](const Args& a, const std::string& c) { StartDrive(a, c); }},
         {"tap", [](const Args& a, const std::string& c) { StartTap(a, c); }},
-        {"seq", [](const Args&, const std::string& c) { StartSequence(SplitSteps(c.size() > 4 ? c.substr(4) : ""), c); }},
+        {"seq", [](const Args& a, const std::string& c) {          // seq [<frames between>] a || b || c
+             std::string rest = c.size() > 4 ? c.substr(4) : "";
+             int gap = 1;
+             const std::string first = Arg(a, 1);
+             if (!first.empty() && std::all_of(first.begin(), first.end(), [](char ch) { return std::isdigit(static_cast<unsigned char>(ch)); }) &&
+                 a.size() > 2 && Arg(a, 2) != "||") {
+                 gap = std::atoi(first.c_str());
+                 rest = rest.substr(first.size());
+             }
+             StartSequence(SplitSteps(rest), c, gap);
+         }},
         {"repeat", [](const Args& a, const std::string& c) {      // repeat <n> <command>: on each of n frames
              const int n = std::atoi(Arg(a, 1).c_str());
              const size_t at = c.find(' ', c.find(' ') + 1);
