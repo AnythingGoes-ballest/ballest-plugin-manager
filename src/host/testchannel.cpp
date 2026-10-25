@@ -1397,6 +1397,12 @@ void Run(const std::string& cmd) {
          }},
         {"props", [](const Args& a, const std::string&) { Props(Arg(a, 1), Arg(a, 2)); }},
         {"find", [](const Args& a, const std::string&) { Find(Arg(a, 1)); }},
+        {"objects", [](const Args&, const std::string&) {          // objects: UObjects held now (garbage not yet
+             int held = 0;                                           // collected included), and the table's size
+             const int size = eng::NumObjects();
+             for (int i = 0; i < size; ++i) held += eng::ObjectAt(i) ? 1 : 0;
+             Report("objects " + std::to_string(held) + " of a table of " + std::to_string(size));
+         }},
         {"struct", [](const Args& a, const std::string&) { Struct(Arg(a, 1), Arg(a, 2)); }},
         {"call", [](const Args& a, const std::string&) { CallNoArgs(Arg(a, 1), Arg(a, 2), Arg(a, 3)); }},
         {"callx", [](const Args&, const std::string& c) { CallWithArgs(c); }},

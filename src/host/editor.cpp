@@ -124,7 +124,36 @@ bool SpawnHookInstalled();
 
 void HistoryWatched();
 
+// Diagnostics: when the engine's object table has grown by 100,000 since the last report (at most once a minute), the
+// ten classes with the most objects held, in the log. A player's game held 718,000 objects after placing ~100 pieces
+// (2026-10-25) while no test copy could make it grow: this names what does.
+void ReportObjectGrowth() {
+    static int reported = 0;
+    static double lastAt = -1e9;
+    const int size = eng::NumObjects();
+    if (reported == 0) reported = size;
+    const double now = game::Seconds();
+    if (size - reported < 100000 || now - lastAt < 60) return;
+    reported = size;
+    lastAt = now;
+    std::unordered_map<Obj, int> byClass;
+    int held = 0;
+    for (int i = 0; i < size; ++i)
+        if (Obj o = eng::ObjectAt(i)) {
+            ++held;
+            ++byClass[eng::ClassOf(o)];
+        }
+    std::vector<std::pair<int, Obj>> top;
+    for (const auto& [cls, n] : byClass) top.push_back({n, cls});
+    std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::string line = "objects: " + std::to_string(held) + " held in a table of " + std::to_string(size) + "; most:";
+    for (size_t k = 0; k < top.size() && k < 10; ++k)
+        line += " " + eng::ObjName(top[k].second) + " " + std::to_string(top[k].first) + (k + 1 < 10 ? "," : "");
+    hostlog::Info(line);
+}
+
 void FindPlacements() {
+    ReportObjectGrowth();
     gPlaced.clear();
     SpawnWatched();
     HistoryWatched();
