@@ -121,6 +121,26 @@ class Slot:
         """The pointer held at pixel (x, y) (hover effects, tooltips); hover("off") gives the real mouse back."""
         return self.cmd("hover off" if x == "off" else f"hover {x} {y}")
 
+    def seq(self, *commands):
+        """The commands one a frame, in order; all their replies once the last has run."""
+        return self.cmd("seq " + " || ".join(commands))
+
+    def repeat(self, frames, command):
+        """The same command on each of that many frames (sampling); all its replies."""
+        return self.cmd(f"repeat {int(frames)} {command}")
+
+    def reload_map(self):
+        """The map opened last (openworkshop / openmap / open) opened again the same way; answers once it's open."""
+        return self.cmd("reloadmap")
+
+    def editor_camera(self, x=None, y=None, z=None, pitch=None, yaw=None):
+        """The track editor's camera as {"pos", "pitch", "yaw", "roll"}; with x, y, z (and pitch, yaw) moved there first."""
+        args = "" if x is None else f" {x} {y} {z}" + ("" if pitch is None else f" {pitch} {yaw}")
+        for line in self.cmd("editorcam" + args):
+            if line.startswith("editorcam {"):
+                return json.loads(line[len("editorcam "):])
+        raise NoPipe(f"slot {self.n}: not in the track editor")
+
     def wait(self, frames):
         """Answers once that many frames have run."""
         return self.cmd(f"waitframes {int(frames)}")

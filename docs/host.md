@@ -244,6 +244,8 @@ the saved map, `--keep` leaves the game open.
   up the copy it replaces (the game is never closed), and `log` and `stop` do what they say. `sandbox.py setup-hook`
   (opt-in, the user runs it) makes each Claude Code session start with that overview. It wraps
   `tools/test_instance.py` and `dev_session.py`, which still work alone.
+- `start --lite` uses the D3D11 renderer and no sound: about half the GPU memory and RAM (measured headless on the test
+  map: GPU 1738 -> 913 MB, RAM in use 1717 -> 909 MB), the same physics and commands, a flatter picture.
 - `start --headless` runs a slot with no window at all (`-RenderOffscreen`, capped at 30 fps): the sandbox, plugins,
   runs and the race clock all work. `-nullrhi` is cheaper but no run starts under it and its pictures are black
   (measured 2026-10-18).
@@ -251,7 +253,9 @@ the saved map, `--keep` leaves the game open.
   only): `state` (the race, track, ball position/velocity/speed, input, camera and UI as JSON), `render [name]` (a PNG of
   the whole screen, HUD and plugin windows included, windowed or headless), `drive <x> <y> <frames> [jump]` (steering,
   x right / y forward, for that many frames, then the state; `jump` presses the jump key as the game takes it),
-  `tap <x> <y>` (a click at a pixel of the render picture, no window or mouse needed: the plugin manager's window,
+  `seq a || b` / `repeat <n> <cmd>` (one command a frame, answered together), `reloadmap` (the last map opened again
+  the same way: a workshop map about 2.4 s, the create-mode editor map through the menu about 7 s, instead of
+  restarting the slot), `editorcam [x y z [pitch yaw]]` (the track editor's camera), `tap <x> <y>` (a click at a pixel of the render picture, no window or mouse needed: the plugin manager's window,
   else a footer or plugin-window button, else the game's own button there; measured on a headless copy: menu and
   Customize buttons, back, the footer and the plugin manager's tabs), `hover <x> <y>` / `hover off` and
   `-c "cmd; cmd"` (any test commands, run together). From Python, `from agent import Slot` keeps the pipe open: a

@@ -69,7 +69,7 @@ bool ReadOnlyCommand(const std::string& name) {
         "viewtarget", "materials", "watch", "children", "fnbytes", "matparams", "race", "ballstate", "ballsave", "hud",
         "widgetpath", "strprop", "objprop", "listprop", "dumptypes", "objbytes", "membytes", "objarray", "cosmetics",
         "skinmats", "sandbox", "sandboxtest", "splitref", "nghost", "nametags", "localrec", "ghostlook", "fade", "waitframes",
-        "wait", "agentstate", "render"};
+        "wait", "agentstate", "render", "seq", "repeat"};
     return kReadOnly.count(name) > 0;
 }
 
@@ -258,6 +258,8 @@ void ServePipe(std::wstring name) {
 
 void Run(const std::string& cmd);
 
+bool ToolPrefix(const std::string& word, std::string* why);
+
 // Requests that came through the pipe, run on the game thread with their replies captured.
 void RunPipeRequests() {
     std::deque<std::pair<long long, std::string>> requests;
@@ -267,6 +269,12 @@ void RunPipeRequests() {
     }
     for (const auto& [id, command] : requests) {
         std::vector<std::string> lines;
+        std::string why;
+        if (ToolPrefix(command.substr(0, command.find(' ')), &why)) {
+            hostlog::Warn("test: refused '" + command + "' through the agent pipe: " + why);
+            Answer(id, {"refused: " + why});
+            continue;
+        }
         gCapture = &lines;
         gRunningRequest = id;
         gDeferred = false;
@@ -593,6 +601,177 @@ void Hover(const Args& a, const std::string& c) {
     gHovering = true;
     game::SetMouseOverride(true, std::atof(Arg(a, 1).c_str()) / PixelsPerUnit(), std::atof(Arg(a, 2).c_str()) / PixelsPerUnit());
     Report(c + " -> ok");
+}
+
+
+// --- more for agents: sequences over frames, reloading the map, the editor camera ----------------------------------------
+// "seq a || b || c": one command a frame, in order, answered together after the last; "repeat <n> <command>": the same
+// command on each of n frames (sampling). Their steps' own replies are collected (a step that would answer later, such
+// as waitframes, only writes its reply to the log).
+struct Sequence {
+    long long request = 0;
+    std::vector<std::string> steps;
+    size_t next = 0;
+    std::vector<std::string> lines;
+};
+std::vector<Sequence> gSequences;
+
+void StartSequence(std::vector<std::string> steps, const std::string& c) {
+    if (steps.empty()) return Report(c + " -> nothing to run");
+    if (steps.size() > 10000) return Report(c + " -> too many steps (10000 at most)");
+    Sequence s;
+    s.request = Defer();
+    s.steps = std::move(steps);
+    gSequences.push_back(std::move(s));
+}
+
+void SequenceFrame() {
+    for (size_t i = 0; i < gSequences.size();) {
+        Sequence& s = gSequences[i];
+        std::vector<std::string>* const outerCapture = gCapture;
+        const long long outerRequest = gRunningRequest;
+        gCapture = &s.lines;
+        gRunningRequest = 0;                // (a step's own deferred answer goes to the log only)
+        Run(s.steps[s.next++]);
+        gCapture = outerCapture;
+        gRunningRequest = outerRequest;
+        if (s.next < s.steps.size()) {
+            ++i;
+            continue;
+        }
+        const Sequence done = std::move(s);
+        gSequences.erase(gSequences.begin() + static_cast<std::ptrdiff_t>(i));
+        if (done.request == 0) {
+            Report("seq -> done (" + std::to_string(done.steps.size()) + " frames)");
+            continue;
+        }
+        if (auto it = gWaiting.find(done.request); it != gWaiting.end())
+            it->second.insert(it->second.end(), done.lines.begin(), done.lines.end());
+        else
+            gWaiting[done.request] = done.lines;
+        Finish(done.request, "seq -> done (" + std::to_string(done.steps.size()) + " frames)");
+    }
+}
+
+std::vector<std::string> SplitSteps(const std::string& rest) {
+    std::vector<std::string> out;
+    for (size_t start = 0; start <= rest.size();) {
+        size_t end = rest.find("||", start);
+        if (end == std::string::npos) end = rest.size();
+        std::string step = rest.substr(start, end - start);
+        while (!step.empty() && step.front() == ' ') step.erase(0, 1);
+        while (!step.empty() && step.back() == ' ') step.pop_back();
+        if (!step.empty()) out.push_back(step);
+        start = end + 2;
+    }
+    return out;
+}
+
+// "reloadmap": the map opened last through the test channel, opened again the same way: a workshop map ("openworkshop")
+// straight away, a saved create-mode map ("openmap") by going to the main menu and opening it from the Create page again
+// (the editor starts afresh from the file; plugins keep running), a level ("open") straight away. Answered once it's
+// open again (on a track, or the editor up), or after 60 s.
+std::string gLastOpen;                      // the last openworkshop / openmap / open command
+struct Reload {
+    long long request = 0;
+    int stage = 0;                          // 1: waiting for the main menu (openmap), 2: waiting for the map
+    double deadline = 0, nextTry = 0;
+    std::string command;
+} gReload;
+
+bool CreatePageEntry(const std::string& fragment, bool open) {
+    for (eng::Obj o : Instances("WBP_TrackLibraryEntry_C", "Transient")) {
+        const eng::Prop p = eng::FindProp(eng::ClassOf(o), "AssociatedPath");
+        if (!p || eng::ReadFString(o + p.offset).find(fragment) == std::string::npos) continue;
+        return !open || eng::Call(o, "LoadMapForEdit").Invoked();
+    }
+    return false;
+}
+
+void StartReload(const std::string& c) {
+    if (gLastOpen.empty()) return Report(c + " -> no map opened through the test channel yet (openworkshop / openmap / open)");
+    if (gReload.stage) return Report(c + " -> already reloading");
+    gReload = {};
+    gReload.command = gLastOpen;
+    gReload.deadline = game::Seconds() + 60;
+    if (gLastOpen.rfind("openmap ", 0) == 0) {
+        if (!game::OpenLevel("Map_MainMenu")) return Report(c + " -> the main menu didn't open");
+        gReload.stage = 1;
+    } else {
+        Run(gLastOpen);
+        gReload.stage = 2;
+        gReload.nextTry = game::Seconds() + 2;     // (the old map is still up for a moment)
+    }
+    gReload.request = Defer();
+}
+
+void ReloadFrame() {
+    if (!gReload.stage) return;
+    const double now = game::Seconds();
+    if (now > gReload.deadline) {
+        gReload.stage = 0;
+        return Finish(gReload.request, "reloadmap -> not open again in 60 s (" + gReload.command + ")");
+    }
+    if (now < gReload.nextTry) return;
+    gReload.nextTry = now + 0.5;
+    if (gReload.stage == 1) {
+        if (!CreatePageEntry(gReload.command.substr(8), false)) return;     // the Create page's entries not there yet
+        CreatePageEntry(gReload.command.substr(8), true);
+        gReload.stage = 2;
+        gReload.nextTry = now + 2;
+        return;
+    }
+    const bool editorMap = gReload.command.rfind("openmap ", 0) == 0;
+    if (editorMap ? !editor::Open() : !race::OnTrack()) return;
+    gReload.stage = 0;
+    Finish(gReload.request, "reloadmap -> open again (" + gReload.command + ")");
+}
+
+// "editorcam": the track editor's camera (its pawn's location, the controller's rotation) as JSON; "editorcam <x> <y> <z>
+// [<pitch> <yaw>]" moves it there (and turns it).
+std::string EditorCam() {
+    eng::Obj controller = game::PlayerController();
+    eng::Obj pawn = controller ? eng::Call(controller, "K2_GetPawn").ReturnObj() : nullptr;
+    if (!pawn || !editor::Open()) return "";
+    const editor::Vec3 at = eng::Call(pawn, "K2_GetActorLocation").ReturnAs<editor::Vec3>();
+    const editor::Rot r = eng::Call(controller, "GetControlRotation").ReturnAs<editor::Rot>();
+    return "{\"pos\":[" + Num(at.x, 1) + "," + Num(at.y, 1) + "," + Num(at.z, 1) + "],\"pitch\":" + Num(r.pitch, 1) + ",\"yaw\":" +
+           Num(r.yaw, 1) + ",\"roll\":" + Num(r.roll, 1) + "}";
+}
+
+void EditorCamCommand(const Args& a, const std::string& c) {
+    eng::Obj controller = game::PlayerController();
+    eng::Obj pawn = controller ? eng::Call(controller, "K2_GetPawn").ReturnObj() : nullptr;
+    if (!pawn || !editor::Open()) return Report(c + " -> not in the track editor");
+    if (a.size() >= 4) {
+        eng::Params p(eng::FunctionOn(pawn, "K2_SetActorLocation"));
+        p.Set("NewLocation", editor::Vec3{std::atof(Arg(a, 1).c_str()), std::atof(Arg(a, 2).c_str()), std::atof(Arg(a, 3).c_str())});
+        p.Set("bSweep", uint8_t{0});
+        p.Set("bTeleport", uint8_t{1});
+        if (!eng::Invoke(pawn, p)) return Report(c + " -> the camera didn't move");
+        if (a.size() >= 6) {
+            const editor::Rot r{std::atof(Arg(a, 4).c_str()), std::atof(Arg(a, 5).c_str()), 0};
+            eng::Call(controller, "SetControlRotation", r);
+        }
+    }
+    Report("editorcam " + EditorCam());
+}
+
+// Prefixes that belong to the tools, not to the game: through the pipe they'd run as unknown commands. Refused by name,
+// with what to send instead.
+bool ToolPrefix(const std::string& word, std::string* why) {
+    static const std::map<std::string, std::string> kTools = {
+        {"reply", "'reply <cmd>' is dev_session.py's \"send and wait for its answer\": through the pipe every command is answered, send '<cmd>' alone"},
+        {"quick", "'quick <cmd>' is dev_session.py / sandbox.py's \"send without waiting\": through the pipe send '<cmd>' alone"},
+        {"sleep", "'sleep <s>' is a tool step: through the pipe use 'waitframes <n>' (30 frames a second headless)"},
+        {"waiteditor", "'waiteditor' is a dev_session.py step: through the pipe poll 'agentstate' (\"editor\": true) or use reloadmap / openmap and wait"},
+        {"waitstate", "'waitstate <regex>' is a tool step: through the pipe poll 'state' or 'agentstate'"},
+        {"shot", "'shot <name>' is a tool step: through the pipe use 'render <name>'"},
+    };
+    const auto it = kTools.find(word);
+    if (it == kTools.end()) return false;
+    *why = it->second;
+    return true;
 }
 
 // --- measurement commands ------------------------------------------------------------------------------------------
@@ -1077,6 +1256,7 @@ void Run(const std::string& cmd) {
              Report(editor::Status());
          }},
         {"openworkshop", [](const Args& a, const std::string& c) {  // openworkshop <published file id>: as the host's Tracks API
+             gLastOpen = c;
              Report(c + (tracks::OpenWorkshop(std::strtoull(Arg(a, 1).c_str(), nullptr, 10)) ? " -> started" : " -> failed: " + tracks::OpenState()));
          }},
         {"teleport", [](const Args& a, const std::string& c) {       // teleport <x> <y> <z>: the ball being played
@@ -1169,7 +1349,10 @@ void Run(const std::string& cmd) {
         {"openlocal", [](const Args&, const std::string& c) {     // openlocal <map file name>: a saved map raced (Tracks::OpenLocal)
              Report(c + (tracks::OpenLocal(c.substr(10)) ? " -> ok" : " -> failed: " + tracks::OpenState()));
          }},
-        {"open", [](const Args& a, const std::string& c) { Report(c + (game::OpenLevel(Arg(a, 1)) ? " -> ok" : " -> failed")); }},
+        {"open", [](const Args& a, const std::string& c) {
+             if (Arg(a, 1) != "Map_MainMenu") gLastOpen = c;
+             Report(c + (game::OpenLevel(Arg(a, 1)) ? " -> ok" : " -> failed"));
+         }},
         {"functions", [](const Args& a, const std::string&) { Functions(Arg(a, 1)); }},
         {"instances", [](const Args& a, const std::string&) {
              for (eng::Obj o : Instances(Arg(a, 1), Arg(a, 2))) Report("instance " + eng::PathOf(o));
@@ -1410,8 +1593,18 @@ void Run(const std::string& cmd) {
         {"render", [](const Args& a, const std::string&) { StartRender(Arg(a, 1)); }},
         {"drive", [](const Args& a, const std::string& c) { StartDrive(a, c); }},
         {"tap", [](const Args& a, const std::string& c) { StartTap(a, c); }},
+        {"seq", [](const Args&, const std::string& c) { StartSequence(SplitSteps(c.size() > 4 ? c.substr(4) : ""), c); }},
+        {"repeat", [](const Args& a, const std::string& c) {      // repeat <n> <command>: on each of n frames
+             const int n = std::atoi(Arg(a, 1).c_str());
+             const size_t at = c.find(' ', c.find(' ') + 1);
+             const std::string step = at == std::string::npos ? "" : c.substr(at + 1);
+             StartSequence(n > 0 && !step.empty() ? std::vector<std::string>(static_cast<size_t>(n), step) : std::vector<std::string>{}, c);
+         }},
+        {"reloadmap", [](const Args&, const std::string& c) { StartReload(c); }},
+        {"editorcam", [](const Args& a, const std::string& c) { EditorCamCommand(a, c); }},
         {"hover", [](const Args& a, const std::string& c) { Hover(a, c); }},
         {"openmap", [](const Args& a, const std::string& c) {     // openmap <file name fragment>: Create page entry -> editor
+             gLastOpen = c;
              for (eng::Obj o : Instances("WBP_TrackLibraryEntry_C", "Transient")) {
                  const eng::Prop p = eng::FindProp(eng::ClassOf(o), "AssociatedPath");
                  if (!p || eng::ReadFString(o + p.offset).find(Arg(a, 1)) == std::string::npos) continue;
@@ -1780,6 +1973,8 @@ void Frame() {
     gHostFramesForReply = gHostFrames;
     DriveFrame();
     TapFrame();
+    SequenceFrame();
+    ReloadFrame();
     WatchRenders();
     // The agent pipe: started once the copy is a complete sandbox (it drives the game), then read every frame.
     if (!gPipeStarted && MutationsAllowed()) {

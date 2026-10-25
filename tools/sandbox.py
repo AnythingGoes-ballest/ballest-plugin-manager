@@ -46,7 +46,11 @@ HEADLESS_ARGS = ["-RenderOffscreen"]
 HEADLESS_FPS = 30
 SHOT_SIZE = "1280x720"           # a headless shot's size, the slots' window size
 SHOT_WAIT = 15                   # seconds for HighResShot to write its file
-WINDOW_COMMANDS = ("post ", "clickat ")    # test commands posted to the game's window: a headless slot has none
+WINDOW_COMMANDS = ("post ", "clickat ")
+# --lite: the D3D11 renderer and no sound (measured 2026-10-24, headless on the test map: GPU memory 1738 -> 913 MB,
+# RAM in use 1717 -> 909 MB, committed 3434 -> 1732 MB; the race drove exactly as with D3D12 and render works; it looks
+# flatter, without Lumen and Nanite). Low scalability settings saved only another ~7% on top.
+LITE_ARGS = ["-d3d11", "-nosound"]    # test commands posted to the game's window: a headless slot has none
 
 # ---------------------------------------------------------------------------------------------------- TOON output
 
@@ -452,7 +456,7 @@ def cmd_start(a):
         fail("--headless has no window to play in: give one of --headless and --interactive",
              f"{CLI} start {a.slot} --headless", code=2)
     ti.MAPS[:] = [Path(m).resolve() for m in a.map]
-    args = HEADLESS_ARGS if a.headless else []
+    args = (HEADLESS_ARGS if a.headless else []) + (LITE_ARGS if a.lite else [])
     if a.slot != "next" and ti.alive(int(a.slot)):
         n = int(a.slot)
         if headless(n) != a.headless:
@@ -746,6 +750,9 @@ def build():
     p.add_argument("--headless", action="store_true",
                    help=f"no window at all (-RenderOffscreen), capped at {HEADLESS_FPS} fps; runs and the test commands work, "
                    "shots show the world only (no HUD or plugin windows), and `post` and `clickat` have no window to reach")
+    p.add_argument("--lite", action="store_true",
+                   help="about half the GPU memory and RAM (the D3D11 renderer, no sound); physics and test commands the same, "
+                   "the picture flatter (no Lumen or Nanite)")
     p.add_argument("--only", action="store_true", help="every other plugin off")
     p.add_argument("--clean", action="store_true", help="empty the slot's data first")
     p.add_argument("--host", help="a host build (build/version.dll) for this slot only")
