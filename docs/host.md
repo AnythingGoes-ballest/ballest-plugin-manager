@@ -244,8 +244,10 @@ the saved map, `--keep` leaves the game open.
   up the copy it replaces (the game is never closed), and `log` and `stop` do what they say. `sandbox.py setup-hook`
   (opt-in, the user runs it) makes each Claude Code session start with that overview. It wraps
   `tools/test_instance.py` and `dev_session.py`, which still work alone.
-- `start --lite` uses the D3D11 renderer and no sound: about half the GPU memory and RAM (measured headless on the test
-  map: GPU 1738 -> 913 MB, RAM in use 1717 -> 909 MB), the same physics and commands, a flatter picture.
+- Slots start **lite** by default: the D3D11 renderer and no sound, about half the GPU memory and RAM (measured headless
+  on the test map: GPU 1738 -> 913 MB, RAM in use 1717 -> 909 MB), the same physics and commands, a flatter picture (no
+  Lumen or Nanite). `start --full` gives the game's full look for anything judging how it looks (materials, lighting,
+  video shots); `--interactive` is always full.
 - `start --headless` runs a slot with no window at all (`-RenderOffscreen`, capped at 30 fps): the sandbox, plugins,
   runs and the race clock all work. `-nullrhi` is cheaper but no run starts under it and its pictures are black
   (measured 2026-10-18).
