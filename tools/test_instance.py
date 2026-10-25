@@ -167,6 +167,33 @@ def command_lines():
     return found
 
 
+k32.OpenProcess.restype = wt.HANDLE
+k32.OpenProcess.argtypes = [wt.DWORD, wt.BOOL, wt.DWORD]
+k32.WaitForSingleObject.argtypes = [wt.HANDLE, wt.DWORD]
+k32.QueryFullProcessImageNameW.argtypes = [wt.HANDLE, wt.DWORD, wt.LPWSTR, ctypes.POINTER(wt.DWORD)]
+k32.CloseHandle.argtypes = [wt.HANDLE]
+
+
+def running_fast(n):
+    """Whether the slot's game process still runs (a quick check, without alive()'s process listings, about 2.5 s: for
+    sending commands, never for stopping a copy)."""
+    pid = (instance(n) or {}).get("game")
+    if not pid:
+        return False
+    handle = k32.OpenProcess(0x1000 | 0x00100000, False, int(pid))     # QUERY_LIMITED_INFORMATION | SYNCHRONIZE
+    if not handle:
+        return False
+    try:
+        if k32.WaitForSingleObject(handle, 0) != 0x102:                 # WAIT_TIMEOUT: still running
+            return False
+        name = ctypes.create_unicode_buffer(1024)
+        size = wt.DWORD(1024)
+        k32.QueryFullProcessImageNameW(handle, 0, name, ctypes.byref(size))
+        return name.value.lower().endswith("ballest-win64-shipping.exe")
+    finally:
+        k32.CloseHandle(handle)
+
+
 def alive(n):
     """The slot's processes still running. A pid alone isn't enough: if the copy died and Windows gave its pid to the
     player's own game, stop() would close it. So the process must also carry this slot's own -userdir (the player's

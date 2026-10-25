@@ -245,8 +245,16 @@ the saved map, `--keep` leaves the game open.
   (opt-in, the user runs it) makes each Claude Code session start with that overview. It wraps
   `tools/test_instance.py` and `dev_session.py`, which still work alone.
 - `start --headless` runs a slot with no window at all (`-RenderOffscreen`, capped at 30 fps): the sandbox, plugins,
-  runs and the race clock all work, and `shot` saves the engine's `HighResShot`, which draws the world without the HUD
-  or plugin windows. `-nullrhi` is cheaper but no run starts under it and its pictures are black (measured 2026-10-18).
+  runs and the race clock all work. `-nullrhi` is cheaper but no run starts under it and its pictures are black
+  (measured 2026-10-18).
+- **Agents: `python tools/agent.py`** drives a slot through the host's agent pipe (host 0.31.0+, complete sandboxes
+  only): `state` (the race, track, ball position/velocity/speed, input, camera and UI as JSON), `render [name]` (a PNG of
+  the whole screen, HUD and plugin windows included, windowed or headless), `drive <x> <y> <frames> [jump]` (steering,
+  x right / y forward, for that many frames, then the state; `jump` presses the jump key as the game takes it) and
+  `-c "cmd; cmd"` (any test commands, run together). From Python, `from agent import Slot` keeps the pipe open: a
+  command is about one frame (33 ms at the headless 30 fps), `state` about 8 ms, `render` about 0.1 s (measured
+  2026-10-24; through the file channel one command took about 6 s). `sandbox.py run` and `shot` use the pipe
+  automatically when the slot's host has it, and a quicker file channel otherwise.
 - `python tools/dev_session.py commands.txt [--map Map_Track13] [--attach]` runs test-channel commands against a fresh
   game, or with `--attach` against the one a previous `--keep` run left open
 - `python tools/memread.py` (as a library) reads a running game's memory, read-only, to measure layouts

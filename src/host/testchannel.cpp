@@ -3,6 +3,11 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <thread>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -28,6 +33,7 @@
 #include "leaderboard.hpp"
 #include "log.hpp"
 #include "editor.hpp"
+#include "widgets.hpp"
 #include "models.hpp"
 #include "plugins.hpp"
 #include "registry.hpp"
@@ -60,7 +66,8 @@ bool ReadOnlyCommand(const std::string& name) {
         "state", "fps", "soundstate", "checkpoints", "openstate", "functions", "instances", "props", "find", "struct",
         "viewtarget", "materials", "watch", "children", "fnbytes", "matparams", "race", "ballstate", "ballsave", "hud",
         "widgetpath", "strprop", "objprop", "listprop", "dumptypes", "objbytes", "membytes", "objarray", "cosmetics",
-        "skinmats", "sandbox", "sandboxtest", "splitref", "nghost", "nametags", "localrec", "ghostlook", "fade", "waitframes"};
+        "skinmats", "sandbox", "sandboxtest", "splitref", "nghost", "nametags", "localrec", "ghostlook", "fade", "waitframes",
+        "wait", "agentstate", "render"};
     return kReadOnly.count(name) > 0;
 }
 
@@ -68,7 +75,12 @@ long long gHostFrames = 0;              // host frames so far, and where the las
 long long gFpsFrames = 0;
 double gFpsSince = -1;
 std::vector<std::pair<int, ULONGLONG>> gPostedUps;     // keys posted down, and when to let them go
-std::vector<std::pair<long long, std::string>> gFrameWaits;  // "waitframes": the frame to reply at, and the command
+struct FrameWait {
+    long long frame;            // the host frame to reply at
+    std::string command;
+    long long request;          // the agent pipe request waiting for it, or 0
+};
+std::vector<FrameWait> gFrameWaits;     // "waitframes" / "wait"
 
 std::vector<std::string> Words(const std::string& s) {
     std::vector<std::string> out;
@@ -113,7 +125,359 @@ std::string Hex(const uint8_t* p, size_t n) {
     return s;
 }
 
-void Report(const std::string& line) { hostlog::Info("test: " + line); }
+// --- the agent pipe -------------------------------------------------------------------------------------------------
+// A sandboxed test copy also takes commands through a named pipe, \\.\pipe\ballest-test-<game pid> (tools/agent.py):
+// one command per line, each answered with one line of JSON, {"id", "frame", "lines": [...]}, holding exactly that
+// command's own replies. Commands sent together run together on the next frame, in order. "waitframes" / "wait",
+// "render" and a "drive" for some frames answer once they're done. No file and no log round trip: about one frame per
+// command (measured 2026-10-24: the file channel through sandbox.py took about 6 s a command).
+using Args = std::vector<std::string>;
+std::string Arg(const Args& a, size_t i);
+std::vector<std::string>* gCapture = nullptr;  // the reply lines of the pipe request being run
+long long gRunningRequest = 0;                 // that request's id (0: none, the file or the console)
+bool gDeferred = false;                        // the command running answers later (Finish)
+std::map<long long, std::vector<std::string>> gWaiting;     // deferred requests: their lines so far
+
+std::mutex gPipeLock;
+std::condition_variable gPipeReady;
+std::deque<std::pair<long long, std::string>> gPipeIn;      // requests from the pipe thread, for the game thread
+std::map<long long, std::string> gPipeOut;                  // answers (a JSON line each) for the pipe thread
+bool gPipeStarted = false;
+long long gHostFramesForReply = 0;
+
+std::string Json(const std::string& s) {
+    std::string out = "\"";
+    for (const unsigned char c : s) {
+        if (c == '"' || c == '\\') {
+            out += '\\';
+            out += static_cast<char>(c);
+        } else if (c == '\n') {
+            out += "\\n";
+        } else if (c == '\r') {
+            out += "\\r";
+        } else if (c == '\t') {
+            out += "\\t";
+        } else if (c < 0x20) {
+            char b[8];
+            std::snprintf(b, sizeof b, "\\u%04x", c);
+            out += b;
+        } else {
+            out += static_cast<char>(c);
+        }
+    }
+    return out + "\"";
+}
+
+void Answer(long long id, const std::vector<std::string>& lines) {
+    std::string json = "{\"id\":" + std::to_string(id) + ",\"frame\":" + std::to_string(gHostFramesForReply) + ",\"lines\":[";
+    for (size_t i = 0; i < lines.size(); ++i) json += (i ? "," : "") + Json(lines[i]);
+    json += "]}";
+    {
+        std::lock_guard<std::mutex> lock(gPipeLock);
+        gPipeOut[id] = json;
+    }
+    gPipeReady.notify_all();
+}
+
+void Report(const std::string& line) {
+    hostlog::Info("test: " + line);
+    if (gCapture) gCapture->push_back(line);
+}
+
+// The command running answers later: Finish(the id this returns, its last line). 0 when no pipe request waits.
+long long Defer() {
+    gDeferred = gRunningRequest != 0;
+    return gRunningRequest;
+}
+
+void Finish(long long request, const std::string& line) {
+    Report(line);
+    if (request == 0) return;
+    std::vector<std::string> lines;
+    if (const auto it = gWaiting.find(request); it != gWaiting.end()) {
+        lines = it->second;
+        gWaiting.erase(it);
+    }
+    lines.push_back(line);
+    Answer(request, lines);
+}
+
+// The pipe's own thread: one client at a time; every line it sends is queued for the game thread, and the answers go
+// back in the same order.
+void ServePipe(std::wstring name) {
+    long long next = 0;
+    for (;;) {
+        HANDLE pipe = CreateNamedPipeW(name.c_str(), PIPE_ACCESS_DUPLEX,
+                                       PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 1 << 16,
+                                       1 << 16, 0, nullptr);
+        if (pipe == INVALID_HANDLE_VALUE) {
+            Sleep(1000);
+            continue;
+        }
+        if (!ConnectNamedPipe(pipe, nullptr) && GetLastError() != ERROR_PIPE_CONNECTED) {
+            CloseHandle(pipe);
+            continue;
+        }
+        std::string pending;
+        char chunk[4096];
+        DWORD read = 0;
+        bool open = true;
+        while (open && ReadFile(pipe, chunk, sizeof chunk, &read, nullptr) && read > 0) {
+            pending.append(chunk, read);
+            std::vector<long long> ids;
+            for (size_t nl; (nl = pending.find('\n')) != std::string::npos;) {
+                std::string line = pending.substr(0, nl);
+                pending.erase(0, nl + 1);
+                while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+                if (line.empty()) continue;
+                ids.push_back(++next);
+                std::lock_guard<std::mutex> lock(gPipeLock);
+                gPipeIn.push_back({next, line});
+            }
+            for (const long long id : ids) {
+                std::string answer;
+                {
+                    std::unique_lock<std::mutex> lock(gPipeLock);
+                    gPipeReady.wait(lock, [&] { return gPipeOut.count(id) > 0; });
+                    answer = gPipeOut[id] + "\n";
+                    gPipeOut.erase(id);
+                }
+                DWORD wrote = 0;
+                if (!WriteFile(pipe, answer.data(), static_cast<DWORD>(answer.size()), &wrote, nullptr)) {
+                    open = false;
+                    break;
+                }
+            }
+        }
+        DisconnectNamedPipe(pipe);
+        CloseHandle(pipe);
+    }
+}
+
+void Run(const std::string& cmd);
+
+// Requests that came through the pipe, run on the game thread with their replies captured.
+void RunPipeRequests() {
+    std::deque<std::pair<long long, std::string>> requests;
+    {
+        std::lock_guard<std::mutex> lock(gPipeLock);
+        requests.swap(gPipeIn);
+    }
+    for (const auto& [id, command] : requests) {
+        std::vector<std::string> lines;
+        gCapture = &lines;
+        gRunningRequest = id;
+        gDeferred = false;
+        Run(command);
+        gCapture = nullptr;
+        gRunningRequest = 0;
+        if (gDeferred) gWaiting[id] = lines;
+        else Answer(id, lines);
+    }
+}
+
+// --- agent commands: the state in one line, a picture of the screen, the ball driven -----------------------------------
+std::string Num(double v, int digits = 3) {
+    char b[48];
+    std::snprintf(b, sizeof b, "%.*f", digits, std::isfinite(v) ? v : 0.0);
+    return b;
+}
+
+std::string Bool(bool b) { return b ? "true" : "false"; }
+
+struct DriveNow {
+    double x = 0, y = 0;
+    long long frames = 0;
+    bool on = false;
+};
+DriveNow gDriveNow;                         // what "drive" is doing (for the state)
+
+// Everything an agent needs to decide its next move, as one JSON object.
+std::string AgentState() {
+    const auto& t = race::CurrentTrack();
+    double x = 0, y = 0, bx = 0, by = 0, bz = 0, vx = 0, vy = 0, vz = 0;
+    bool jump = false;
+    race::Input(&x, &y, &jump);
+    const bool ball = race::BallPosition(&bx, &by, &bz);
+    race::BallVelocity(&vx, &vy, &vz);
+    editor::Vec3 cam;
+    editor::Rot look;
+    if (eng::Obj controller = game::PlayerController())
+        if (eng::Obj manager = eng::ReadObj(controller, "PlayerCameraManager")) {
+            cam = eng::Call(manager, "GetCameraLocation").ReturnAs<editor::Vec3>();
+            look = eng::Call(manager, "GetCameraRotation").ReturnAs<editor::Rot>();
+        }
+    std::string j = "{\"frame\":" + std::to_string(gHostFrames) + ",\"seconds\":" + Num(game::Seconds());
+    j += ",\"on_track\":" + Bool(race::OnTrack()) + ",\"active\":" + Bool(race::Active()) + ",\"complete\":" + Bool(race::Complete());
+    j += ",\"paused\":" + Bool(race::Paused()) + ",\"practice\":" + Bool(race::Practice());
+    j += ",\"editor\":" + Bool(editor::Open()) + ",\"editor_testing\":" + Bool(race::EditorTesting());
+    j += ",\"run\":" + std::to_string(race::RunId()) + ",\"restarts\":" + std::to_string(race::Restarts());
+    j += ",\"falls\":" + std::to_string(race::Falls()) + ",\"respawns\":" + std::to_string(race::Respawns());
+    j += ",\"checkpoint\":" + std::to_string(race::CurrentCheckpoint()) + ",\"checkpoints\":" + std::to_string(race::CheckpointCount());
+    j += ",\"track\":{\"key\":" + Json(t.key) + ",\"name\":" + Json(t.name) + ",\"author_time\":" + Num(t.authorTime) + "}";
+    if (ball)
+        j += ",\"ball\":{\"pos\":[" + Num(bx, 1) + "," + Num(by, 1) + "," + Num(bz, 1) + "],\"vel\":[" + Num(vx, 1) + "," + Num(vy, 1) + "," +
+             Num(vz, 1) + "],\"speed\":" + Num(std::sqrt(vx * vx + vy * vy + vz * vz), 1) + "}";
+    else
+        j += ",\"ball\":null";
+    j += ",\"input\":{\"x\":" + Num(x, 2) + ",\"y\":" + Num(y, 2) + ",\"jump\":" + Bool(jump) + "}";
+    j += ",\"drive\":" + (gDriveNow.on ? "{\"x\":" + Num(gDriveNow.x, 2) + ",\"y\":" + Num(gDriveNow.y, 2) + ",\"frames_left\":" +
+                                            std::to_string(gDriveNow.frames) + "}" : std::string("null"));
+    j += ",\"camera\":{\"pos\":[" + Num(cam.x, 1) + "," + Num(cam.y, 1) + "," + Num(cam.z, 1) + "],\"pitch\":" + Num(look.pitch, 1) +
+         ",\"yaw\":" + Num(look.yaw, 1) + ",\"roll\":" + Num(look.roll, 1) + "}";
+    j += ",\"ui\":" + Json(ui::Status());
+    return j + "}";
+}
+
+// "render [name]": the game's own screenshot of the whole screen, HUD and plugin windows included (the console's "shot
+// showui"; measured 2026-10-24 on a headless copy: about 120 ms to a complete file), moved to <data folder>\<name>.png.
+struct Render {
+    long long request = 0;
+    std::wstring target;
+    FILETIME after{};
+    double deadline = 0;
+};
+std::vector<Render> gRenders;
+
+// The game's Saved folder: -userdir's, as a test copy runs with one, else the player's own.
+std::wstring SavedDir() {
+    const std::wstring line = GetCommandLineW();
+    const size_t at = line.find(L"-userdir=");
+    if (at != std::wstring::npos) {
+        size_t start = at + 9, end;
+        if (start < line.size() && line[start] == L'"') end = line.find(L'"', ++start);
+        else end = line.find(L' ', start);
+        std::wstring dir = line.substr(start, end == std::wstring::npos ? std::wstring::npos : end - start);
+        while (!dir.empty() && (dir.back() == L'\\' || dir.back() == L'"')) dir.pop_back();
+        return dir + L"\\Saved";
+    }
+    wchar_t local[MAX_PATH] = {};
+    GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH);
+    return std::wstring(local) + L"\\Ballest\\Saved";
+}
+
+void StartRender(const std::string& name) {
+    Render r;
+    r.request = Defer();
+    std::string safe;
+    for (const char c : name.empty() ? std::string("render") : name)
+        safe += (std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_') ? c : '_';
+    r.target = hostlog::DataDir() + L"\\" + eng::Widen(safe) + L".png";
+    GetSystemTimeAsFileTime(&r.after);
+    r.deadline = game::Seconds() + 5;
+    const std::wstring command = L"shot showui";
+    eng::Obj library = eng::FindCdo("KismetSystemLibrary");
+    eng::Params p(eng::FunctionOn(library, "ExecuteConsoleCommand"));
+    p.Set("WorldContextObject", game::PlayerController());
+    p.Set("Command", eng::FString{command.c_str(), static_cast<int32_t>(command.size() + 1), static_cast<int32_t>(command.size() + 1)});
+    if (!eng::Invoke(library, p)) return Finish(r.request, "render -> failed (no console)");
+    gRenders.push_back(r);
+}
+
+// Each frame: a screenshot written since a render asked for it, complete (it can be opened alone), moved into place.
+void WatchRenders() {
+    if (gRenders.empty()) return;
+    const std::wstring folder = SavedDir() + L"\\Screenshots\\Windows\\";
+    for (auto it = gRenders.begin(); it != gRenders.end();) {
+        WIN32_FIND_DATAW fd;
+        std::wstring found;
+        FILETIME newest = it->after;
+        HANDLE find = FindFirstFileW((folder + L"ScreenShot*.png").c_str(), &fd);
+        if (find != INVALID_HANDLE_VALUE) {
+            do {
+                if (CompareFileTime(&fd.ftLastWriteTime, &newest) > 0) {
+                    newest = fd.ftLastWriteTime;
+                    found = folder + fd.cFileName;
+                }
+            } while (FindNextFileW(find, &fd));
+            FindClose(find);
+        }
+        bool done = false;
+        if (!found.empty()) {
+            HANDLE f = CreateFileW(found.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+            if (f != INVALID_HANDLE_VALUE) {
+                CloseHandle(f);
+                if (MoveFileExW(found.c_str(), it->target.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+                    Finish(it->request, "render -> " + eng::Narrow(it->target.c_str(), static_cast<int>(it->target.size())));
+                    done = true;
+                }
+            }
+        }
+        if (!done && game::Seconds() > it->deadline) {
+            Finish(it->request, "render -> failed (no screenshot in 5 s)");
+            done = true;
+        }
+        it = done ? gRenders.erase(it) : it + 1;
+    }
+}
+
+// "drive <x> <y> [frames] [jump]": the played ball's move input (x right, y forward, -1..1) as the controller gives it
+// (BP_RollingBall.Server_ExecuteMove: one call holds until the next; measured for Upside Down), sent every frame for
+// that many frames and then let go, answered then with the state (no frames: held until the next drive; "drive 0 0"
+// lets go). "jump" presses the jump key first, as the game takes it (the ball's IA_Jump input event 3: measured
+// 2026-10-24, the press; events 4 and 5 do nothing), so its cooldown, ground check and choice of jump all apply.
+struct Drive {
+    double x = 0, y = 0;
+    long long frames = 0;                   // frames left
+    bool on = false, hold = false;
+    long long request = 0;
+} gDrive;
+
+// The jump key as the game takes it: the ball's input event for IA_Jump (one of InpActEvt_IA_Jump_K2Node_
+// EnhancedInputActionEvent_<n>), called with a pressed value, so its own cooldown, ground check and jump buffer apply
+// (ball_physics_spec: it then picks JumpUp on flat ground, else JumpFromNormal).
+bool JumpEvent(eng::Obj ball, int n) {
+    eng::Obj fn = ball ? eng::FunctionOn(ball, ("InpActEvt_IA_Jump_K2Node_EnhancedInputActionEvent_" + std::to_string(n)).c_str()) : nullptr;
+    if (!fn) return false;
+    eng::Params p(fn);
+    uint8_t value[32] = {};                 // FInputActionValue: its value (an FVector of doubles), then its type (0: bool)
+    const double one = 1.0;
+    std::memcpy(value, &one, sizeof one);
+    if (!p.SetArg(0, value, sizeof value)) return false;
+    return eng::Invoke(ball, p);
+}
+
+bool SendMove(double x, double y) {
+    eng::Obj ball = race::PlayedBallActor();
+    return ball && eng::Call(ball, "Server_ExecuteMove", ui::widgets::Vec2{x, y}).Invoked();
+}
+
+void StartDrive(const Args& a, const std::string& c) {
+    if (gDrive.on && gDrive.request) Finish(gDrive.request, "drive -> replaced");
+    gDrive = {};
+    const double x = std::clamp(std::atof(Arg(a, 1).c_str()), -1.0, 1.0), y = std::clamp(std::atof(Arg(a, 2).c_str()), -1.0, 1.0);
+    const bool jump = Arg(a, 3) == "jump" || Arg(a, 4) == "jump";
+    const long long frames = Arg(a, 3) == "jump" ? 0 : std::max(0, std::atoi(Arg(a, 3).c_str()));
+    eng::Obj ball = race::PlayedBallActor();
+    if (!ball) return Report(c + " -> no ball");
+    if (jump && !JumpEvent(ball, 3)) Report(c + " -> jump failed");
+    if (!SendMove(x, y)) return Report(c + " -> the move didn't reach the ball");
+    if (x == 0 && y == 0 && frames == 0) return Report(c + " -> let go");
+    gDrive.x = x;
+    gDrive.y = y;
+    gDrive.on = true;
+    gDrive.hold = frames == 0;
+    gDrive.frames = frames;
+    if (gDrive.hold) return Report(c + " -> holding");
+    gDrive.request = Defer();
+}
+
+void DriveFrame() {
+    gDriveNow = {gDrive.x, gDrive.y, gDrive.hold ? 0 : gDrive.frames, gDrive.on};
+    if (!gDrive.on) return;
+    if (!race::PlayedBallActor()) {
+        gDrive.on = false;
+        if (gDrive.request || !gDrive.hold) Finish(gDrive.request, "drive -> the ball went away");
+        return;
+    }
+    if (gDrive.hold || --gDrive.frames > 0) {
+        SendMove(gDrive.x, gDrive.y);
+        return;
+    }
+    SendMove(0, 0);
+    gDrive.on = false;
+    Finish(gDrive.request, "drive -> done " + AgentState());
+}
 
 // --- measurement commands ------------------------------------------------------------------------------------------
 
@@ -918,8 +1282,17 @@ void Run(const std::string& cmd) {
              Report(c + " -> " + std::to_string(editor::ShowAll(-1)) + " components shown");
          }},
         {"waitframes", [](const Args& a, const std::string& c) {  // waitframes <n>: replies once n more frames have run
-             gFrameWaits.push_back({gHostFrames + std::max(1, std::atoi(Arg(a, 1).c_str())), c});
+             gFrameWaits.push_back({gHostFrames + std::max(1, std::atoi(Arg(a, 1).c_str())), c, Defer()});
          }},
+        {"wait", [](const Args& a, const std::string& c) {        // wait <n>: the same (the agent pipe's short form)
+             gFrameWaits.push_back({gHostFrames + std::max(1, std::atoi(Arg(a, 1).c_str())), c, Defer()});
+         }},
+        {"agentstate", [](const Args&, const std::string&) { Report("agentstate " + AgentState()); }},
+        {"jumpevent", [](const Args& a, const std::string& c) {   // jumpevent <n>: the ball's IA_Jump input event <n>, pressed
+             Report(c + (JumpEvent(race::PlayedBallActor(), std::atoi(Arg(a, 1).c_str())) ? " -> ok" : " -> failed"));
+         }},
+        {"render", [](const Args& a, const std::string&) { StartRender(Arg(a, 1)); }},
+        {"drive", [](const Args& a, const std::string& c) { StartDrive(a, c); }},
         {"openmap", [](const Args& a, const std::string& c) {     // openmap <file name fragment>: Create page entry -> editor
              for (eng::Obj o : Instances("WBP_TrackLibraryEntry_C", "Transient")) {
                  const eng::Prop p = eng::FindProp(eng::ClassOf(o), "AssociatedPath");
@@ -1223,8 +1596,10 @@ void Run(const std::string& cmd) {
     const auto it = words.empty() ? commands.end() : commands.find(words[0]);
     if (it == commands.end()) {
         hostlog::Warn("test: unknown command '" + cmd + "'");
+        if (gCapture) gCapture->push_back("unknown command '" + cmd + "'");
     } else if (!ReadOnlyCommand(words[0]) && !MutationsAllowed()) {
         hostlog::Warn("test: refused '" + words[0] + "': it changes the game, which only a completely sandboxed test copy may do");
+        if (gCapture) gCapture->push_back("refused '" + words[0] + "': it changes the game, which only a completely sandboxed test copy may do");
     } else {
         if (!ReadOnlyCommand(words[0])) race::TaintRun("test command " + words[0]);
         it->second(words, cmd);
@@ -1276,13 +1651,25 @@ void Frame() {
     queued.swap(gQueue);            // a command that queues another runs it next frame
     for (const auto& cmd : queued) Run(cmd);
     for (auto it = gFrameWaits.begin(); it != gFrameWaits.end();) {
-        if (gHostFrames < it->first) {
+        if (gHostFrames < it->frame) {
             ++it;
             continue;
         }
-        Report(it->second + " -> done");
+        const FrameWait wait = *it;
         it = gFrameWaits.erase(it);
+        Finish(wait.request, wait.command + " -> done");
     }
+    gHostFramesForReply = gHostFrames;
+    DriveFrame();
+    WatchRenders();
+    // The agent pipe: started once the copy is a complete sandbox (it drives the game), then read every frame.
+    if (!gPipeStarted && MutationsAllowed()) {
+        gPipeStarted = true;
+        const std::wstring name = L"\\\\.\\pipe\\ballest-test-" + std::to_wstring(GetCurrentProcessId());
+        std::thread(ServePipe, name).detach();
+        hostlog::Info("test: agent pipe ballest-test-" + std::to_string(GetCurrentProcessId()));
+    }
+    if (gPipeStarted) RunPipeRequests();
     // A sandboxed test copy reads its commands every frame (tools wait on the replies, not on fixed sleeps); any other
     // game every 30 frames, as before.
     if (++gFrames % (SandboxOn() ? 1 : 30) == 0) PollFile();

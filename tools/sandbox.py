@@ -19,6 +19,21 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import test_instance as ti  # noqa: E402
 
+# The host's agent pipe (0.31.0+, complete sandboxes; tools/agent.py): a command answered in about a frame with exactly
+# its own replies. Used whenever the slot's host has it; older hosts get the file channel.
+_pipes = {}
+
+
+def pipe(n):
+    """An open agent.Slot for slot n, or None (an older host, or the copy isn't a complete sandbox yet)."""
+    if n not in _pipes:
+        try:
+            from agent import Slot
+            _pipes[n] = Slot(n, timeout=0.5)
+        except Exception:
+            _pipes[n] = None
+    return _pipes[n]
+
 VERSION = "1.0.0"
 DESCRIPTION = "Sandboxed Ballest test copies (slots 1-9) and the player's own game: start, drive, screenshot, reload plugins"
 TEST_MAP = "3805348161"          # the Workshop map "stasis": race tests run only there or on your own create-mode maps
@@ -274,11 +289,13 @@ def ask(n, command, match, timeout):
 
 
 def sandboxed(n):
+    if pipe(n):                 # (the host opens its pipe only for a complete sandbox; asked anyway)
+        return any(l.startswith("sandbox: on, complete") for l in pipe(n).cmd("sandbox"))
     return "test: sandbox: on, complete" in ask(n, "sandbox", r"test: sandbox:", 15)
 
 
 def need_running(n):
-    if not ti.alive(n):
+    if not ti.running_fast(n):
         fail(f"slot {n} isn't running", f"{CLI} start {n} --plugin <plugin folder>")
 
 
@@ -295,6 +312,11 @@ def screenshot(n, name):
     """(<name>.png beside the slot's host.log, None) from its window, or with no window (headless) the engine's
     HighResShot; (None, why not) when there's no picture."""
     path = ti.data_dir(n) / f"{name}.png"
+    if pipe(n):                 # the game's own screenshot, HUD and plugin windows included, headless or not (~0.1 s)
+        try:
+            return Path(pipe(n).render(name)), None
+        except Exception as e:
+            return None, str(e)
     if headless(n):
         return (path, None) if engine_shot(n, path) else (None, f"HighResShot wrote nothing in {SHOT_WAIT} s")
     game = slot_game(n)
@@ -334,7 +356,7 @@ def run_commands(n, commands, full):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        if not ti.alive(n):
+        if not ti.running_fast(n):
             problems.append(f"the slot's game exited before `{line}`")
             break
         before = len(read_log(log))
@@ -345,6 +367,15 @@ def run_commands(n, commands, full):
         if line.startswith("wait "):
             if not wait_reply(n, since, line[5:], 60):
                 problems.append(f"wait: nothing matched {line[5:]!r} in 60 s")
+        elif line.startswith("waitstate ") and pipe(n):
+            end, matched = time.time() + 30, False
+            while time.time() < end and not matched:
+                matched = any(re.search(line[10:], l) for l in pipe(n).cmd("state"))
+                if not matched:
+                    pipe(n).wait(3)
+            if not matched:
+                problems.append(f"waitstate: no state matched {line[10:]!r} in 30 s")
+            continue
         elif line.startswith("waitstate "):
             end, matched, reply = time.time() + 30, False, ""
             while time.time() < end and not matched:
@@ -367,16 +398,20 @@ def run_commands(n, commands, full):
         elif line.startswith(WINDOW_COMMANDS) and headless(n):
             problems.append(f"`{line}`: slot {n} is headless, there is no window to post to (press reaches the plugins)")
             continue
+        elif pipe(n):
+            # exactly this command's replies, in about a frame (deferred ones, like waitframes, when they're done)
+            replies.extend(pipe(n).cmd(line[6:] if line.startswith("quick ") else line))
+            continue
         elif line.startswith("quick "):
             send(n, line[6:])
             time.sleep(0.2)
         else:
             send(n, line)
-            # its reply, or a refusal; then a moment for the lines that follow it
-            if wait_reply(n, before, r"test: |\[warn\] \[host\] test:", 5):
-                time.sleep(0.3)
-            else:
-                time.sleep(1.0)
+            # (an older host) once the game has taken the command file, a moment for the lines it writes
+            end = time.time() + 5
+            while (ti.data_dir(n) / "test_command.txt").exists() and time.time() < end:
+                time.sleep(0.01)
+            time.sleep(0.15)
         for l in read_log(log)[before:]:
             if "test: " in l or "[error]" in l or "[warn]" in l:
                 replies.append(strip_time(l).replace("[info] [host] test: ", "").replace("[host] test: ", ""))

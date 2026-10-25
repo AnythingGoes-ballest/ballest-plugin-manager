@@ -34,6 +34,9 @@
 //   campaigns [status] | tab | open <i> | pick <i> | back | show <id> | gametab <i> | hover [<card>]   custom campaigns (campaigns.cpp)
 //   dumptypes                             every class/struct/enum: types\Ballest.usmap (for FModel), types.txt
 //   crash [plugin id]                     test the fault guard: fault in host code now, or in that plugin's next call
+//   agentstate | render [name] | drive <x> <y> [frames] [jump] | wait <frames> | jumpevent <n>   for agents: the state as
+//                                          JSON, a PNG of the screen, the ball steered (tools/agent.py; a sandboxed copy
+//                                          also takes every command through the pipe ballest-test-<game pid>)
 //   callx <Class> <Function> [filter] | i:5 | f:1.5 | d:1.5 | u8:3 | b:1 | s:str | t:text | n:name | o:Class,filter | v:x,y,z
 #pragma once
 #include <string>
