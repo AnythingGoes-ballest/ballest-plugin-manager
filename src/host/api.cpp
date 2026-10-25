@@ -298,14 +298,21 @@ void TextFont(ui::Widget* w, const std::string& font, const std::string& typefac
     plugins::GameWork work;
     if (eng::Obj text = eng::Get(w->kind == ui::Kind::Button ? w->label : w->main)) ui::widgets::SetFontFace(text, font, typeface);
 }
+// A window's look changed builds it again (layoutDirty): only when it did change. A plugin setting the same value every
+// frame (Draw Core's ring did, for its corner radius) rebuilt its window every frame: lag, and widgets piling up until
+// the next garbage collection (measured 2026-10-25).
 void WinCornerRadius(ui::Window* w, float radius) {
-    w->cornerRadius = radius < 0 ? 0 : radius;
+    const float r = radius < 0 ? 0 : radius;
+    if (w->cornerRadius == r) return;
+    w->cornerRadius = r;
     w->layoutDirty = true;
 }
 // SetPadding, SetRowGap and SetGapBefore: any negative value puts the host's default back.
 void WinPadding(ui::Window* w, float x, float y) {
-    w->paddingX = x < 0 || y < 0 ? -1 : x;
-    w->paddingY = x < 0 || y < 0 ? -1 : y;
+    const float px = x < 0 || y < 0 ? -1 : x, py = x < 0 || y < 0 ? -1 : y;
+    if (w->paddingX == px && w->paddingY == py) return;
+    w->paddingX = px;
+    w->paddingY = py;
     w->layoutDirty = true;
 }
 void WinRowGap(ui::Window* w, float gap) {
@@ -313,6 +320,7 @@ void WinRowGap(ui::Window* w, float gap) {
     w->layoutDirty = true;
 }
 void WinBackground(ui::Window* w, float r, float g, float b, float a) {
+    if (w->background.r == r && w->background.g == g && w->background.b == b && w->background.a == a) return;
     w->background = {r, g, b, a};
     w->layoutDirty = true;
 }
@@ -353,6 +361,7 @@ void WinRect(ui::Window* w, float x, float y, float width, float height) {
     else w->layoutDirty = true;
 }
 void WinScreenSize(ui::Window* w, float width, float height) {
+    if (w->screenWidth == width && w->screenHeight == height) return;
     w->screenWidth = width;
     w->screenHeight = height;
     w->layoutDirty = true;
@@ -1059,6 +1068,7 @@ void RegisterEditor() {
     Global("bool GetScale(int, double &out, double &out, double &out)", asFUNCTION(EditorScale));
     Global("bool Undo()", asFUNCTION(EditorUndo));
     Global("bool Redo()", asFUNCTION(EditorRedo));
+    Global("int HistoryMoves()", asFUNCTION(editor::HistoryMoves));
     Global("array<int>@ SpawnPieces(const array<string>@ classes, const array<double>@ transforms, bool drop = false)",
            asFUNCTION(EditorSpawnPieces));
     Global("void RotatePieces(const array<int>@, double, double, double, double, double, double)", asFUNCTION(EditorRotatePieces));

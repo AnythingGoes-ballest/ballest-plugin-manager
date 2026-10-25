@@ -51,6 +51,7 @@ struct Spawn {
 std::vector<int> SpawnPieces(const std::vector<Spawn>& pieces, bool drop);
 // The editor's own undo and redo (its handler's, as Ctrl+Z and Ctrl+Y do); false outside the editor.
 bool Undo();
+int HistoryMoves();          // undo and redo steps the editor has run, however they were started (counted from 0)
 bool Redo();
 Vec3 ViewForward();
 // Where a piece's middle (its bounds' centre) is on screen, in the units of window offsets and the mouse position

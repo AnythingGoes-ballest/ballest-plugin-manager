@@ -1811,6 +1811,14 @@ The editor's own redo, as Ctrl+Y. Requires host 0.31.0.
 --
 Editor::Redo();
 
+== Editor::HistoryMoves
+How many undo and redo steps the editor has run, however they were started (its Ctrl+Z / Ctrl+Y, a plugin's
+`Editor::Undo`), counted from 0. Compare before and after to know whether the editor took a step. Requires host 0.31.0.
+--
+int before = Editor::HistoryMoves();
+// ... later
+bool stepped = Editor::HistoryMoves() != before;
+
 == Editor::DuplicateSelection
 Copies the selected pieces in place and returns the copies, which are left selected.
 --

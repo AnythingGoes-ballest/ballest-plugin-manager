@@ -122,9 +122,12 @@ std::vector<Obj> gSpawned;              // this frame's SpawnActor results, fres
 void SpawnWatched();
 bool SpawnHookInstalled();
 
+void HistoryWatched();
+
 void FindPlacements() {
     gPlaced.clear();
     SpawnWatched();
+    HistoryWatched();
     if (SpawnHookInstalled()) {
         for (Obj a : gSpawned)
             if (a && eng::IsLive(a)) {
@@ -364,6 +367,8 @@ void KeepToolbarChoices();
 void KeepHotkeys();
 void KeepRestores();
 void MoveDrops();          // pieces from SpawnPieces falling into place: further down
+void BeginSpawnBatch();    // SpawnPieces' UI refreshes held to the end: further down
+void EndSpawnBatch();
 }  // namespace
 
 void Frame() {
@@ -444,9 +449,12 @@ struct Drop {
     eng::Weak actor;
     Vec3 to;
     double start;
+    bool hidden;                // not shown until its fall starts (a wave: each appears as it begins to fall)
 };
 std::vector<Drop> gDrops;
-constexpr double kDropHeight = 600, kDropTime = 0.35, kDropStagger = 0.025;
+// each piece falls kDropHeight in kDropTime, kDropStagger after the one before (less for a long line: the whole wave
+// takes kDropWave at most)
+constexpr double kDropHeight = 600, kDropTime = 0.35, kDropStagger = 0.08, kDropWave = 1.5;
 
 struct TransformBytes {
     uint8_t bytes[96];
@@ -481,6 +489,10 @@ void MoveDrops() {
         if (t < 0) {
             ++it;
             continue;
+        }
+        if (it->hidden) {
+            eng::Call(a, "SetActorHiddenInGame", uint8_t{0});
+            it->hidden = false;
         }
         const double k = t >= 1 ? 0 : (1 - t) * (1 - t);           // eases in: falls faster as it lands
         const Vec3 at{it->to.x, it->to.y, it->to.z + kDropHeight * k};
@@ -553,10 +565,16 @@ std::vector<int> SpawnPieces(const std::vector<Spawn>& pieces, bool drop) {
     const eng::Params description = eng::MakeText("Draw track");
     size_t textSize = 0;
     const uint8_t* text = description.Return(&textSize);
+    const double started = game::Seconds();
+    const int objectsBefore = eng::NumObjects();
+    BeginSpawnBatch();
     eng::Params begin(eng::FunctionOn(handler, "BeginHistory"));
     const bool opened = text && begin.Set("Description", text, textSize) && eng::Invoke(handler, begin);
     const bool pasted = eng::Call(handler, "Paste", uint8_t{1}, uint8_t{0}, none).Invoked();   // at the copied place
     std::memcpy(slot, saved, sizeof saved);
+    // the held refreshes run now: the editor pawn's own (one of them) is what lists the pasted pieces in the handler's
+    // AllActors (measured: holding it past here, the pieces weren't listed until the end and kept scale 1)
+    EndSpawnBatch();
     if (!pasted) {
         if (opened) eng::Call(handler, "EndHistory");
         hostlog::Warn("editor: the paste call failed");
@@ -606,6 +624,10 @@ std::vector<int> SpawnPieces(const std::vector<Spawn>& pieces, bool drop) {
     }
     if (opened) eng::Call(handler, "EndHistory");
     const double now = game::Seconds();
+    char took[160];
+    std::snprintf(took, sizeof took, "editor: SpawnPieces placed %zu pieces in %.0f ms (objects %d -> %d)", items.size(),
+                  (now - started) * 1000.0, objectsBefore, eng::NumObjects());
+    hostlog::Info(took);
     for (Obj a : AllActors()) {
         if (before.count(IdOf(a))) continue;
         const int id = IdOf(a);
@@ -613,14 +635,19 @@ std::vector<int> SpawnPieces(const std::vector<Spawn>& pieces, bool drop) {
         gKnown.insert(id);                                          // not placements from the palette
         gFresh.erase(id);
     }
-    // the paste order is the list's: each new actor's drop starts a little after the one before
-    if (drop)
+    // the paste order is the list's: each new actor appears and starts to fall a little after the one before, in a
+    // wave along the line
+    if (drop) {
+        const double stagger = made.size() > 1 ? std::min(kDropStagger, kDropWave / static_cast<double>(made.size() - 1)) : 0;
         for (size_t k = 0; k < made.size(); ++k)
             if (Obj a = Resolve(made[k])) {
                 const Vec3 to = eng::Call(a, "K2_GetActorLocation").ReturnAs<Vec3>();
-                gDrops.push_back({eng::MakeWeak(a), to, now + kDropStagger * static_cast<double>(k)});
+                const bool later = k > 0;
+                gDrops.push_back({eng::MakeWeak(a), to, now + stagger * static_cast<double>(k), later});
                 eng::Call(a, "K2_SetActorLocation", Vec3{to.x, to.y, to.z + kDropHeight}, uint8_t{0});
+                if (later) eng::Call(a, "SetActorHiddenInGame", uint8_t{1});
             }
+    }
     return made;
 }
 
@@ -757,6 +784,125 @@ bool gWatchingClicks = true;            // off (test switch): every click is lef
 std::deque<Click> gClicks;
 constexpr size_t kMaxClicks = 16;
 constexpr int kControlKey = 0x11, kAltKey = 0x12;
+
+// --- SpawnPieces' UI refreshes, held to the end -----------------------------------------------------------------------
+// The editor's paste grabs the pasted pieces one at a time and broadcasts the handler's OnChangeDelegate after each.
+// Its UI listeners rebuild on every one: W_Outliner re-syncs every row and the editor pawn's OnChange rebuilds the
+// Details panel for the whole selection (measured 2026-10-15: a 100-piece paste made ~800k UI objects, freed only by
+// the next garbage collection; quick ones in a row crashed the game at its UObject limit, and a 94-piece Draw Track
+// line did on 2026-10-24). While SpawnPieces runs, the UI widgets' (and the pawn's) handlers on the handler's change
+// delegates are queued instead, once per widget, function and parameters, and each runs once at the end. Placed pieces
+// listening to the same delegates get every call. The player's own pastes are left as the game makes them (the handlers
+// are swapped for one that passes every call straight on outside SpawnPieces). From the fast-paste work of 2026-10-15
+// (pm-fastpaste), there switched on for every paste and selection; here only for SpawnPieces.
+int gBatchDepth = 0;
+struct DeferredChange {
+    eng::Weak widget;
+    Obj function = nullptr;
+    std::vector<uint8_t> params;        // the call's parameter block (an action, a count or nothing)
+};
+std::vector<DeferredChange> gDeferred;
+int gDeferredCalls = 0;
+NativeFunction gWidgetScriptEntry = nullptr;      // the interpreter's entry, which the widgets' handlers had
+std::map<Obj, int32_t> gWidgetHandlers;           // UFunctions with WidgetChangeHooked as their entry: parameter bytes
+std::set<Obj> gNativeListenersSeen;
+
+void WidgetChangeHooked(Obj context, uint8_t* frame, void* result) {
+    if (gBatchDepth <= 0 || !frame) return gWidgetScriptEntry(context, frame, result);
+    Obj node = nullptr;
+    uint8_t* locals = nullptr;
+    std::memcpy(&node, frame + layout::kFFrameFunctionOffset, sizeof node);
+    std::memcpy(&locals, frame + layout::kFFrameParametersOffset, sizeof locals);
+    const auto handler = gWidgetHandlers.find(node);
+    if (!node || handler == gWidgetHandlers.end() || (handler->second > 0 && !locals))
+        return gWidgetScriptEntry(context, frame, result);
+    std::vector<uint8_t> params(locals, locals + handler->second);
+    ++gDeferredCalls;
+    for (const auto& d : gDeferred)
+        if (d.function == node && d.params == params && eng::Get(d.widget) == context) return;
+    gDeferred.push_back({eng::MakeWeak(context), node, std::move(params)});
+}
+
+// The UI widgets (and the editor pawn) bound to one of the handler's delegates, from its invocation list
+// (FScriptDelegate: weak object index + serial, function name): their handlers get WidgetChangeHooked as their entry.
+void WatchWidgetHandlers(const char* delegate) {
+    if (!gClickOriginal) return;   // the interpreter's entry, measured on the pawn's click events
+    static eng::Weak userWidget;
+    if (!eng::Get(userWidget)) userWidget = eng::MakeWeak(eng::FindClass("UserWidget"));
+    const eng::Prop list = eng::FindProp(eng::ClassOf(Handler()), delegate);
+    if (!list || !eng::Get(userWidget)) return;
+    uint8_t* entries = nullptr;
+    int32_t count = 0;
+    std::memcpy(&entries, Handler() + list.offset, sizeof entries);
+    std::memcpy(&count, Handler() + list.offset + 8, sizeof count);
+    for (int32_t i = 0; entries && i < count && i < 4096; ++i) {
+        const uint8_t* d = entries + i * 16;
+        int32_t index = 0;
+        uint32_t name = 0;
+        int32_t number = 0;
+        std::memcpy(&index, d, sizeof index);
+        std::memcpy(&name, d + 8, sizeof name);
+        std::memcpy(&number, d + 12, sizeof number);
+        Obj widget = eng::ObjectAt(index);
+        if (!widget || (!eng::IsA(widget, eng::Get(userWidget)) && widget != Pawn())) continue;
+        Obj fn = eng::FindFunction(eng::ClassOf(widget), eng::Name(name, number));
+        if (!fn || gWidgetHandlers.count(fn) || gNativeListenersSeen.count(fn)) continue;
+        NativeFunction entry = nullptr;
+        std::memcpy(&entry, fn + layout::kUFunctionNativeFunctionOffset, sizeof entry);
+        const NativeFunction hooked = &WidgetChangeHooked;
+        int32_t bytes = 0;
+        bool plain = true;                       // inputs only: a queued call has nothing to hand back
+        for (const auto& param : eng::ParamsOf(fn)) {
+            static const std::set<std::string> kPlainKinds = {"ByteProperty", "EnumProperty", "IntProperty", "BoolProperty",
+                                                              "FloatProperty", "DoubleProperty"};
+            bytes = std::max(bytes, param.offset + param.size);
+            plain &= !param.isOut && !param.isReturn && kPlainKinds.count(eng::KindOf(eng::FindProp(fn, param.name)));
+        }
+        if (!plain || bytes > 64) continue;
+        if (entry == hooked) {
+            gWidgetHandlers[fn] = bytes;
+            continue;
+        }
+        // a native listener (W_Details' EditorChanged, the game module's C++) has an entry of its own: left alone
+        if (entry != gClickOriginal) {
+            if (gNativeListenersSeen.insert(fn).second) hostlog::Info("editor: " + eng::PathOf(fn) + " is native; not held");
+            continue;
+        }
+        gWidgetScriptEntry = entry;
+        gWidgetHandlers[fn] = bytes;
+        std::memcpy(fn + layout::kUFunctionNativeFunctionOffset, &hooked, sizeof hooked);
+        hostlog::Info(std::string("editor: SpawnPieces holds ") + delegate + " in " + eng::PathOf(fn));
+    }
+}
+
+const char* const kHeldDelegates[] = {"OnChangeDelegate", "OnHistoryChangedDelegate", "OnHistoryChangedMinMaxDelegate",
+                                      "OnValidateableDelegate", "OnAllocatedBudgetChangedDelegate"};
+
+void BeginSpawnBatch() {
+    if (Handler())
+        for (const char* delegate : kHeldDelegates) WatchWidgetHandlers(delegate);
+    ++gBatchDepth;
+}
+
+void EndSpawnBatch() {
+    if (--gBatchDepth > 0) return;
+    gBatchDepth = 0;
+    auto queued = std::move(gDeferred);
+    gDeferred.clear();
+    const int calls = gDeferredCalls;
+    gDeferredCalls = 0;
+    for (const auto& d : queued) {
+        Obj widget = eng::Get(d.widget);
+        if (!widget) continue;
+        eng::Params p(d.function);
+        for (const auto& param : eng::ParamsOf(d.function))
+            if (param.offset + param.size <= static_cast<int32_t>(d.params.size()))
+                p.Set(param.name.c_str(), d.params.data() + param.offset, static_cast<size_t>(param.size));
+        eng::Invoke(widget, p);
+    }
+    if (calls > 0)
+        hostlog::Info("editor: SpawnPieces' " + std::to_string(calls) + " UI refreshes ran as " + std::to_string(queued.size()));
+}
 
 // The editor's save path (W_MapEditor's save button -> W_SaveLoad.ManuallySaveNoCallback -> if the file exists, an
 // "Overwrite Save?" popup answered through UserAccepted_Event / UserDeclined_Event; read from the blueprints), logged
@@ -907,6 +1053,42 @@ void SpawnWatched() {
     gSpawnOriginal = entry;
     std::memcpy(fn + layout::kUFunctionNativeFunctionOffset, &hooked, sizeof hooked);
     hostlog::Info("editor: watching palette placements");
+}
+
+// The handler's Undo and Redo (native, each its own entry), counted whichever way they run (the editor's Ctrl+Z, its
+// toolbar, a plugin): a plugin can tell whether the editor took a step back without guessing at timing.
+NativeFunction gUndoOriginal = nullptr, gRedoOriginal = nullptr;
+int gHistoryMoves = 0;
+bool gHistoryHookFailed = false;
+
+void UndoHooked(Obj context, uint8_t* frame, void* result) {
+    ++gHistoryMoves;
+    gUndoOriginal(context, frame, result);
+}
+void RedoHooked(Obj context, uint8_t* frame, void* result) {
+    ++gHistoryMoves;
+    gRedoOriginal(context, frame, result);
+}
+
+void HistoryWatched() {
+    if ((gUndoOriginal && gRedoOriginal) || gHistoryHookFailed || !Handler()) return;
+    Obj cls = eng::ClassOf(Handler());
+    for (int i = 0; i < 2; ++i) {
+        NativeFunction& original = i == 0 ? gUndoOriginal : gRedoOriginal;
+        const NativeFunction hooked = i == 0 ? &UndoHooked : &RedoHooked;
+        Obj fn = eng::FindFunction(cls, i == 0 ? "Undo" : "Redo");
+        NativeFunction entry = nullptr;
+        if (fn) std::memcpy(&entry, fn + layout::kUFunctionNativeFunctionOffset, sizeof entry);
+        if (entry == hooked) continue;
+        if (!fn || !entry || !eng::InImage(reinterpret_cast<void*>(entry)) || entry == gClickOriginal) {
+            gHistoryHookFailed = true;
+            hostlog::Warn("editor: the handler's Undo / Redo are not as measured; their steps aren't counted");
+            return;
+        }
+        original = entry;
+        std::memcpy(fn + layout::kUFunctionNativeFunctionOffset, &hooked, sizeof hooked);
+    }
+    hostlog::Info("editor: counting undo and redo steps");
 }
 
 // A key binding's press event among the class's functions named prefix + a number. Each binding compiles to a pair
@@ -1630,5 +1812,6 @@ std::string Status() {
 }
 
 void SetWatchingClicks(bool on) { gWatchingClicks = on; }
+int HistoryMoves() { return gHistoryMoves; }
 
 }  // namespace editor
