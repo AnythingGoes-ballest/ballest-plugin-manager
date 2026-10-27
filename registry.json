@@ -148,6 +148,45 @@
       }
     },
     {
+      "id": "draw-core",
+      "name": "Draw Core",
+      "description": "The drawing Inspect Draw and Draw Track share: strokes from the mouse on surfaces or a level plane, the layer that keeps the camera still while drawing, and the brush ring. Installed with them.",
+      "author": "AnythingGoes",
+      "repo": "AnythingGoes-ballest/ballest-draw-core",
+      "version": "0.1.1",
+      "commit": "543dabcb1ef10fae5663a630c1b4cf76b7b03bfc",
+      "min_host": "0.31.0",
+      "icon": "",
+      "dependencies": [],
+      "files": {
+        "info.toml": "33e6b319de720d2e8be7ee216b20cd1bd919fc4b87281b5e58c68a3d82d949b5",
+        "main.as": "7e04a32db19ace5ea15a92a150c783b4bb633d9a2303d11b49a86674bed178c8"
+      }
+    },
+    {
+      "id": "draw-track",
+      "name": "Draw Track",
+      "description": "Draw a line in the track editor and track pieces drop into place along it: straights, curves, ramps and crests in Track, Bevel Half, Bevel Full or Round, joined to the track already there (its ends, joins and sides), in one undo step.",
+      "author": "AnythingGoes",
+      "repo": "AnythingGoes-ballest/ballest-draw-track",
+      "version": "0.7.0",
+      "commit": "a0dbfeaed426774ad87e97cbdf5c73d7be482a78",
+      "min_host": "0.31.0",
+      "icon": "",
+      "dependencies": [
+        "draw-core"
+      ],
+      "files": {
+        "info.toml": "6a5dfa09c17a7e6a0ccba9d8252cbd116d1f2868b1cbb5b243708cc2b4038661",
+        "main.as": "9cedcab896554ce2e88423d8a130dd80c4c3495672e43b7bc205f44625764770",
+        "kit.txt": "ffa4bf284c8c1891bf77ad6389b13919eb1e40dfa35e80b01b9d96347d1789a5",
+        "ends.txt": "b251c58b16f067b1928d357615d639c6e6ee786a60a4fd7e61f0976e1666ce3e",
+        "bounds.txt": "76a2472bbc7a42fac3c7afae5a35af1f6bed0e5214b1ffed4ed0f2bcdddfcd17",
+        "bank.txt": "2bdffead4fc2f54b19d9c47e0d6b4922764628a725e1ba705e89ba23b6147c53",
+        "pencil.png": "0ed6eae4b1e341e11ba777657db7c30be6b977d46fffc735cc856206aed93777"
+      }
+    },
+    {
       "id": "elemental-balls",
       "name": "Elemental Balls",
       "description": "Three glowing balls painted from their concept art: Void Crystal, Frost and Toxic Current, in real materials of their own with a clear coat, a slowly flowing glow and a soft aura.",
@@ -623,6 +662,26 @@
         "info.toml": "a423276d56fb14160c54e91f580ce716095a75ba51943b17e87b6d144773cd16",
         "main.as": "23c8de1f142f09ec32522b1bdc6829693f4e111a4b58a50da3978fb525057c09",
         "icon.png": "d44f163f6a67d8b0e9d7d46a141d735164f9cd002ab7537e650f15ecdcf022e3"
+      }
+    },
+    {
+      "id": "inspect-draw",
+      "name": "Inspect Draw",
+      "description": "Draw 3D lines on the map in inspect mode (T): hold the left mouse button to draw, Ctrl+Z to undo. Lines are saved per map.",
+      "author": "AnythingGoes",
+      "repo": "AnythingGoes-ballest/ballest-inspect-draw",
+      "version": "0.1.0",
+      "commit": "e301ef5412f55fe1917f17411c83608d94210a93",
+      "min_host": "0.31.0",
+      "icon": "",
+      "dependencies": [
+        "draw-core"
+      ],
+      "files": {
+        "info.toml": "3502247717de7f345291a2fa469f40ea5e4503e5fac709715b1229d43b2fde7e",
+        "main.as": "6f9f70cbca62a7107da7ffb172a8144e4c9e505479c8a03086792d0e4ec87aec",
+        "pencil.png": "0ed6eae4b1e341e11ba777657db7c30be6b977d46fffc735cc856206aed93777",
+        "eraser.png": "c2cf84c25569e655f226110109a28d5eb12ed880ad36ac5f0b79c5cf184c7fa5"
       }
     },
     {
