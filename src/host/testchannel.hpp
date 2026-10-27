@@ -36,6 +36,8 @@
 //   crash [plugin id]                     test the fault guard: fault in host code now, or in that plugin's next call
 //   seq [<gap frames>] <a> || <b> ... | repeat <n> <cmd> | reloadmap | editorcam [x y z [pitch yaw] | lookat x y z | frame <id> [dist]]   frames in order, the map again, the editor camera
 //   tap <x> <y> | hover <x> <y> | hover off   a click / the pointer at a screen pixel, headless too (testchannel.cpp)
+//   gamekey <key> [frames] | gamehold <key> 1|0 | gamekeys   the game's own keys through Enhanced Input, headless too;
+//                                  post and clickat do these (gamekey, tap) when there's no window
 //   agentstate | render [name] | drive <x> <y> [frames] [jump] | wait <frames> | jumpevent <n>   for agents: the state as
 //                                          JSON, a PNG of the screen, the ball steered (tools/agent.py; a sandboxed copy
 //                                          also takes every command through the pipe ballest-test-<game pid>)

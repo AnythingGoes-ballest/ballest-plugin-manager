@@ -69,7 +69,7 @@ bool ReadOnlyCommand(const std::string& name) {
         "viewtarget", "materials", "watch", "children", "fnbytes", "matparams", "race", "ballstate", "ballsave", "hud",
         "widgetpath", "strprop", "objprop", "listprop", "dumptypes", "objbytes", "membytes", "objarray", "cosmetics",
         "skinmats", "sandbox", "sandboxtest", "splitref", "nghost", "nametags", "localrec", "ghostlook", "fade", "waitframes",
-        "wait", "agentstate", "render", "seq", "repeat"};
+        "wait", "agentstate", "render", "seq", "repeat", "gamekeys"};
     return kReadOnly.count(name) > 0;
 }
 
@@ -489,6 +489,155 @@ void DriveFrame() {
     SendMove(0, 0);
     gDrive.on = false;
     Finish(gDrive.request, "drive -> done " + AgentState());
+}
+
+
+// "gamekey <key> [frames]", "gamehold <key> 1|0", "gamekeys": the game's own keys without a window (a headless copy has
+// none to post to). The game reads every key through Enhanced Input: the player's active mappings (the
+// EnhancedActionMappings its contexts make, a key and an action each, with that mapping's modifiers and triggers) say
+// which actions a key drives now, and each is injected with Enhanced Input's own InjectInputForAction, every frame while
+// the key is held: what the key itself would do (W's swizzle into IA_Move included). <key> is a Windows key code (as
+// "post" takes) or the engine's key name (T, SpaceBar, Escape, LeftMouseButton, ...).
+std::string KeyName(const std::string& key) {
+    if (key.empty() || !std::all_of(key.begin(), key.end(), [](char ch) { return std::isdigit(static_cast<unsigned char>(ch)); }))
+        return key;
+    const int vk = std::atoi(key.c_str());
+    static const char* const kDigits[] = {"Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"};
+    if (vk >= 'A' && vk <= 'Z') return std::string(1, static_cast<char>(vk));
+    if (vk >= '0' && vk <= '9') return kDigits[vk - '0'];
+    if (vk >= VK_F1 && vk <= VK_F12) return "F" + std::to_string(vk - VK_F1 + 1);
+    static const std::map<int, const char*> kNames = {
+        {VK_LBUTTON, "LeftMouseButton"}, {VK_RBUTTON, "RightMouseButton"}, {VK_MBUTTON, "MiddleMouseButton"},
+        {VK_BACK, "BackSpace"}, {VK_TAB, "Tab"}, {VK_RETURN, "Enter"}, {VK_SHIFT, "LeftShift"}, {VK_CONTROL, "LeftControl"},
+        {VK_MENU, "LeftAlt"}, {VK_CAPITAL, "CapsLock"}, {VK_ESCAPE, "Escape"}, {VK_SPACE, "SpaceBar"}, {VK_PRIOR, "PageUp"},
+        {VK_NEXT, "PageDown"}, {VK_END, "End"}, {VK_HOME, "Home"}, {VK_LEFT, "Left"}, {VK_UP, "Up"}, {VK_RIGHT, "Right"},
+        {VK_DOWN, "Down"}, {VK_INSERT, "Insert"}, {VK_DELETE, "Delete"}, {VK_LSHIFT, "LeftShift"}, {VK_RSHIFT, "RightShift"},
+        {VK_LCONTROL, "LeftControl"}, {VK_RCONTROL, "RightControl"}, {VK_LMENU, "LeftAlt"}, {VK_RMENU, "RightAlt"},
+        {VK_OEM_1, "Semicolon"}, {VK_OEM_PLUS, "Equals"}, {VK_OEM_COMMA, "Comma"}, {VK_OEM_MINUS, "Hyphen"},
+        {VK_OEM_PERIOD, "Period"}, {VK_OEM_2, "Slash"}, {VK_OEM_3, "Tilde"}, {VK_OEM_4, "LeftBracket"},
+        {VK_OEM_5, "Backslash"}, {VK_OEM_6, "RightBracket"}, {VK_OEM_7, "Apostrophe"},
+    };
+    const auto it = kNames.find(vk);
+    return it != kNames.end() ? it->second : key;
+}
+
+struct KeyMapping {
+    eng::Obj action = nullptr;
+    std::string key;
+    const uint8_t* modifiers = nullptr;     // the mapping's TArray<UInputModifier*> and TArray<UInputTrigger*> (16 bytes each)
+    const uint8_t* triggers = nullptr;
+};
+
+// The player's active key mappings now (empty with no player, or before its contexts are applied).
+std::vector<KeyMapping> KeyMappings() {
+    std::vector<KeyMapping> out;
+    eng::Obj controller = game::PlayerController();
+    eng::Obj input = controller ? eng::ReadObj(controller, "PlayerInput") : nullptr;
+    const eng::Prop list = input ? eng::FindProp(eng::ClassOf(input), "EnhancedActionMappings") : eng::Prop{};
+    const eng::Prop element = eng::InnerOf(list);
+    const eng::Obj type = eng::StructOf(element);
+    const eng::Prop action = type ? eng::FindProp(type, "Action") : eng::Prop{}, key = type ? eng::FindProp(type, "Key") : eng::Prop{};
+    const eng::Prop modifiers = type ? eng::FindProp(type, "Modifiers") : eng::Prop{};
+    const eng::Prop triggers = type ? eng::FindProp(type, "Triggers") : eng::Prop{};
+    if (!action || !key || !modifiers || !triggers || element.size <= 0) return out;
+    struct { uint8_t* data; int32_t num, max; } arr{};
+    std::memcpy(&arr, reinterpret_cast<const uint8_t*>(input) + list.offset, sizeof arr);
+    if (!arr.data || arr.num <= 0 || arr.num > 4096) return out;
+    for (int32_t i = 0; i < arr.num; ++i) {
+        const uint8_t* m = arr.data + static_cast<ptrdiff_t>(i) * element.size;
+        KeyMapping k;
+        std::memcpy(&k.action, m + action.offset, sizeof k.action);
+        uint32_t name[2];                   // FKey: its FName first
+        std::memcpy(name, m + key.offset, sizeof name);
+        k.key = eng::Name(name[0], static_cast<int32_t>(name[1]));
+        k.modifiers = m + modifiers.offset;
+        k.triggers = m + triggers.offset;
+        if (k.action) out.push_back(k);
+    }
+    return out;
+}
+
+// One frame of the key on every action it's mapped to; the actions' names.
+std::vector<std::string> InjectKey(const std::string& key) {
+    std::vector<std::string> reached;
+    static eng::Obj inject = nullptr;
+    if (!inject) inject = eng::FindFunction(eng::FindClass("EnhancedInputSubsystemInterface"), "InjectInputForAction");
+    const auto subsystems = Instances("EnhancedInputLocalPlayerSubsystem", "");
+    if (!inject || subsystems.empty()) return reached;
+    for (const KeyMapping& k : KeyMappings()) {
+        if (_stricmp(k.key.c_str(), key.c_str()) != 0) continue;
+        uint8_t type = 0;                   // EInputActionValueType: 0 bool, 1-3 axes; a key's value is 1 on X either way
+        eng::ReadBytes(k.action, "ValueType", &type, sizeof type);
+        uint8_t value[32] = {};             // FInputActionValue: an FVector of doubles, then its type
+        const double one = 1.0;
+        std::memcpy(value, &one, sizeof one);
+        value[24] = type;
+        eng::Params p(inject);
+        p.Set("Action", k.action);
+        p.Set("RawValue", value, sizeof value);
+        p.Set("Modifiers", k.modifiers, 16);
+        p.Set("Triggers", k.triggers, 16);
+        if (eng::Invoke(subsystems.front(), p)) reached.push_back(eng::ObjName(k.action));
+    }
+    return reached;
+}
+
+struct GameKey {
+    std::string key;
+    long long frames = 0;                   // frames left; -1 while held by gamehold
+    long long request = 0;
+    std::set<std::string> reached;
+};
+std::vector<GameKey> gGameKeys;
+
+std::string Joined(const std::set<std::string>& names) {
+    std::string out;
+    for (const auto& n : names) out += (out.empty() ? "" : ", ") + n;
+    return out;
+}
+
+void StartGameKey(const std::string& key, long long frames, const std::string& c) {
+    const std::string name = KeyName(key);
+    if (name.empty()) return Report(c + " -> which key? (a key code or a name: T, SpaceBar, Escape, ...)");
+    gGameKeys.erase(std::remove_if(gGameKeys.begin(), gGameKeys.end(), [&](const GameKey& k) {
+        if (_stricmp(k.key.c_str(), name.c_str()) != 0) return false;
+        if (k.request) Finish(k.request, "gamekey " + k.key + " -> replaced");
+        return true;
+    }), gGameKeys.end());
+    if (frames == 0) return Report(c + " -> let go");
+    GameKey k;
+    k.key = name;
+    k.frames = frames;
+    const auto now = InjectKey(name);
+    if (now.empty())                        // (menus read Enter and the arrows through Slate focus, not Enhanced Input)
+        return Report(c + " -> nothing is mapped to " + name + " now (gamekeys lists what is; a menu button takes tap <x> <y>)");
+    k.reached.insert(now.begin(), now.end());
+    if (frames < 0) {
+        gGameKeys.push_back(k);
+        return Report(c + " -> holding " + name + ": " + Joined(k.reached));
+    }
+    k.request = Defer();
+    gGameKeys.push_back(k);
+}
+
+void GameKeyFrame() {
+    for (auto it = gGameKeys.begin(); it != gGameKeys.end();) {
+        if (it->frames < 0 || --it->frames > 0) {
+            for (const auto& a : InjectKey(it->key)) it->reached.insert(a);
+            ++it;
+            continue;
+        }
+        Finish(it->request, "gamekey " + it->key + " -> " + Joined(it->reached));
+        it = gGameKeys.erase(it);
+    }
+}
+
+std::string GameKeys() {
+    std::map<std::string, std::set<std::string>> byKey;
+    for (const KeyMapping& k : KeyMappings()) byKey[k.key].insert(eng::ObjName(k.action));
+    std::string out;
+    for (const auto& [key, actions] : byKey) out += (out.empty() ? "" : "; ") + key + ": " + Joined(actions);
+    return out.empty() ? "none (no player, or its input contexts aren't applied yet)" : out;
 }
 
 
@@ -1101,7 +1250,9 @@ void Run(const std::string& cmd) {
         {"post", [](const Args& a, const std::string& c) {       // post <vk> [ms]: a key pressed in the game's own window
              const int vk = std::atoi(Arg(a, 1).c_str());
              HWND w = static_cast<HWND>(game::WindowHandle());
-             if (!w || vk <= 0 || vk > 255) return Report(c + " -> no game window or key");
+             if (vk <= 0 || vk > 255) return Report(c + " -> which key?");
+             if (!w)                                                // headless: the key through Enhanced Input instead
+                 return StartGameKey(Arg(a, 1), std::max(1, std::atoi(Arg(a, 2).c_str()) / 33), c);
              const LPARAM scan = static_cast<LPARAM>(MapVirtualKeyW(static_cast<UINT>(vk), 0)) << 16;
              PostMessageW(w, WM_KEYDOWN, static_cast<WPARAM>(vk), 1 | scan);
              gPostedUps.push_back({vk, GetTickCount64() + static_cast<ULONGLONG>(std::max(30, std::atoi(Arg(a, 2).c_str())))});
@@ -1225,7 +1376,7 @@ void Run(const std::string& cmd) {
          }},
         {"clickat", [](const Args& a, const std::string& c) {    // clickat <x> <y>: a left click posted to the game's window
              HWND w = static_cast<HWND>(game::WindowHandle());       // (client pixels); the real mouse isn't moved
-             if (!w) return Report(c + " -> no game window");
+             if (!w) return StartTap(a, c);                          // headless: a tap at the same pixel
              const LPARAM at = MAKELPARAM(std::atoi(Arg(a, 1).c_str()), std::atoi(Arg(a, 2).c_str()));
              PostMessageW(w, WM_MOUSEMOVE, 0, at);
              PostMessageW(w, WM_LBUTTONDOWN, MK_LBUTTON, at);
@@ -1637,6 +1788,13 @@ void Run(const std::string& cmd) {
         {"render", [](const Args& a, const std::string&) { StartRender(Arg(a, 1)); }},
         {"drive", [](const Args& a, const std::string& c) { StartDrive(a, c); }},
         {"tap", [](const Args& a, const std::string& c) { StartTap(a, c); }},
+        {"gamekey", [](const Args& a, const std::string& c) {     // gamekey <key> [frames]: a game key pressed, headless too
+             StartGameKey(Arg(a, 1), a.size() > 2 ? std::max(1, std::atoi(Arg(a, 2).c_str())) : 2, c);
+         }},
+        {"gamehold", [](const Args& a, const std::string& c) {    // gamehold <key> 1|0: held until let go
+             StartGameKey(Arg(a, 1), Arg(a, 2) == "0" ? 0 : -1, c);
+         }},
+        {"gamekeys", [](const Args&, const std::string&) { Report("gamekeys " + GameKeys()); }},
         {"seq", [](const Args& a, const std::string& c) {          // seq [<frames between>] a || b || c
              std::string rest = c.size() > 4 ? c.substr(4) : "";
              int gap = 1;
@@ -2026,6 +2184,7 @@ void Frame() {
     }
     gHostFramesForReply = gHostFrames;
     DriveFrame();
+    GameKeyFrame();
     TapFrame();
     SequenceFrame();
     ReloadFrame();

@@ -244,13 +244,14 @@ the saved map, `--keep` leaves the game open.
   up the copy it replaces (the game is never closed), and `log` and `stop` do what they say. `sandbox.py setup-hook`
   (opt-in, the user runs it) makes each Claude Code session start with that overview. It wraps
   `tools/test_instance.py` and `dev_session.py`, which still work alone.
-- Slots start **lite** by default: the D3D11 renderer and no sound, about half the GPU memory and RAM (measured headless
-  on the test map: GPU 1738 -> 913 MB, RAM in use 1717 -> 909 MB), the same physics and commands, a flatter picture (no
-  Lumen or Nanite). `start --full` gives the game's full look for anything judging how it looks (materials, lighting,
-  video shots); `--interactive` is always full.
-- `start --headless` runs a slot with no window at all (`-RenderOffscreen`, capped at 30 fps): the sandbox, plugins,
-  runs and the race clock all work. `-nullrhi` is cheaper but no run starts under it and its pictures are black
-  (measured 2026-10-18).
+- Slots start **headless and lite** by default (`sandbox.py start` and `test_instance.py start` alike): no window at all
+  (`-RenderOffscreen`, capped at 30 fps), the D3D11 renderer and no sound, about half the GPU memory and RAM (measured
+  headless on the test map: GPU 1738 -> 913 MB, RAM in use 1717 -> 909 MB), the same physics and commands, a flatter
+  picture (no Lumen or Nanite). Every agent command works headless (below), `post` and `clickat` included. `--window`
+  gives a window behind everything, `--full` the game's full look and sound (materials, lighting, video shots), only
+  when that is what's tested; `--interactive` (a normal window for the user to play in) is always full. Extra game
+  args that choose a renderer (`-nullrhi`, `-d3d12`, `-RenderOffscreen`, ...) are used as given. `-nullrhi` is cheaper
+  but no run starts under it and its pictures are black (measured 2026-10-18).
 - **Agents: `python tools/agent.py`** drives a slot through the host's agent pipe (host 0.31.0+, complete sandboxes
   only): `state` (the race, track, ball position/velocity/speed, input, camera and UI as JSON), `render [name]` (a PNG of
   the whole screen, HUD and plugin windows included, windowed or headless), `drive <x> <y> <frames> [jump]` (steering,
@@ -259,7 +260,11 @@ the saved map, `--keep` leaves the game open.
   the same way: a workshop map about 2.4 s, the create-mode editor map through the menu about 7 s, instead of
   restarting the slot), `editorcam [x y z [pitch yaw]]` (the track editor's camera), `tap <x> <y>` (a click at a pixel of the render picture, no window or mouse needed: the plugin manager's window,
   else a footer or plugin-window button, else the game's own button there; measured on a headless copy: menu and
-  Customize buttons, back, the footer and the plugin manager's tabs), `hover <x> <y>` / `hover off` and
+  Customize buttons, back, the footer and the plugin manager's tabs), `hover <x> <y>` / `hover off`, `gamekey <key>
+  [frames]` / `gamehold <key> 1|0` (host 0.32.0+: a game key, T inspect, W, SpaceBar, R, Escape ..., through the game's
+  own Enhanced Input: the actions the player's active mappings give that key, injected each frame it's held with that
+  mapping's modifiers and triggers; `gamekeys` lists them; menus read Enter and the arrows through focus instead, so
+  tap their buttons; on a headless slot `post <vk>` is a gamekey and `clickat` a tap) and
   `-c "cmd; cmd"` (any test commands, run together). From Python, `from agent import Slot` keeps the pipe open: a
   command is about one frame (33 ms at the headless 30 fps), `state` about 8 ms, `render` about 0.1 s (measured
   2026-10-24; through the file channel one command took about 6 s). `sandbox.py run` and `shot` use the pipe

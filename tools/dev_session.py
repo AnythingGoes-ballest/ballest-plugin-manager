@@ -48,6 +48,20 @@ PROCESS = "Ballest-Win64-Shipping.exe"
 SLOT = 0
 
 
+_render = []
+
+
+def render_pipe():
+    """The slot's agent pipe (tools/agent.py) when it has one, for `shot`; None for the player's game or an older host."""
+    if not _render and SLOT:
+        try:
+            from agent import Slot
+            _render.append(Slot(SLOT, timeout=0.5))
+        except Exception:
+            return None
+    return _render[0] if _render else None
+
+
 def own_games():
     """The game processes this session works with: its slot's, or the ones that aren't any slot's."""
     if SLOT:
@@ -162,6 +176,8 @@ def main():
         sys.exit(f"slot {SLOT} isn't completely sandboxed, refusing to drive it: {verdict.strip()[:300] or 'no answer'}")
 
     seen = len(log_lines()) if args.attach else 0
+    since = seen        # where the last command's own lines begin: a `wait` after it looks from there (a fast reply was
+                        # already printed, and so passed, during the command's own pause)
     commands = args.inline.split(";") if args.inline else Path(args.commands).read_text(encoding="utf-8").splitlines()
     for raw in commands:
         line = raw.strip()
@@ -170,14 +186,16 @@ def main():
         if not running():
             print("game exited")
             break
+        if not line.startswith(("sleep ", "wait ")):
+            since = len(log_lines())
         if line.startswith("sleep "):
             time.sleep(float(line.split()[1]))
         elif line.startswith("wait "):
             pattern = line[5:]
             end = time.time() + 60
-            while time.time() < end and not any(re.search(pattern, l) for l in log_lines()[seen:]):
+            while time.time() < end and not any(re.search(pattern, l) for l in log_lines()[since:]):
                 time.sleep(0.5)
-            if not any(re.search(pattern, l) for l in log_lines()[seen:]):
+            if not any(re.search(pattern, l) for l in log_lines()[since:]):
                 print(f"  WAIT TIMED OUT: nothing matched {pattern!r} in 60 s")
         elif line.startswith("waitstate "):
             pattern = line[10:]
@@ -229,6 +247,10 @@ def main():
                 time.sleep(0.1)
             if not done:
                 print(f"  WAITEDITOR TIMED OUT: last {last}")
+        elif line.startswith("shot ") and render_pipe():
+            # the game's own picture through the host's pipe (host 0.31.0+): HUD and plugin windows included, and it works
+            # headless, where there's no window to capture
+            print("  screenshot:", " ".join(render_pipe().cmd("render " + line.split()[1]))[:150])
         elif line.startswith("shot "):
             out = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SHOT),
                                   str(DATA / f"{line.split()[1]}.png")] + (["-GamePid", str(own_games()[0])] if own_games() else []),

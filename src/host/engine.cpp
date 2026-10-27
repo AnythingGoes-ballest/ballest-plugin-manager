@@ -346,6 +346,14 @@ Obj StructOf(const Prop& p) {
     return KindOf(p) == "StructProperty" ? At<Obj>(p.field, layout::kFStructPropertyStructTypeOffset) : nullptr;
 }
 
+Prop InnerOf(const Prop& p) {
+    if (KindOf(p) != "ArrayProperty") return {};
+    Prop inner;
+    inner.field = At<uint8_t*>(p.field, layout::kFArrayPropertyInnerOffset);
+    if (inner.field) inner.size = At<int32_t>(inner.field, layout::kFPropertyValueSizeOffset);
+    return inner;
+}
+
 std::vector<std::string> PropertyNames(Obj structure) {
     std::vector<std::string> out;
     for (Obj s = structure; s; s = SuperOf(s))

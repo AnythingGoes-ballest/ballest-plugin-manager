@@ -1,6 +1,7 @@
 r"""Sandboxed test copies of Ballest, any number at once, next to the player's own game.
 
     python tools/test_instance.py start N|next [--plugin DIR ...] [--only] [--clean] [--host DLL]
+                                    [--window] [--full] [--interactive]
                                     [--plugins DIR|--shared-plugins] [--reseed] [-- extra game args]
     python tools/test_instance.py stop N
     python tools/test_instance.py status [N]
@@ -34,7 +35,13 @@ Slot N (1-9) gets:
   * optionally a host build of its own: --host DLL (a build/version.dll) is copied into the slot and the installed host
     loads it in its place (host 0.24.0 and newer), so a host change is tried while the player's game and the other
     slots run the installed host. Without --host the slot runs the installed host;
-  * a window that opens behind everything and never takes focus (sandbox mode), 1280x720, windowed, its sound muted;
+  * no window (headless, -RenderOffscreen, capped at 30 fps) and lite (the D3D11 renderer, no sound): about half the
+    GPU memory and RAM, with the same physics. Everything an agent does works headless through the host's pipe
+    (tools/agent.py, sandbox.py): state, render (the whole screen, HUD included), drive, tap, gamekey, editorcam, and
+    post / clickat fall back to gamekey / tap. --window gives a window that opens behind everything and never takes
+    focus (1280x720, muted), --full the game's full look and sound (D3D12; for checking how something looks), and
+    --interactive a normal window for the user to play in (always full). Extra game args that choose a renderer
+    (-nullrhi, -RenderOffscreen, -d3d11, ...) are used as given;
   * its own plugins: PluginManager\plugins in that folder (copied from the game's plugins folder the first time, or
     from --plugins DIR); --plugin DIR (any number) installs one plugin you're working on into it, as the id its
     folder is named for (a repo folder's "ballest-" left off: ballest-replay-manager is replay-manager);
@@ -453,6 +460,24 @@ def launch(n, args):
 
 
 DEFAULT_ARGS = ["-windowed", "-ResX=1280", "-ResY=720"]      # sound plays, muted by the sandbox (Draw::Sound works)
+# Headless, the default (2026-10-26: agents kept starting windows): no window at all, the frame drawn offscreen (measured
+# 2026-10-18: runs start, the race clock moves, pictures are real; -nullrhi is cheaper but no run starts and pictures are
+# black). It still renders every frame, so it's capped at HEADLESS_FPS.
+HEADLESS_ARGS = ["-RenderOffscreen"]
+HEADLESS_FPS = 30
+# Lite, the default too: the D3D11 renderer and no sound (measured 2026-10-24, headless on the test map: GPU memory 1738 ->
+# 913 MB, RAM in use 1717 -> 909 MB, committed 3434 -> 1732 MB; the race drove exactly as with D3D12 and render works; it
+# looks flatter, without Lumen and Nanite).
+LITE_ARGS = ["-d3d11", "-nosound"]
+RENDERER_ARGS = ("-renderoffscreen", "-nullrhi", "-d3d11", "-d3d12", "-dx11", "-dx12", "-vulkan", "-nosound")
+
+
+def look_args(extra, window=False, full=False, interactive=False):
+    """The game args that make a slot headless and lite unless asked otherwise (--window, --full, --interactive), or
+    unless the extra args already choose (a renderer, -RenderOffscreen, -nosound)."""
+    if any(a.lower() in RENDERER_ARGS for a in extra):
+        return []
+    return ([] if window or interactive else HEADLESS_ARGS) + ([] if full or interactive else LITE_ARGS)
 
 
 def claim_file(n):
@@ -491,9 +516,11 @@ def set_host(n, dll):
 
 
 def start(n, args, plugins_from, shared, timeout, reseed=False, plugin_dirs=None, claimed=False, wipe=False, only_mine=False,
-          host=None, interactive=False):
+          host=None, interactive=False, window=False, full=False):
+    """Starts slot n: headless and lite unless window / full / interactive (or args that choose a renderer)."""
     if not claimed and (alive(n) or not claim(n)):
         sys.exit(f"slot {n} is in use ({', '.join(map(str, alive(n))) or 'being started'}); pick another (status, or start next)")
+    args = look_args(args, window, full, interactive) + list(args)
     try:
         code = start_claimed(n, args, plugins_from, shared, timeout, reseed, plugin_dirs, wipe, only_mine, host, interactive)
     except BaseException:
@@ -596,9 +623,28 @@ def start_claimed(n, args, plugins_from, shared, timeout, reseed, plugin_dirs, w
         print(f"slot {n}: the game's main menu didn't come up in time; stopping it")
         stop(n)
         return 1
-    print(f"slot {n}: started: sandbox complete, main menu up")
+    if any(a.lower() == "-renderoffscreen" for a in args):
+        info["fps_cap"] = cap_fps(n)
+        (slot_root(n) / "instance.json").write_text(json.dumps(info), encoding="utf-8")
+    print(f"slot {n}: started: sandbox complete, main menu up" + (", headless" if "fps_cap" in info else ""))
     print(json.dumps({"slot": n, "launcher": launcher, "game": info["game"], "data": str(data_dir(n)),
                       "plugins": str(WIN64 / "plugins" if shared else data_dir(n) / "plugins")}))
+    return 0
+
+
+def cap_fps(n, timeout=15):
+    """A headless copy draws every frame offscreen as fast as it can: capped at HEADLESS_FPS through the test channel.
+    The cap, or 0 if the game didn't take it in time."""
+    log, command = data_dir(n) / "host.log", f"console t.MaxFPS {HEADLESS_FPS}"
+    (data_dir(n) / "test_command.txt").write_text(command, encoding="utf-8")
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            if f"test: {command} -> ok" in log.read_text(encoding="utf-8", errors="replace"):
+                return HEADLESS_FPS
+        except OSError:
+            pass
+        time.sleep(0.25)
     return 0
 
 
@@ -741,6 +787,10 @@ def main():
     s.add_argument("--host", help="a host build (build/version.dll) for this slot only")
     s.add_argument("--interactive", action="store_true",
                    help="for the user to play in: a normal window that takes focus, with sound (every block stays on)")
+    s.add_argument("--window", action="store_true",
+                   help="a window behind everything (default: headless; every agent command works headless)")
+    s.add_argument("--full", action="store_true",
+                   help="the game's full look and sound, D3D12 (default: lite, D3D11 and no sound): to check how it looks")
     s.add_argument("--shared-plugins", action="store_true", help="run the game's own plugins folder")
     s.add_argument("--timeout", type=int, default=120)
     s.add_argument("--reseed", action="store_true", help="copy the player's saves in again")
@@ -766,12 +816,13 @@ def main():
             for n in range(1, 10):
                 if not alive(n) and claim(n):
                     sys.exit(start(n, a.args, a.plugins, a.shared_plugins, a.timeout, a.reseed, a.plugin, claimed=True,
-                                   wipe=a.clean, only_mine=a.only, host=a.host, interactive=a.interactive))
+                                   wipe=a.clean, only_mine=a.only, host=a.host, interactive=a.interactive,
+                                   window=a.window, full=a.full))
             sys.exit("no free slot")
         if not a.slot.isdigit() or not 1 <= int(a.slot) <= 9:
             sys.exit("slot: 1-9 or next")
         sys.exit(start(int(a.slot), a.args, a.plugins, a.shared_plugins, a.timeout, a.reseed, a.plugin,
-                       wipe=a.clean, only_mine=a.only, host=a.host, interactive=a.interactive))
+                       wipe=a.clean, only_mine=a.only, host=a.host, interactive=a.interactive, window=a.window, full=a.full))
     if a.cmd == "play":
         return play()
     if a.cmd == "reload":

@@ -39,18 +39,13 @@ DESCRIPTION = "Sandboxed Ballest test copies (slots 1-9) and the player's own ga
 TEST_MAP = "3805348161"          # the Workshop map "stasis": race tests run only there or on your own create-mode maps
 REPLY_LINES = 60                 # replies shown before --full
 REPLY_CHARS = 300
-# --headless: no window at all, the frame drawn offscreen (measured 2026-10-18: runs start, the race clock moves, HighResShot
-# writes real pictures; -nullrhi is cheaper but no run starts and pictures are black). It still renders every frame, so it
-# is capped at HEADLESS_FPS.
-HEADLESS_ARGS = ["-RenderOffscreen"]
-HEADLESS_FPS = 30
+# Headless and lite, the defaults, are test_instance.py's (HEADLESS_ARGS, LITE_ARGS): no window, D3D11, no sound.
+HEADLESS_ARGS = ti.HEADLESS_ARGS
+HEADLESS_FPS = ti.HEADLESS_FPS
 SHOT_SIZE = "1280x720"           # a headless shot's size, the slots' window size
 SHOT_WAIT = 15                   # seconds for HighResShot to write its file
-WINDOW_COMMANDS = ("post ", "clickat ")    # test commands posted to the game's window: a headless slot has none
-# Lite, the default (--full for the game's full look, and always with --interactive): the D3D11 renderer and no sound (measured 2026-10-24, headless on the test map: GPU memory 1738 -> 913 MB,
-# RAM in use 1717 -> 909 MB, committed 3434 -> 1732 MB; the race drove exactly as with D3D12 and render works; it looks
-# flatter, without Lumen and Nanite). Low scalability settings saved only another ~7% on top.
-LITE_ARGS = ["-d3d11", "-nosound"]
+WINDOW_COMMANDS = ("post ", "clickat ")    # posted to the game's window; headless (host 0.32.0+) they're gamekey / tap
+LITE_ARGS = ti.LITE_ARGS                # (low scalability settings save only another ~7% on top of lite)
 
 # ---------------------------------------------------------------------------------------------------- TOON output
 
@@ -185,6 +180,14 @@ SPAM_RATE = 50                   # log lines a second above which a plugin or th
 def spam_warning(lines):
     rate, top = log_rate(lines)
     return f"log flooding: {rate} lines/s, mostly: {top}" if rate > SPAM_RATE else ""
+
+
+def older(version, than):
+    """Whether a host version is older than `than` (an unknown one counts as older)."""
+    try:
+        return tuple(map(int, version.split("."))) < tuple(map(int, than.split(".")))
+    except (AttributeError, ValueError):
+        return True
 
 
 def host_version(lines):
@@ -400,8 +403,9 @@ def run_commands(n, commands, full):
             else:
                 problems.append(f"shot {line.split()[1]}: no screenshot ({why})")
             continue
-        elif line.startswith(WINDOW_COMMANDS) and headless(n):
-            problems.append(f"`{line}`: slot {n} is headless, there is no window to post to (press reaches the plugins)")
+        elif line.startswith(WINDOW_COMMANDS) and headless(n) and older(host_version(read_log(ti.data_dir(n) / "host.log")), "0.32.0"):
+            problems.append(f"`{line}`: slot {n} is headless and its host is older than 0.32.0 (no gamekey / tap fallback): "
+                            "start it with --window, or with --host <a 0.32.0+ build>")
             continue
         elif pipe(n):
             # exactly this command's replies, in about a frame (deferred ones, like waitframes, when they're done)
@@ -453,17 +457,15 @@ def cmd_start(a):
         if not Path(m).is_file() or not Path(m).name.startswith("Map_LevelEditorMain&") or Path(m).suffix != ".balledit":
             fail(f"--map {m}: expected a create-mode map file, Map_LevelEditorMain&<name>_<creator>.balledit",
                  f"{CLI} start {a.slot} --open {TEST_MAP}", code=2)
-    if a.headless and a.interactive:
-        fail("--headless has no window to play in: give one of --headless and --interactive",
-             f"{CLI} start {a.slot} --headless", code=2)
+    if a.window and a.interactive:
+        fail("--interactive is a window already: give one of --window and --interactive", f"{CLI} start {a.slot}", code=2)
     ti.MAPS[:] = [Path(m).resolve() for m in a.map]
-    lite = not a.full and not a.interactive
-    args = (HEADLESS_ARGS if a.headless else []) + (LITE_ARGS if lite else [])
+    want_headless = not a.window and not a.interactive
     if a.slot != "next" and ti.alive(int(a.slot)):
         n = int(a.slot)
-        if headless(n) != a.headless:
+        if headless(n) != want_headless:
             fail(f"slot {n} is already running {'headless' if headless(n) else 'with a window'}",
-                 f"{CLI} stop {n}", f"{CLI} start next" + (" --headless" if a.headless else ""))
+                 f"{CLI} stop {n}", f"{CLI} start next" + ("" if want_headless else " --window"))
         o = Out()
         o.kv("slot", n)
         o.kv("result", "already running (no-op)")
@@ -475,12 +477,12 @@ def cmd_start(a):
             n = next((k for k in range(1, 10) if not ti.alive(k) and ti.claim(k)), None)
             if n is None:
                 fail("no free slot", f"{CLI}", f"{CLI} stop <slot>")
-            code = ti.start(n, args, None, False, a.timeout, plugin_dirs=a.plugin, claimed=True, wipe=a.clean,
-                            only_mine=a.only, host=a.host, interactive=a.interactive)
+            code = ti.start(n, [], None, False, a.timeout, plugin_dirs=a.plugin, claimed=True, wipe=a.clean,
+                            only_mine=a.only, host=a.host, interactive=a.interactive, window=a.window, full=a.full)
         else:
             n = int(a.slot)
-            code = ti.start(n, args, None, False, a.timeout, plugin_dirs=a.plugin, wipe=a.clean, only_mine=a.only,
-                            host=a.host, interactive=a.interactive)
+            code = ti.start(n, [], None, False, a.timeout, plugin_dirs=a.plugin, wipe=a.clean, only_mine=a.only,
+                            host=a.host, interactive=a.interactive, window=a.window, full=a.full)
     if code != 0:
         lines = read_log(ti.data_dir(n) / "host.log")
         fail(f"slot {n} didn't start sandboxed" + (f": {last_error(lines)}" if last_error(lines) else ""),
@@ -488,11 +490,9 @@ def cmd_start(a):
     o = Out()
     o.kv("slot", n)
     o.kv("result", "started: sandbox complete, main menu up")
-    if a.headless:
-        o.kv("window", "headless")
-        o.kv("fps_cap", HEADLESS_FPS if "-> ok" in ask(n, f"console t.MaxFPS {HEADLESS_FPS}", r"test: console ", 10)
-             else "not applied: uncapped")
-        o.kv("shots", "world only (HighResShot: no HUD or plugin windows)")
+    o.kv("window", window(n))
+    if headless(n):
+        o.kv("fps_cap", (ti.instance(n) or {}).get("fps_cap") or "not applied: uncapped")
     if a.open:
         track = ask(n, f"openworkshop {a.open}" if a.open.isdigit() else f"open {a.open}", r"race: track ", 60)
         o.kv("opened", a.open if track else f"{a.open} (no track loaded in 60 s)")
@@ -741,8 +741,7 @@ def build():
 
     p = add("start", "start a sandboxed slot (waits for sandbox complete and the main menu)",
             ["start next --plugin ../ballest-plugins/plugins/checkpoint-finder --open 3805348161",
-             "start 2 --plugin ../ballest-grind-stats --only", "start next --headless --open 3805348161",
-             "start next --full --open 3805348161"], cmd_start)
+             "start 2 --plugin ../ballest-grind-stats --only", "start next --window --full --open 3805348161"], cmd_start)
     p.add_argument("slot", help="1-9, or next: the first free one")
     p.add_argument("--plugin", action="append", help="a plugin folder you're working on (any number)")
     p.add_argument("--open", help="once the menu is up, open a Workshop map by id (the test map: 3805348161) or a level "
@@ -750,9 +749,10 @@ def build():
     p.add_argument("--map", action="append", default=[],
                    help="a create-mode map (.balledit) copied into the slot's own UserSavedMaps")
     p.add_argument("--interactive", action="store_true", help="a normal window with sound, for the user to play in")
-    p.add_argument("--headless", action="store_true",
-                   help=f"no window at all (-RenderOffscreen), capped at {HEADLESS_FPS} fps; runs and the test commands work, "
-                   "shots show the world only (no HUD or plugin windows), and `post` and `clickat` have no window to reach")
+    p.add_argument("--window", action="store_true",
+                   help=f"a window behind everything instead of headless, the default (no window, {HEADLESS_FPS} fps: every agent "
+                   "command works headless, post and clickat included as gamekey and tap); only when a window is the point")
+    p.add_argument("--headless", action="store_true", help=argparse.SUPPRESS)  # (the default now; kept for old commands)
     p.add_argument("--full", action="store_true",
                    help="the game's full look (D3D12, Lumen, Nanite, sound) instead of lite, the default (D3D11, no sound: about "
                    "half the GPU memory and RAM, the same physics and commands, a flatter picture); for anything judging how "

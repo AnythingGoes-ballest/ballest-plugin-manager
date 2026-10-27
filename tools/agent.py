@@ -6,6 +6,8 @@ frame each, through the host's agent pipe (\\\\.\\pipe\\ballest-test-<game pid>,
     python tools/agent.py <slot> drive <x> <y> <frames> [jump]   steer (x right, y forward, -1..1) for that many frames
     python tools/agent.py <slot> tap <x> <y>                click at a pixel of the render picture (no window needed)
     python tools/agent.py <slot> hover <x> <y> | hover off  the pointer held there (hovers) / the real mouse again
+    python tools/agent.py <slot> gamekey <key> [frames]     a game key (T inspect, W, SpaceBar, Escape...), headless too
+    python tools/agent.py <slot> gamekeys                   what each game key does right now
     python tools/agent.py <slot> -c "cmd; cmd; ..."         any test commands, sent together, each one's replies
     python tools/agent.py <slot> repl                       one command per stdin line, one JSON answer per line
 
@@ -126,6 +128,26 @@ class Slot:
         lines = self.cmd(f"tap {x} {y}")
         return lines[-1] if lines else ""
 
+    def game_key(self, key, frames=2):
+        """A game key (T, W, SpaceBar, Escape, ... or a Windows key code) pressed for that many frames through the game's
+        own Enhanced Input, no window needed (host 0.32.0+). The actions it reached, e.g. "gamekey T -> IA_ToggleFreeCam"."""
+        lines = self.cmd(f"gamekey {key} {int(frames)}")
+        return lines[-1] if lines else ""
+
+    def game_hold(self, key, on=True):
+        """A game key held (on) until let go (on=False)."""
+        return self.cmd(f"gamehold {key} {1 if on else 0}")
+
+    def game_keys(self):
+        """What each game key does right now: {key: [actions]} from the player's active input contexts."""
+        line = next((l for l in self.cmd("gamekeys") if l.startswith("gamekeys ")), "gamekeys ")[len("gamekeys "):]
+        out = {}
+        for part in line.split("; "):
+            key, _, actions = part.partition(": ")
+            if actions:
+                out[key] = actions.split(", ")
+        return out
+
     def hover(self, x, y=None):
         """The pointer held at pixel (x, y) (hover effects, tooltips); hover("off") gives the real mouse back."""
         return self.cmd("hover off" if x == "off" else f"hover {x} {y}")
@@ -184,6 +206,10 @@ def main():
                 print(json.dumps(s.drive(x, y, frames, "jump" in rest[3:]), indent=1))
             elif verb == "tap":
                 print(s.tap(float(rest[0]), float(rest[1])))
+            elif verb == "gamekey":
+                print(s.game_key(rest[0], int(rest[1]) if len(rest) > 1 else 2))
+            elif verb == "gamekeys":
+                print(json.dumps(s.game_keys(), indent=1))
             elif verb == "hover":
                 for line in s.hover("off") if rest[0] == "off" else s.hover(float(rest[0]), float(rest[1])):
                     print(line)

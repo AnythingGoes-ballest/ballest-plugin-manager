@@ -160,7 +160,8 @@ def main():
     started = time.time()
     print(f"launching the game with {ID} (other plugins off: {', '.join(others) or 'none'})")
     if SLOT:
-        if test_instance.start(SLOT, [], None, False, 180, host=args.host) != 0:
+        # (a window and the full renderer: the suite checks window and rendering APIs, measured that way)
+        if test_instance.start(SLOT, [], None, False, 180, host=args.host, window=True, full=True) != 0:
             sys.exit(f"slot {SLOT} didn't start sandboxed")
     else:
         os.startfile("steam://rungameid/3339810")

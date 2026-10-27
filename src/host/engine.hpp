@@ -66,6 +66,7 @@ struct Prop {
 Prop FindProp(Obj structure, const std::string& name);      // on a class/struct/function and its supers
 std::string KindOf(const Prop& p);                          // "StructProperty", "BoolProperty", ...
 Obj StructOf(const Prop& p);                                // the struct of a StructProperty, else null
+Prop InnerOf(const Prop& p);                                // an ArrayProperty's element (offset 0, its size), else none
 std::vector<std::string> PropertyNames(Obj structure);
 // Offset of a nested member, e.g. {"Font", "Size"} on TextBlock; -1 if any step is missing.
 int NestedOffset(Obj structure, const std::vector<const char*>& path, Prop* last = nullptr);
