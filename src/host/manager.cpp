@@ -132,10 +132,10 @@ Color Lift(const Color& c, double hover) { return ux::Mix(c, {1, 1, 1, c.a}, 0.0
 double EaseOut(double t, double power = 2) { return 1 - std::pow(1 - std::clamp(t, 0.0, 1.0), power); }
 
 // --- the window's own settings (kept in the plugin manager's storage) --------------------------------------------------
-// The defaults (Lvcid, 2026-10-11): screen dim 67%, window scale 110% (of the 0.85 that's "100%"; more on small screens:
+// The defaults (Lvcid, 2026-10-11): screen dim 67%, window scale 105% (of the 0.85 that's "100%"; more on small screens:
 // ScreenDefaultScale), hover sounds at 69%,
 // the compact (small) list on every page, the theme Ballest Night (the Plugin Manager plugin's setting), DEBUG all off.
-constexpr double kDefaultDim = 0.67, kDefaultScale = 0.85 * 1.1, kDefaultHoverVol = 0.69;
+constexpr double kDefaultDim = 0.67, kDefaultScale = 0.85 * 1.05, kDefaultHoverVol = 0.69;
 struct Prefs {
     double scale = kDefaultScale, dim = kDefaultDim;
     bool scaleChosen = false;               // the window scale moved by the player (else the screen's default)
@@ -154,14 +154,14 @@ Prefs gPrefs;
 bool gPrefsRead = false;
 double gPrefsDirtyAt = -1;
 
-// The window scale for this screen, until the player picks one (Lvcid, 2026-10-15): 110% at 1080p and up, more on
+// The window scale for this screen, until the player picks one (Lvcid, 2026-10-15; 105% since 2026-10-29): 105% at 1080p and up, more on
 // smaller screens, where the small words got too small to read (AnythingGoes' review): 150% at 720p, in between
 // by the screen's pixels per unit, in steps of 5.
 double ScreenDefaultScale() {
     const double s = game::ViewportScale();
     if (s <= 0) return kDefaultScale;
     const double small = std::clamp((1.0 - s) / (1.0 - 2.0 / 3.0), 0.0, 1.0);
-    const double pct = std::round((110 + 40 * small) / 5) * 5;
+    const double pct = std::round((105 + 45 * small) / 5) * 5;     // (105% at 1080p and up: Lvcid, 2026-10-29)
     return pct / 100 * 0.85;
 }
 
@@ -504,8 +504,11 @@ struct State {
     std::string installedSearch;            // the page's search (both its tabs)
     double installedReadAt = -100;
     bool installedFocused = false, sortOpen = false;
-    std::string swapFrom;                   // installed / browse: the tab being switched away from, while its fog drifts
+    std::string sortFor;                    // the section whose sort list is open
+    std::string swapFrom;                   // the mode or page being switched away from, while the list slides in
     double swapAt = -100;
+    bool swapRight = true, swapStrip = false;   // the list slides in from the right; the strip's box glides (a page switch)
+    std::string followId, followSection;    // the card last clicked, and its section (a card moved: the list follows it)
     std::string filter = "everything";
     size_t clearedAt = 0;
     bool stick = true, focusPrompt = false;
@@ -1182,6 +1185,11 @@ std::string Lower(std::string s) {
         if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + 32);
     return s;
 }
+std::string Upper(std::string s) {
+    for (char& c : s)
+        if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 32);
+    return s;
+}
 std::string Bare(const std::string& s) {
     std::string out;
     for (char c : s)
@@ -1261,6 +1269,9 @@ void SetPage(const std::string& page) {
 constexpr double kKey = 48, kKeyGap = 12, kCloseGap = 20;
 
 void UpdateAll(Layer& wl, double right, double cy);
+void NewLetters(Layer& l, const std::string& key, int z, double cx, double cy, double px, double alpha);
+std::string FreshBrowse();
+void SwitchTab(const std::string& tab);
 
 // A top bar round key in Ballest Night (Lvcid, 2026-10-11): at rest black with its grey ring; hovered (`h`), as the
 // pages: the ring gives way to a thin white edge round a black bubble (kBubbleOut inside it); its icon goes white.
@@ -1353,14 +1364,15 @@ void TopBar(Layer& wl, double W) {
         }
         x += sz + 22;
     }
-    std::vector<std::pair<std::string, std::string>> pages = {{"plugins", "plugins"}};
-    if (packages::KitOn()) pages.push_back({"cosmetics", "cosmetics"});
+    // the mode (Lvcid, 2026-10-29): what you have (installed) or what's new to get (browse); the strip under it picks
+    // plugins or cosmetics in it
+    const std::vector<std::pair<std::string, std::string>> pages = {{"installed", "installed"}, {"browse", "browse"}};
     if (gS.page == "cosmetics" && !packages::KitOn()) gS.page = "plugins";
     for (const auto& [page, label] : pages) {
         const std::string key = "top.tab." + page;
         const double tw = Measured(wl, key, label, 31);
         const Rect hit{x - 8, 12, tw + 16, 56};
-        const bool on = gS.page == page;
+        const bool on = gS.tab == page;
         const double h = HoverCurve(key + ".hov", pmui::Over(wl, hit), kTopUp, kTopDown);
         // (under the console, the page you were on stays lime, dimmed; under settings (the cog lit) it's as the others:
         // Lvcid)
@@ -1400,14 +1412,23 @@ void TopBar(Layer& wl, double W) {
             pmui::Text(wl, key, 302, label, 31, "Regular", ink, x, cy);
         }
         if (pmui::Entry* e = pmui::Find(wl, key)) e->node.Transform(1 + 0.08 * h, 0);      // (as the cog grows)
-        const int badge = page == "plugins" ? gUpdates + (HostShown(Host()) ? 1 : 0) : 0;
+        const int badge = page == "installed" ? gUpdates + (HostShown(Host()) ? 1 : 0) : 0;
         if (badge > 0 && DotShown("tab." + page + "@" + std::to_string(badge), pmui::Over(wl, hit))) {
             const Rect dot{x + tw - 6, cy - 31, 18, 18};
             Glow(wl, key + ".dotglow", 303, dot, kRed, 0.4);
             pmui::Box(wl, key + ".dot", 304, dot, kRed, 9).Outline(2, ux::Hex("#0D0E11"));
             pmui::Text(wl, key + ".n", 305, std::to_string(badge), 12, "Bold", kWhite, dot.Cx(), dot.Cy(), 0.5);
         }
-        if (pmui::Click(wl, hit, key)) SetPage(page);
+        // browse: a NEW on its top right while the registry has something new to the player (the browse rows' tag, both
+        // pages'), gone once it has been hovered, as the red dots (Lvcid)
+        if (page == "browse") {
+            const std::string fresh = FreshBrowse();
+            if (!fresh.empty() && DotShown("new.browse@" + fresh, pmui::Over(wl, hit))) NewLetters(wl, key + ".new", 305, x + tw + 4, cy - 26, 14, 1);
+        }
+        if (pmui::Click(wl, hit, key)) {
+            SwitchTab(page);
+            OpenOverlay("");                // (as a page did: out of settings or the console)
+        }
         x += tw + 34;
     }
     // close: a bare x (Lvcid), grey; white hovered, red while pressed, white again on release (it closes then, the x
@@ -1779,6 +1800,14 @@ void GetButton(Layer& list, const Plug& p, const std::string& u, const Rect& b, 
 }
 
 // NEW: the letters in ballest's pink, a thin pink edge glow on them only (Lvcid): faint copies a hair out on each side.
+// What browse has new to the player (both pages'), as the key its NEW tag is seen by.
+std::string FreshBrowse() {
+    std::string fresh;
+    for (const Plug& q : gBrowse)
+        if (!q.installed && (q.fresh || gTestNew)) fresh += q.id + ",";
+    return fresh;
+}
+
 void NewLetters(Layer& l, const std::string& key, int z, double cx, double cy, double px, double alpha = 1) {
     const double breathe = 0.5 + 0.5 * std::sin(pmui::Now() * 1.6), d = std::max(0.8, px * 0.07);
     const double off[4][2] = {{-d, 0}, {d, 0}, {0, -d}, {0, d}};
@@ -2492,6 +2521,8 @@ void Row(Layer& list, const Plug& p, const Rect& whole, double baseH, bool compa
     if (clicked || keyClicked) {
         const bool opening = gS.expanded != p.id;
         gS.expanded = opening ? p.id : "";
+        gS.followId = p.id;                 // (moved to another section: the list follows it)
+        gS.followSection.clear();
         // a NEW one opened: seen, for good (kept by its id: an update doesn't bring its NEW back)
         if (opening && browse && p.fresh) {
             storage::Set(kSelf, "manager.opened." + p.id, "1");
@@ -2507,7 +2538,7 @@ FieldRef gInstalledField;
 void BrowseTools(Layer& wl, double cy, double left, double right) {
     const double sx = left;
     const Rect sr{sx, cy - 20, std::max(44.0, right - sx), 40};      // (it narrows before anything overlaps it)
-    // (one search for the page, both its tabs: its results are both, under INSTALLED / OWNED and AVAILABLE: Lvcid)
+    // (one search for the page, both modes: its results are both, under INSTALLED and AVAILABLE: Lvcid)
     const std::string fk = "isearch";
     std::string& query = gS.installedSearch;
     double& readAt = gS.installedReadAt;
@@ -2526,58 +2557,65 @@ void BrowseTools(Layer& wl, double cy, double left, double right) {
     wasFocused = focused;
 }
 
-Rect gSlideFrom, gSlideNow;                 // installed / browse: where the lime box set off from, and where it is
+Rect gSlideFrom, gSlideNow;                 // plugins / cosmetics: where the lime box set off from, and where it is
 
-// The page's sub bar: installed / browse, the counts, update all, the folder or refresh, the views.
+// The top bar's mode, installed / browse, and the strip's page, plugins / cosmetics: the new rows slide in from the side
+// they go to; the strip's box glides only for a page.
+void SwitchTab(const std::string& tab) {
+    if (gS.tab == tab) return;
+    gSlideFrom = gSlideNow;
+    gS.swapFrom = gS.tab;
+    gS.swapAt = pmui::Now();
+    gS.swapRight = tab == "browse";
+    gS.swapStrip = false;
+    gS.tab = tab;
+    gS.expanded.clear();
+    gS.sortOpen = false;
+}
+void SwitchPage(const std::string& page) {
+    if (gS.page == page) return;
+    gSlideFrom = gSlideNow;                 // (from where the box is now)
+    gS.swapFrom = gS.page;
+    gS.swapAt = pmui::Now();
+    gS.swapRight = page == "cosmetics";
+    gS.swapStrip = true;
+    SetPage(page);
+}
+
+// The page's sub bar: plugins / cosmetics, the counts, the search, the views, the version.
 
 void SubBar(Layer& wl, double W, double top) {
     const double cy = top + kSubH / 2;
-    // installed / browse, on a small strip (the Customize page's local/public strip)
-    // (the cosmetics page: owned / explore, its packs only)
-    // (each page its own: the plugins page's installed leaves out the cosmetics, the cosmetics page's owned has them: Lvcid)
-    auto mine = [](const Plug& p) { return gCosRows ? p.category == "cosmetics" : p.category != "cosmetics"; };
-    auto mineBrowse = [](const Plug& p) { return gCosRows ? p.category == "cosmetics" : p.category != "cosmetics"; };
-    const std::vector<std::pair<std::string, int>> tabs = {
-        {"installed", static_cast<int>(std::count_if(gInstalled.begin(), gInstalled.end(), mine))},
-        {"browse", static_cast<int>(std::count_if(gBrowse.begin(), gBrowse.end(), [&](const Plug& p) { return !p.installed && mineBrowse(p); }))}};
-    auto label = [](const std::string& tab) { return !gCosRows ? tab : tab == "installed" ? std::string("owned") : std::string("explore"); };
-    // Lvcid's layout: refresh, the installed / browse strip, the plugins folder and the search on the left; the views
-    // and (installed) the updates on the right. Refresh first, on both tabs: the online registry again (the browse
-    // list, the newest versions: the update counts), the lists rebuilt.
+    // plugins / cosmetics, on a small strip (the Customize page's local/public strip), each with its count in the mode
+    // the top bar picked (installed or browse: Lvcid, 2026-10-29, the mode first, the page second)
+    auto countOf = [](bool cosmetics, bool browse) {
+        if (browse)
+            return static_cast<int>(std::count_if(gBrowse.begin(), gBrowse.end(), [&](const Plug& p) { return !p.installed && (p.category == "cosmetics") == cosmetics; }));
+        return static_cast<int>(std::count_if(gInstalled.begin(), gInstalled.end(), [&](const Plug& p) { return (p.category == "cosmetics") == cosmetics; }));
+    };
+    const bool inBrowse = gS.tab == "browse";
+    std::vector<std::pair<std::string, int>> tabs = {{"plugins", countOf(false, inBrowse)}};
+    if (packages::KitOn()) tabs.push_back({"cosmetics", countOf(true, inBrowse)});
+    // Lvcid's layout: the plugins / cosmetics strip and the search on the left; the views and the version on the right.
     // (after the views, on the left: Lvcid; Ballest Night: the strip first, the views after the search, by the version)
     const bool viewsRight = BallestNight();
     const double sx0 = viewsRight ? 22 : 22 + (4 + 2 * 40 + 4 + 4) + 12;
     double x = sx0 + 8;
     std::vector<std::pair<Rect, double>> segs;
     for (const auto& [tab, count] : tabs) {
-        const double tw = Measured(wl, "seg." + tab, label(tab), 21), cw = Measured(wl, "seg." + tab + ".n", std::to_string(count), 14) + 14;
+        const double tw = Measured(wl, "seg." + tab, tab, 21), cw = Measured(wl, "seg." + tab + ".n", std::to_string(count), 14) + 14;
         double sw = 22 + tw + 10 + cw + 22;
         {
-            // (Lvcid: each tab as wide as the wider of the two pages' tabs in its place, installed / owned and browse /
-            // explore, so the strip and the search after it sit exactly the same on the plugins and cosmetics pages)
-            const bool first = tab == "installed";
-            const size_t pc = first ? static_cast<size_t>(std::count_if(gInstalled.begin(), gInstalled.end(), [](const Plug& q) {
-                                          return q.category != "cosmetics";
-                                      }))
-                                    : static_cast<size_t>(std::count_if(gBrowse.begin(), gBrowse.end(), [](const Plug& q) {
-                                          return !q.installed && q.category != "cosmetics";
-                                      }));
-            const size_t cc = first ? static_cast<size_t>(std::count_if(gInstalled.begin(), gInstalled.end(), [](const Plug& q) {
-                                          return q.category == "cosmetics";
-                                      }))
-                                    : static_cast<size_t>(std::count_if(gBrowse.begin(), gBrowse.end(), [](const Plug& q) {
-                                          return !q.installed && q.category == "cosmetics";
-                                      }));
-            auto wide = [](const std::string& name, size_t n) {
-                return 22 + pmui::Width(name, 21, "Regular") + 10 + pmui::Width(std::to_string(n), 14, "Bold") + 14 + 22;
-            };
-            sw = std::max({sw, wide(tab, pc), wide(first ? "owned" : "explore", cc)});
+            // (Lvcid: each tab as wide as its widest count, installed or browse, so the strip and the search after it
+            // sit exactly the same in both modes)
+            const int other = countOf(tab == "cosmetics", !inBrowse);
+            sw = std::max(sw, 22 + tw + 10 + pmui::Width(std::to_string(other), 14, "Bold") + 14 + 22);
         }
         segs.push_back({{x, cy - 21, sw, 42}, tw});
         x += sw + 8;
     }
     {
-        // (Ballest Light: the strip's own space round its two tabs stays dark: Lvcid)
+        // (Ballest Light: the strip's own space round its tabs stays dark: Lvcid)
         std::optional<ux::RawColors> raw;
         if (BallestLight()) raw.emplace();
         pmui::BoxCorners(wl, "strip", 10, {sx0, cy - 29, x - sx0, 58}, kStrip, 16, 22, 8, 8).Outline(2, kBlack);
@@ -2589,8 +2627,8 @@ void SubBar(Layer& wl, double W, double top) {
     constexpr double kLead = 0.13, kTrail = 0.2;
     const double since = gS.swapFrom.empty() ? 1e9 : pmui::Now() - gS.swapAt;
     if (since > kTrail + 0.12) gS.swapFrom.clear();
-    const bool sliding = !gS.swapFrom.empty();
-    const Rect& target = gS.tab == tabs[0].first ? segs[0].first : segs[1].first;
+    const bool sliding = !gS.swapFrom.empty() && gS.swapStrip;      // (a mode switch: the box stays put)
+    const Rect& target = gS.page == tabs[0].first ? segs[0].first : segs.back().first;
     Rect slider = target;
     const bool rightward = target.Cx() > gSlideFrom.Cx();
     if (sliding) {
@@ -2601,14 +2639,13 @@ void SubBar(Layer& wl, double W, double top) {
         slider = {l, target.y, rr - l, target.h};
     }
     gSlideNow = slider;
-    // Ballest Night: the open tab in the game's colours, not the lime bubble: installed / owned pink, browse / explore
-    // cyan (Lvcid)
+    // Ballest Night: the open tab in the game's colours, not the lime bubble: plugins pink, cosmetics cyan (Lvcid)
     const bool tabColours = BallestNight();
     auto tabColour = [&](size_t i) { return !tabColours ? kLime : i == 0 ? kPink : kBallestCyan; };
     for (size_t i = 0; i < tabs.size(); ++i) {
         const std::string& tab = tabs[i].first;
         const Rect r = segs[i].first;
-        const bool on = gS.tab == tab;
+        const bool on = gS.page == tab;
         // how much of it the lime covers: all or nothing at rest; while sliding, as the box passes over it
         double lit = on ? 1.0 : 0.0;
         if (sliding) {
@@ -2632,38 +2669,24 @@ void SubBar(Layer& wl, double W, double top) {
             // (a tab not open, hovered: white in Night; black in Ballest Light, on its light tab: Lvcid)
             const Color ink = Mix(Mix(kSegText, BallestLight() ? kBlack : kWhite, h), word, lit);
             // (the shadows a level under their words: the same level drew them over the words)
-            pmui::Text(wl, "seg." + tab + ".sh", 13, label(tab), 21, "Regular", A(kBlack, shadow), tx + 1.5, cy + 1.5);
-            pmui::Text(wl, "seg." + tab, 14, label(tab), 21, "Regular", ink, tx, cy);
+            pmui::Text(wl, "seg." + tab + ".sh", 13, tab, 21, "Regular", A(kBlack, shadow), tx + 1.5, cy + 1.5);
+            pmui::Text(wl, "seg." + tab, 14, tab, 21, "Regular", ink, tx, cy);
             pmui::Box(wl, "seg." + tab + ".c", 13, chip, A(kChip, 1 - lit), 8);
             pmui::Text(wl, "seg." + tab + ".n.sh", 14, n, 14, "Bold", A(kBlack, shadow), chip.Cx() + 1.2, cy + 1.2, 0.5);
             pmui::Text(wl, "seg." + tab + ".n", 15, n, 14, "Bold", Mix(kSub, word, lit), chip.Cx(), cy, 0.5);
         } else {
-            pmui::Text(wl, "seg." + tab, 13, label(tab), 21, "Regular", Mix(Mix(kSegText, kWhite, h), kBlack, lit), tx, cy);
+            pmui::Text(wl, "seg." + tab, 13, tab, 21, "Regular", Mix(Mix(kSegText, kWhite, h), kBlack, lit), tx, cy);
             pmui::Box(wl, "seg." + tab + ".c", 13, chip, Mix(kChip, A(kBlack, 0.85), lit), 8);
             pmui::Text(wl, "seg." + tab + ".n", 14, n, 14, "Bold", Mix(kSub, kLime, lit), chip.Cx(), cy, 0.5);
         }
-        // browse: a NEW on its top right corner while the registry has a plugin new to it (the browse rows' tag), gone
-        // once the tab has been hovered, as the red dots (Lvcid)
-        if (tab == "browse") {
-            std::string fresh;
-            for (const Plug& q : gBrowse)
-                if (!q.installed && mineBrowse(q) && (q.fresh || gTestNew)) fresh += q.id + ",";
-            if (!fresh.empty() && DotShown(std::string(gCosRows ? "new.explore@" : "new.browse@") + fresh, pmui::Over(wl, r)))
-                NewLetters(wl, "seg.browse.new", 15, r.R() - 8, r.y - 3, 14);
-        }
-        if (pmui::Click(wl, r, "seg." + tab) && gS.tab != tab) {
-            gSlideFrom = gSlideNow;         // (from where the box is now)
-            gS.swapFrom = gS.tab;
-            gS.swapAt = pmui::Now();
-            gS.tab = tab;
-            gS.expanded.clear();
-        }
+        // (browse's NEW is on the top bar's browse now: the mode it belongs to)
+        if (pmui::Click(wl, r, "seg." + tab) && gS.page != tab) SwitchPage(tab);
     }
     if (tabColours) {
         // (the test: a flat box in the colour of the tab it's over, blending across as it slides)
-        const double span = std::max(1.0, segs[1].first.Cx() - segs[0].first.Cx());
+        const double span = std::max(1.0, segs.back().first.Cx() - segs[0].first.Cx());
         const double f = std::clamp((slider.Cx() - segs[0].first.Cx()) / span, 0.0, 1.0);
-        const Color c = Mix(tabColour(0), tabColour(1), f);
+        const Color c = Mix(tabColour(0), tabColour(segs.size() > 1 ? 1 : 0), f);
         Glow(wl, "seg.slide.glow", 11, slider, c, 0.3);
         pmui::Box(wl, "seg.slide.flat", 12, slider, c, 9);
     } else {
@@ -2837,7 +2860,8 @@ void UpdateAll(Layer& wl, double right, double cy) {
 // saw it (the registry has no dates; kept by its id), then its place in the registry (later is newer).
 const char* const kCosExamples[] = {"example-cosmetics", "example-arms", "example-bounce"};
 const char* const kCosRowSorts[] = {"newest", "oldest", "A-Z", "Z-A"};
-int gCosSort = 0;
+std::map<std::string, int> gSectionSorts;   // each section's sort ("plugins:PLUGINS", "cosmetics:BALLS"...), newest at first
+int gSortsPicked = 0;                       // counts the sorts picked (the sorted rows are kept until it, or the lists, change)
 // Folded sections (Lvcid, 2026-10-11): a click on a section's heading folds it (and opens it again). Kept in the
 // plugin manager's storage as "<page>:<heading>" ("plugins:INSTALLED", "cosmetics:COMMUNITY"), so it lasts through
 // updates; a heading renamed is simply open again (only the names kept are folded). Failsafe: anything in an unexpected
@@ -2872,6 +2896,64 @@ void SaveFolded() {
     std::string v = kFoldVersion;
     for (const std::string& f : gFolded) v += "|" + f;
     storage::Set(kSelf, "manager.folded", v);
+}
+
+// The list's sections (Lvcid, 2026-10-29): only how the window groups its rows, not the registry's categories. The
+// plugins page: the plugin manager on its own (ALWAYS ON), the plugins that change the game's own menus and pages
+// (ENHANCEMENTS, by id: steadier than names), then the rest (PLUGINS). The cosmetics page: installed packs by the slot
+// all their cosmetics are for, in the Customize page's order, MISCELLANEOUS last (mixed slots, or not known until the
+// pack has run); browse, EXAMPLES then COMMUNITY. A search lists INSTALLED, then AVAILABLE.
+const char* const kEnhancements[] = {"cosmetic-kit", "cosmetic-kit-plus", "hub-plus", "create-extensions"};
+std::pair<int, std::string> PackSection(const std::string& id);    // (manager_cosmetics.inc)
+int CosExample(const std::string& id);
+
+std::pair<int, std::string> SectionOf(const Plug& p, bool browse) {
+    if (gCosRows) {
+        if (browse) return CosExample(p.id) >= 0 ? std::pair<int, std::string>{0, "EXAMPLES"} : std::pair<int, std::string>{1, "COMMUNITY"};
+        return PackSection(p.id);
+    }
+    if (p.id == "plugin-manager") return {0, "ALWAYS ON"};
+    for (const char* e : kEnhancements)
+        if (p.id == e) return {1, "ENHANCEMENTS"};
+    return {2, "PLUGINS"};
+}
+
+// A section with its own sort: all but those kept in their own order.
+bool Sortable(const std::string& title) {
+    return title != "ALWAYS ON" && title != "ENHANCEMENTS" && title != "EXAMPLES" && title != "INSTALLED" && title != "AVAILABLE";
+}
+
+// The rows grouped by section, in their order; a sortable section's rows by its sort (newest: by when first seen, then
+// by the registry's order; A-Z by name), the others as they came (examples in their own order).
+void SortSections(std::vector<const Plug*>& rows, bool browse, const std::string& foldPage) {
+    std::map<std::string, long> at;
+    const auto& entries = registry::Entries();
+    for (size_t i = 0; i < entries.size(); ++i) at[entries[i].id] = static_cast<long>(i);
+    struct Key {
+        int rank;
+        std::string title;
+        std::pair<long, long> age;
+        std::string name;
+    };
+    std::map<const Plug*, Key> keys;
+    for (const Plug* p : rows) {
+        auto [rank, title] = SectionOf(*p, browse);
+        const auto it = at.find(p->id);
+        keys[p] = {rank, title, {std::atol(storage::Get(kSelf, "manager.seen." + p->id, "0").c_str()), it == at.end() ? -1 : it->second}, Lower(p->name)};
+    }
+    std::stable_sort(rows.begin(), rows.end(), [&](const Plug* a, const Plug* b) {
+        const Key &x = keys[a], &y = keys[b];
+        if (x.rank != y.rank) return x.rank < y.rank;
+        if (x.title != y.title) return x.title < y.title;          // (extra slots of one rank: by name)
+        if (x.title == "EXAMPLES") return CosExample(a->id) < CosExample(b->id);
+        if (!Sortable(x.title)) return false;
+        switch (gSectionSorts[foldPage + x.title]) {
+            case 0: return x.age > y.age;
+            case 1: return x.age < y.age;
+            case 2: return x.name < y.name;
+            default: return x.name > y.name;
+        }
+    });
 }
 
 int CosExample(const std::string& id) {
@@ -2912,9 +2994,9 @@ void PluginsPage(Layer& wl, const Rect& area) {
         SubBar(wl, area.w, area.y);
     }
     const Rect view{0, area.y + kSubH, area.w, area.h - kSubH};
-    // switched tabs: the new rows come in with the lime box (a short fade, a small slide from the side it goes to)
+    // switched mode or page: the new rows come in (a short fade, a small slide from the side it goes to)
     const double in = gS.swapFrom.empty() ? 1.0 : EaseOut((pmui::Now() - gS.swapAt) / 0.2, 3);
-    const double dx = (1 - in) * 14 * (gS.tab == "browse" ? 1 : -1);
+    const double dx = (1 - in) * 14 * (gS.swapRight ? 1 : -1);
     Layer& clip = pmui::Group(wl, "list", 20, view, true);
     Layer& list = pmui::Group(clip, "list.in", 0, {dx, 0, view.w, view.h}, false, 0.2 + 0.8 * in);
     const bool browse = gS.tab == "browse";
@@ -2930,27 +3012,23 @@ void PluginsPage(Layer& wl, const Rect& area) {
     if (searching || browse)
         for (const Plug& p : gBrowse)
             if (!p.installed && (gCosRows ? p.category == "cosmetics" : p.category != "cosmetics") && matches(p)) rows.push_back(&p), rowBrowse.push_back(true);
-    if (gCosRows && !searching) {
-        // examples first, in their order; the community after them, in the sort's order
-        std::map<std::string, std::pair<long, long>> age;
-        const auto& entries = registry::Entries();
-        for (const Plug* p : rows) {
-            long at = -1;
-            for (size_t i = 0; i < entries.size(); ++i)
-                if (entries[i].id == p->id) at = static_cast<long>(i);
-            age[p->id] = {std::atol(storage::Get(kSelf, "manager.seen." + p->id, "0").c_str()), at};
+    const std::string foldPage = gCosRows ? "cosmetics:" : "plugins:";
+    if (!searching) {
+        // (grouped and sorted only when the lists are rebuilt (BuildModel, 4 times a second) or a sort is picked, then
+        // kept: not sorted every frame; one mode: rowBrowse all the same)
+        struct Sorted {
+            double model = -1;
+            int picked = -1;
+            std::vector<const Plug*> rows;
+        };
+        static std::map<std::string, Sorted> sorted;        // by page and mode
+        Sorted& c = sorted[foldPage + gS.tab];
+        if (c.model != gModelAt || c.picked != gSortsPicked || c.rows.size() != rows.size()) {
+            SortSections(rows, browse, foldPage);
+            c = {gModelAt, gSortsPicked, rows};
+        } else {
+            rows = c.rows;
         }
-        std::stable_sort(rows.begin(), rows.end(), [&](const Plug* a, const Plug* b) {     // (one tab: rowBrowse all the same)
-            const int ea = CosExample(a->id), eb = CosExample(b->id);
-            if ((ea >= 0) != (eb >= 0)) return ea >= 0;
-            if (ea >= 0) return ea < eb;
-            switch (gCosSort) {
-                case 0: return age[a->id] > age[b->id];
-                case 1: return age[a->id] < age[b->id];
-                case 2: return Lower(a->name) < Lower(b->name);
-                default: return Lower(a->name) > Lower(b->name);
-            }
-        });
     }
     const std::string key = std::string(gCosRows ? "cos." : "") + "list." + gS.tab + "." + gPrefs.view;     // (each page its own scroll)
     const double rowW = view.w - 22 - 34;
@@ -2965,7 +3043,7 @@ void PluginsPage(Layer& wl, const Rect& area) {
         return;
     }
     if (rows.empty() && gCosRows && !browse && registry::State() == "ready") {
-        pmui::Text(list, "empty", 1, "No packs yet: get some from explore.", 18, "Semilight", kSub, view.w / 2, 80, 0.5);
+        pmui::Text(list, "empty", 1, "No packs yet: get some in browse.", 18, "Semilight", kSub, view.w / 2, 80, 0.5);
         return;
     }
     if (rows.empty()) {
@@ -2981,27 +3059,28 @@ void PluginsPage(Layer& wl, const Rect& area) {
         constexpr double kHeadH = 40;
         const bool heads = true;            // (the cosmetics page: EXAMPLES, COMMUNITY)
         std::vector<std::string> titles(rows.size());
-        if (heads)
+        if (heads) {
+            // (a search: INSTALLED, then AVAILABLE; else the sections: SectionOf)
+            std::string before = "-";
             for (size_t i = 0; i < rows.size(); ++i) {
-                auto title = [&](size_t n) {
-                    if (searching) return std::string(rowBrowse[n] ? "AVAILABLE" : gCosRows ? "OWNED" : "INSTALLED");
-                    // (the cosmetics page: owned, one OWNED section (it said COMMUNITY: Lvcid); explore, EXAMPLES then COMMUNITY)
-                    if (gCosRows) return std::string(!rowBrowse[n] ? "OWNED" : CosExample(rows[n]->id) >= 0 ? "EXAMPLES" : "COMMUNITY");
-                    // (the plugins page: one section a tab, INSTALLED / AVAILABLE (Lvcid); the rows still in the categories' order)
-                    return std::string(rowBrowse[n] ? "AVAILABLE" : "INSTALLED");
-                };
-                const std::string t = title(i);
-                const std::string before = i ? title(i - 1) : "-";
+                const std::string t = searching ? std::string(rowBrowse[i] ? "AVAILABLE" : "INSTALLED") : SectionOf(*rows[i], rowBrowse[i]).second;
                 if (t != before) titles[i] = t;
+                before = t;
             }
+        }
         // folded sections (not while searching): their rows aren't listed; each row's section, for that
         if (!gFoldedRead) ReadFolded();
-        const std::string foldPage = gCosRows ? "cosmetics:" : "plugins:";
         std::vector<std::string> section(rows.size());
         std::map<std::string, int> sectionCount;
         for (size_t i = 0; i < rows.size(); ++i) {
             section[i] = !titles[i].empty() ? titles[i] : i ? section[i - 1] : "";
             ++sectionCount[section[i]];
+            // (the card last clicked, opened or closed, now in another section (a pack whose cosmetics just became
+            // known moved out of MISCELLANEOUS: Lvcid): the list follows it there)
+            if (!searching && rows[i]->id == gS.followId) {
+                if (!gS.followSection.empty() && gS.followSection != section[i]) gS.scrollTo = gS.followId;
+                gS.followSection = section[i];
+            }
         }
         auto folded = [&](size_t i) { return !searching && gFolded.count(foldPage + section[i]) > 0; };
         std::vector<double> heights;
@@ -3043,7 +3122,7 @@ void PluginsPage(Layer& wl, const Rect& area) {
             // (Ballest Night too, under its band.)
             constexpr double kDrop = 6, kCut = 10;
             const double shown = 1 - std::clamp(scroll / 12, 0.0, 1.0);
-            const Color drop = A(browse ? kBallestCyan : kPink, shown);      // (the open tab's colour, both pages: Lvcid)
+            const Color drop = A(gCosRows ? kBallestCyan : kPink, shown);      // (the strip's open tab's colour: Lvcid)
             const double dx0 = 12 + kCut, dw = view.w - 24 - 2 * kCut;
             pmui::Box(wl, "sub.drop", 7, {dx0, view.y - kSubH + 4 + kDrop, dw, kSubH - 8}, drop, 18);
             pmui::BoxCorners(clip, "sub.drop.foot", 50, {dx0, kDrop - 4 - 18, dw, 18}, drop, 0, 0, 18, 18);
@@ -3095,8 +3174,8 @@ void PluginsPage(Layer& wl, const Rect& area) {
                         constexpr double kLW = 16, kSW = 22, kIn = 3;
                         const Color bar = ux::Hex(nightHead ? "#27292F" : "#17181B");
                         const Rect tb = hr.Grow(-1);
-                        if (gCosRows && titles[i] == "COMMUNITY" && !isFolded)
-                            tabEnd = std::max(tabEnd, after + 22 + 16 + Measured(list, "cs.sort.t", kCosRowSorts[gCosSort], 13) + 22);
+                        if (!searching && Sortable(titles[i]) && !isFolded)
+                            tabEnd = std::max(tabEnd, after + 22 + 16 + Measured(list, k + ".sort.t", kCosRowSorts[gSectionSorts[foldPage + titles[i]]], 13) + 22);
                         const double slopeX = std::max(tb.x + kLW, tabEnd + 8), cut = std::max(tb.x + tb.w * 0.55, slopeX + kSW + 40);
                         pmui::Pic(list, k + ".tab.l", 0, {tb.x, tb.y, kLW, tb.h}, "pm-section-tab-l.png", bar);
                         pmui::Box(list, k + ".tab.top", 0, {tb.x + kLW - 0.5, tb.y, slopeX - tb.x - kLW + 1, kIn}, bar, 0);
@@ -3114,26 +3193,32 @@ void PluginsPage(Layer& wl, const Rect& area) {
                         SaveFolded();
                         hostlog::Info("manager: " + std::string(isFolded ? "opened " : "folded ") + f);
                     }
-                    if (gCosRows && titles[i] == "COMMUNITY" && !isFolded) {
-                        // the sort, quiet, right after the community's heading (Lvcid: its right end was awkward): a dot,
+                    if (!searching && Sortable(titles[i]) && !isFolded) {
+                        // the sort, quiet, right after the section's heading (Lvcid: its right end was awkward): a dot,
                         // the order's name and a small chevron, no box; hovered or open, white; its list under it
-                        const std::string lab = kCosRowSorts[gCosSort];
-                        const double tw = Measured(list, "cs.sort.t", lab, 13);
-                        sortAt = {after + 22, y + 9, 16 + tw + 22, 26};
-                        if (gS.sortOpen) pmui::Level(kDropLevel);
-                        const double sh = EaseTo("cs.sort", pmui::Over(list, sortAt) ? 1.0 : gS.sortOpen ? kOpenLit : 0.0);
+                        // (every section but ALWAYS ON, ENHANCEMENTS and EXAMPLES, in their own order: Lvcid)
+                        const std::string lab = kCosRowSorts[gSectionSorts[foldPage + titles[i]]];
+                        const double tw = Measured(list, k + ".sort.t", lab, 13);
+                        const Rect at{after + 22, y + 9, 16 + tw + 22, 26};
+                        const bool mineOpen = gS.sortOpen && gS.sortFor == titles[i];
+                        if (mineOpen) sortAt = at;
+                        if (mineOpen) pmui::Level(kDropLevel);
+                        const double sh = EaseTo(k + ".sort", pmui::Over(list, at) ? 1.0 : mineOpen ? kOpenLit : 0.0);
                         // (a soft pill at rest, to tell it from the tab; brighter hovered or open: Lvcid)
                         if (BallestLight()) {
                             ux::RawColors raw;
-                            pmui::Box(list, "cs.sort.b", 3, sortAt, A(kBlack, 0.07 + 0.08 * sh), 13).Outline(1.2f, A(kBlack, 0.22 + 0.2 * sh));
+                            pmui::Box(list, k + ".sort.b", 3, at, A(kBlack, 0.07 + 0.08 * sh), 13).Outline(1.2f, A(kBlack, 0.22 + 0.2 * sh));
                         } else {
-                            pmui::Box(list, "cs.sort.b", 3, sortAt, A(kWhite, 0.05 + 0.05 * sh), 13).Outline(1.2f, A(kWhite, 0.14 + 0.16 * sh));
+                            pmui::Box(list, k + ".sort.b", 3, at, A(kWhite, 0.05 + 0.05 * sh), 13).Outline(1.2f, A(kWhite, 0.14 + 0.16 * sh));
                         }
-                        pmui::Box(list, "cs.sort.dot", 4, {sortAt.x + 6, sortAt.Cy() - 2, 4, 4}, A(kHead, 0.8), 2);
-                        pmui::Text(list, "cs.sort.t", 4, lab, 13, "Regular", Mix(kHead, kWhite, sh), sortAt.x + 16, sortAt.Cy());
-                        pmui::Pic(list, "cs.sort.i", 4, {sortAt.R() - 18, sortAt.Cy() - 6, 12, 12}, "pm-chev.png", Mix(kHead, kWhite, sh))
-                            .Transform(1, gS.sortOpen ? 180 : 0);
-                        if (pmui::Click(list, sortAt, "cs.sort")) gS.sortOpen = !gS.sortOpen;
+                        pmui::Box(list, k + ".sort.dot", 4, {at.x + 6, at.Cy() - 2, 4, 4}, A(kHead, 0.8), 2);
+                        pmui::Text(list, k + ".sort.t", 4, lab, 13, "Regular", Mix(kHead, kWhite, sh), at.x + 16, at.Cy());
+                        pmui::Pic(list, k + ".sort.i", 4, {at.R() - 18, at.Cy() - 6, 12, 12}, "pm-chev.png", Mix(kHead, kWhite, sh))
+                            .Transform(1, mineOpen ? 180 : 0);
+                        if (pmui::Click(list, at, k + ".sort")) {
+                            gS.sortOpen = !mineOpen;
+                            gS.sortFor = titles[i];
+                        }
                         pmui::Level(kPageLevel);
                     }
                 }
@@ -3190,9 +3275,9 @@ void PluginsPage(Layer& wl, const Rect& area) {
             if (r.B() > -40 && r.y < view.h + 40) Row(list, *rows[i], r, base, compact, rowBrowse[i]);
             y += heights[i] + kGap;
         }
-        if (gCosRows && gS.sortOpen) {
+        if (gS.sortOpen) {
             if (sortAt.w <= 0) {
-                gS.sortOpen = false;        // (its heading not drawn: scrolled away, or no community: closed)
+                gS.sortOpen = false;        // (its heading not drawn: scrolled away, or the section gone: closed)
             } else {
                 pmui::Level(kDropLevel);
                 Rect lr{sortAt.x, sortAt.B() + 4, 130, 8 + 4 * 34.0};      // (from its left, as it sits after the heading)
@@ -3208,9 +3293,11 @@ void PluginsPage(Layer& wl, const Rect& area) {
                     const std::string ok = "cs.sort.o" + std::to_string(n);
                     const double oh = Ease(ok, pmui::Over(list, o));
                     pmui::Box(list, ok + ".b", 602, o, A(kWhite, 0.08 * oh), 8);
-                    pmui::Text(list, ok, 603, kCosRowSorts[n], 15, "Regular", n == gCosSort ? kLime : Mix(kSub, kWhite, oh), o.x + 12, o.Cy());
+                    int& sort = gSectionSorts[foldPage + gS.sortFor];
+                    pmui::Text(list, ok, 603, kCosRowSorts[n], 15, "Regular", n == sort ? kLime : Mix(kSub, kWhite, oh), o.x + 12, o.Cy());
                     if (pmui::Click(list, o, ok)) {
-                        gCosSort = n;
+                        sort = n;
+                        ++gSortsPicked;
                         gS.sortOpen = false;
                     }
                 }
@@ -3812,10 +3899,10 @@ double General(Layer& pane, Layer& overlay, double w) {
         pmui::Text(pane, "winsize.n", 3, "drag the window's edges or corners", 16, "Semilight", kSub, kSlX, cy);
         y += kRow;
     }
-    // window scale: 80..150% in steps of 5 (by default the screen's: 110%, more on small screens); it changes when the slider is let go (the window would
+    // window scale: 80..150% in steps of 5 (by default the screen's: 105%, more on small screens); it changes when the slider is let go (the window would
     // move under the pointer while dragging: no test-drag either)
     {
-        const double cy = row("scale", "window scale", "for small or very large screens: everything in this window (by default 110%, more on small screens)");
+        const double cy = row("scale", "window scale", "for small or very large screens: everything in this window (by default 105%, more on small screens)");
         static double pending = -1;
         const double shown = std::round((pending >= 0 ? pending : gPrefs.scale) / kScaleBase * 20) * 5;
         double st = (shown - 80) / 70;
@@ -3929,7 +4016,7 @@ void ResetPopup(Layer& wl, double W, double H) {
     // (this page's settings only, said exactly; Lvcid)
     pmui::Text(pop, "title", 2, "reset general?", 28, "Regular", kWhite, 28, 46);
     pmui::Para(pop, "text", 2,
-               "The window size, window scale (110%, more on small screens), screen dim (on, 67%), hover sounds (on, 69%) and the theme (Ballest Night) go "
+               "The window size, window scale (105%, more on small screens), screen dim (on, 67%), hover sounds (on, 69%) and the theme (Ballest Night) go "
                "back to their defaults.",
                17, "Semilight", kPopupText, {28, 76, b.w - 56, 70});
     pmui::Text(pop, "text2", 2, "Nothing on the other pages changes.", 15, "Semilight", kSub, 28, 150);
@@ -4268,7 +4355,7 @@ double Advanced(Layer& pane, Layer& overlay, double w) {
             gModelAt = -100;
         }
         y += Step();
-        if (TestRow(pane, "t.new", y, w, "NEW tags", "Every plugin on browse, and every pack on explore, shows its NEW tag.", gTestNew)) gTestNew = !gTestNew;
+        if (TestRow(pane, "t.new", y, w, "NEW tags", "Every plugin and pack in browse shows its NEW tag.", gTestNew)) gTestNew = !gTestNew;
         y += Step();
     }
     gNoteTips = false;
@@ -4876,14 +4963,8 @@ void TrackPlace() {
 bool gResync = false;                       // a back / forward step was taken: what it reached is kept as that step
 void GoTo(const Place& p) {
     gResync = true;
-    if (p.page != gS.page) SetPage(p.page);
-    if (!p.tab.empty() && p.tab != gS.tab) {
-        gSlideFrom = gSlideNow;             // (as a click on the tab: the lime box slides)
-        gS.swapFrom = gS.tab;
-        gS.swapAt = pmui::Now();
-        gS.tab = p.tab;
-        gS.expanded.clear();
-    }
+    if (p.page != gS.page) SwitchPage(p.page);      // (as a click on the strip: its box glides)
+    if (!p.tab.empty() && p.tab != gS.tab) SwitchTab(p.tab);
     if (p.overlay != gS.overlay || (p.overlay == "settings" && p.section != gS.section)) OpenOverlay(p.overlay, p.section);
 }
 
@@ -4901,7 +4982,7 @@ void FreshStart() {
 // Keyboard and mouse: Esc back / close, the mouse's back and forward buttons step through where you've been (never
 // closing), Space / Enter select, arrows and WASD move, Tab / Shift+Tab move in order. A pad: the D-pad or stick moves,
 // A selects, B back / close, Start closes the window, Y the page's search, X turns the focused plugin on or off, LT / RT
-// settings / plugins / cosmetics, LB / RB the page's two tabs (installed / browse, owned / explore), View settings.
+// the top bar (settings / installed / browse), LB / RB the strip (plugins / cosmetics), View settings.
 
 bool gPadMode = false;                      // the last thing used was a pad (the legend shows its buttons), else keys / mouse
 
@@ -4973,28 +5054,23 @@ void NavKeys() {
             pmui::NavOff();
         }
     }
-    // LT / RT: settings, plugins, cosmetics (in that order, round)
+    // LT / RT: the top bar, settings, installed, browse (in that order, round)
     if (const int trig = (Pressed(kPadRT) ? 1 : 0) - (Pressed(kPadLT) ? 1 : 0); trig != 0) {
-        std::vector<std::string> places = {"settings", "plugins"};
-        if (packages::KitOn()) places.push_back("cosmetics");
-        const std::string here = gS.overlay == "settings" ? std::string("settings") : gS.page;
+        const std::vector<std::string> places = {"settings", "installed", "browse"};
+        const std::string here = gS.overlay == "settings" ? std::string("settings") : gS.tab;
         const auto at = std::find(places.begin(), places.end(), here);
         const int i = at == places.end() ? 1 : static_cast<int>(at - places.begin()), n = static_cast<int>(places.size());
         const std::string& to = places[static_cast<size_t>(((i + trig) % n + n) % n)];
-        if (to == "settings") OpenOverlay("settings");
-        else SetPage(to);
-    }
-    // LB / RB: the page's two tabs (as a click on the strip: the lime box glides over)
-    if (const int bump = (Pressed(kPadRB) ? 1 : 0) - (Pressed(kPadLB) ? 1 : 0); bump != 0 && gS.overlay.empty()) {
-        const std::string to = bump > 0 ? "browse" : "installed";
-        if (gS.tab != to) {
-            gSlideFrom = gSlideNow;
-            gS.swapFrom = gS.tab;
-            gS.swapAt = pmui::Now();
-            gS.tab = to;
-            gS.expanded.clear();
+        if (to == "settings") {
+            OpenOverlay("settings");
+        } else {
+            SwitchTab(to);
+            OpenOverlay("");
         }
     }
+    // LB / RB: the strip, plugins / cosmetics (as a click on it: the lime box glides over)
+    if (const int bump = (Pressed(kPadRB) ? 1 : 0) - (Pressed(kPadLB) ? 1 : 0); bump != 0 && gS.overlay.empty())
+        if (bump < 0 || packages::KitOn()) SwitchPage(bump > 0 ? "cosmetics" : "plugins");
     if (Pressed(kPadView)) OpenOverlay(gS.overlay == "settings" ? "" : "settings");
 }
 
