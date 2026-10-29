@@ -3218,6 +3218,7 @@ void PluginsPage(Layer& wl, const Rect& area) {
                         if (pmui::Click(list, at, k + ".sort")) {
                             gS.sortOpen = !mineOpen;
                             gS.sortFor = titles[i];
+                            if (gS.sortOpen) sortAt = at;  // the list opens this frame
                         }
                         pmui::Level(kPageLevel);
                     }
