@@ -534,10 +534,10 @@ void MoveDrops() {
 }
 }  // namespace
 
-std::vector<int> SpawnPieces(const std::vector<Spawn>& pieces, bool drop) {
+std::vector<int> SpawnPieces(const std::vector<Spawn>& pieces, bool drop, const std::vector<int>& remove) {
     std::vector<int> made;
     Obj handler = Handler();
-    if (!handler || pieces.empty()) return made;
+    if (!handler || (pieces.empty() && remove.empty())) return made;
     // FSKGMLECopiedActor (measured layout in the types dump): class at 0, relative transform at 0x10, world scale at
     // 0x70, the copied actor at 0x88; 0x90 bytes each.
     struct CopiedActor {
@@ -599,7 +599,21 @@ std::vector<int> SpawnPieces(const std::vector<Spawn>& pieces, bool drop) {
     BeginSpawnBatch();
     eng::Params begin(eng::FunctionOn(handler, "BeginHistory"));
     const bool opened = text && begin.Set("Description", text, textSize) && eng::Invoke(handler, begin);
-    const bool pasted = eng::Call(handler, "Paste", uint8_t{1}, uint8_t{0}, none).Invoked();   // at the copied place
+    // pieces replaced: deleted the way the editor's Delete key does (Server_Delete), inside the same step
+    if (!remove.empty()) {
+        std::vector<Obj> gone;
+        for (int id : remove)
+            if (Obj a = Resolve(id)) gone.push_back(a);
+        struct {
+            Obj* data;
+            int32_t num, max;
+        } actors{gone.data(), static_cast<int32_t>(gone.size()), static_cast<int32_t>(gone.size())};
+        eng::Params del(eng::FunctionOn(handler, "Server_Delete"));
+        if (!gone.empty() && (!del.Set("Actors", &actors, sizeof actors) || !del.Set("bDeleteOnlyOwned", uint8_t{0}) ||
+                              !eng::Invoke(handler, del)))
+            hostlog::Warn("editor: the pieces to replace could not be deleted");
+    }
+    const bool pasted = pieces.empty() || eng::Call(handler, "Paste", uint8_t{1}, uint8_t{0}, none).Invoked();
     std::memcpy(slot, saved, sizeof saved);
     // The paste leaves the new pieces selected, and the editor then builds its Details panel for all of them (every
     // material editor of every piece: a player's game made ~125,000 widgets for a 9-piece line, the lag after

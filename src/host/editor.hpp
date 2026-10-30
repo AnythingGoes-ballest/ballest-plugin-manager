@@ -48,7 +48,8 @@ struct Spawn {
     Rot rotation;
     Vec3 scale{1, 1, 1};
 };
-std::vector<int> SpawnPieces(const std::vector<Spawn>& pieces, bool drop);
+// `remove`: pieces deleted in the same step of the history (ReplacePieces), before the new ones are made.
+std::vector<int> SpawnPieces(const std::vector<Spawn>& pieces, bool drop, const std::vector<int>& remove = {});
 // The editor's own undo and redo (its handler's, as Ctrl+Z and Ctrl+Y do); false outside the editor.
 bool Undo();
 int HistoryMoves();          // undo and redo steps the editor has run, however they were started (counted from 0)

@@ -1800,6 +1800,14 @@ array<string> classes = {"/Game/LevelEditor/PackageAssets/MultiplayerLevelEditor
 array<double> transforms = {0, 0, 1000,  0, 90, 0,  1, 0.6, 1};
 array<int>@ made = Editor::SpawnPieces(classes, transforms, true);
 
+== Editor::ReplacePieces
+Like `SpawnPieces`, and the pieces in `remove` deleted (as the Delete key does) in the same step of the editor's undo
+history: one Ctrl+Z brings the old pieces back and takes the new ones away. Returns the new pieces' ids. With no
+classes, it only deletes, still as one step. Requires host 0.32.0.
+--
+array<int> old = {made[0]};
+array<int>@ now = Editor::ReplacePieces(old, classes, transforms, true);
+
 == Editor::Undo
 The editor's own undo, as Ctrl+Z (its handler's): pieces from `SpawnPieces` go as one step. False outside the editor.
 Requires host 0.31.0.

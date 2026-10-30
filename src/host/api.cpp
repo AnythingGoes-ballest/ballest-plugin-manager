@@ -535,6 +535,23 @@ CScriptArray* EditorSpawnPieces(const CScriptArray* classes, const CScriptArray*
     }
     return IdArray(editor::SpawnPieces(list, drop));
 }
+CScriptArray* EditorReplacePieces(const CScriptArray* remove, const CScriptArray* classes, const CScriptArray* transforms,
+                                  bool drop) {
+    plugins::GameWork work;
+    std::vector<editor::Spawn> list;
+    for (asUINT k = 0; classes && transforms && k < classes->GetSize() && (k + 1) * 9 <= transforms->GetSize(); ++k) {
+        auto at = [&](asUINT i) { return *static_cast<const double*>(transforms->At(k * 9 + i)); };
+        editor::Spawn s;
+        s.classPath = *static_cast<const std::string*>(classes->At(k));
+        s.location = {at(0), at(1), at(2)};
+        s.rotation = {at(3), at(4), at(5)};
+        s.scale = {at(6), at(7), at(8)};
+        list.push_back(s);
+    }
+    std::vector<int> gone;
+    for (asUINT k = 0; remove && k < remove->GetSize(); ++k) gone.push_back(*static_cast<const int*>(remove->At(k)));
+    return IdArray(editor::SpawnPieces(list, drop, gone));
+}
 bool EditorUndo() {
     plugins::GameWork work;             // the editor's own work, not the plugin's
     return editor::Undo();
@@ -1071,6 +1088,9 @@ void RegisterEditor() {
     Global("int HistoryMoves()", asFUNCTION(editor::HistoryMoves));
     Global("array<int>@ SpawnPieces(const array<string>@ classes, const array<double>@ transforms, bool drop = false)",
            asFUNCTION(EditorSpawnPieces));
+    Global("array<int>@ ReplacePieces(const array<int>@ remove, const array<string>@ classes, const array<double>@ transforms, "
+           "bool drop = false)",
+           asFUNCTION(EditorReplacePieces));
     Global("void RotatePieces(const array<int>@, double, double, double, double, double, double)", asFUNCTION(EditorRotatePieces));
     Global("void SetTabCycling(bool)", asFUNCTION(editor::SetTabCycling));
     Global("void SetRotateAroundCenter(bool)", asFUNCTION(editor::SetRotateAroundCenter));

@@ -2743,6 +2743,75 @@ void RegisterEditor()
                            Is(int(Editor::Pieces().length()) == id2, "Editor::Redo: " + Editor::Pieces().length() + " pieces, want " + id2)};
         return All(c);
     });
+    // A piece pasted out of the way is replaced by another: the old one goes and the new one comes in one step, and one
+    // undo takes the new one away again. Then a replace with no classes only deletes.
+    Add("editor", "Editor replace pieces", "Editor::ReplacePieces", function() {
+        if (step == 0)
+        {
+            double x, y, z;
+            Editor::GetLocation(piece, x, y, z);
+            array<string> classes = {Editor::PieceClass(piece)};
+            array<double> first = {x, y, z + 7000, 0, 0, 0, 1, 1, 1};
+            array<int>@ made = Editor::SpawnPieces(classes, first);
+            if (made.length() != 1)
+                return "Editor::SpawnPieces made " + made.length();
+            id2 = Editor::Pieces().length();
+            array<int> old = {made[0]};
+            array<double> second = {x, y, z + 8000, 0, 0, 0, 1, 1, 1};
+            array<int>@ now = Editor::ReplacePieces(old, classes, second);
+            if (now.length() != 1)
+                return "Editor::ReplacePieces made " + now.length();
+            id1 = now[0];
+            t0 = Host::Time();
+            step = 1;
+            return WAIT;
+        }
+        if (step == 1)
+        {
+            if (Elapsed() < 1)
+                return WAIT;
+            if (int(Editor::Pieces().length()) != id2 || Editor::Pieces().find(id1) < 0)
+                return "Editor::ReplacePieces: " + Editor::Pieces().length() + " pieces (want " + id2 + "), new piece there " + (Editor::Pieces().find(id1) >= 0);
+            id3 = Editor::HistoryMoves();
+            Editor::Undo();
+            t0 = Host::Time();
+            step = 2;
+            return WAIT;
+        }
+        if (step == 2)
+        {
+            if (Elapsed() < 1)
+                return WAIT;
+            if (Editor::HistoryMoves() != id3 + 1 || int(Editor::Pieces().length()) != id2 || Editor::Pieces().find(id1) >= 0)
+                return "Editor::ReplacePieces: one undo left " + Editor::Pieces().length() + " pieces (want " + id2 + "), new piece there " + (Editor::Pieces().find(id1) >= 0);
+            Editor::Redo();
+            t0 = Host::Time();
+            step = 3;
+            return WAIT;
+        }
+        if (step == 3)
+        {
+            if (Elapsed() < 1)
+                return WAIT;
+            array<int>@ pieces = Editor::Pieces();
+            int last = pieces[pieces.length() - 1];
+            array<int> gone = {last};
+            array<string> noClasses;
+            array<double> noTransforms;
+            if (Editor::ReplacePieces(gone, noClasses, noTransforms).length() != 0)
+                return "Editor::ReplacePieces with no classes made pieces";
+            id1 = last;
+            t0 = Host::Time();
+            step = 4;
+            return WAIT;
+        }
+        if (Elapsed() < 1)
+            return WAIT;
+        array<int> none;
+        Editor::Select(none);
+        return Is(int(Editor::Pieces().length()) == id2 - 1 && Editor::Pieces().find(id1) < 0,
+                  "Editor::ReplacePieces with no classes: " + Editor::Pieces().length() + " pieces, want " + (id2 - 1));
+    });
     Add("editor", "Editor modes", "Editor::SetTabCycling,Editor::SetRotateAroundCenter,Editor::SetRotateMode,Editor::GetRotateMode", function() {
         Editor::RotateMode before = Editor::GetRotateMode();
         Editor::SetRotateMode(Editor::RotateMirrored);
