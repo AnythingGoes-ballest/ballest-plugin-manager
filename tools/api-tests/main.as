@@ -74,6 +74,7 @@ string s1 = "";
 // Kept between tests.
 UI::Window@ win;
 UI::Window@ clearWin;
+UI::Window@ hoverWin;
 UI::TextInput@ clearInput;
 string level = "";              // the first official track
 string savedBall = "";
@@ -1226,6 +1227,37 @@ void RegisterUi()
         docked.AddText("api docked", 14);
         return PASS;
     });
+    Add("ui", "UI window hovered", "Window.hovered", function() {
+        if (step == 0)
+        {
+            @hoverWin = UI::CreateWindow();
+            hoverWin.SetRect(100, 100, 300, 120);
+            hoverWin.AddText("api hover window", 14);
+            Console::Run("mouseat 250 160");                           // where plugins see the mouse: inside it
+            step = 1;
+            return WAIT;
+        }
+        if (step == 1)
+        {
+            if (Elapsed() < 1)
+                return WAIT;
+            bool over = hoverWin.hovered;
+            Console::Run("mouseat 900 600");                           // well away from it
+            t0 = Host::Time();
+            d1 = over ? 1 : 0;
+            step = 2;
+            return WAIT;
+        }
+        if (Elapsed() < 0.5)
+            return WAIT;
+        bool away = !hoverWin.hovered;
+        hoverWin.visible = false;
+        bool hidden = !hoverWin.hovered;
+        Console::Run("mouseat off");
+        array<string> c = {Is(d1 == 1, "Window.hovered false with the mouse over the window"), Is(away, "Window.hovered true with the mouse away from the window"),
+                           Is(hidden, "Window.hovered true for a hidden window")};
+        return All(c);
+    });
     Add("ui", "UI footer button and panel", "UI::AddFooterButton,FooterButton.Clicked,FooterButton.hovered,FooterButton.label,UI::CreatePanel,Panel.Clear,Panel.AddLine,Panel.title,Panel.visible,Panel.AddButton", function() {
         if (step == 0)
         {
@@ -2201,6 +2233,37 @@ void RegisterRace()
                            Is(b && up == 1, "Camera::Sweep in open air: " + b + " fraction " + up)};
         return All(c);
     });
+    // The ball on screen and back: the ray under its screen point goes through it, and what's under that point (balls
+    // ignored) is the track behind it.
+    Add("race", "Camera::Deproject, Pick and PickOn", "Camera::Deproject,Camera::Pick,Camera::PickOn,Camera::Inspecting", function() {
+        double x, y, z;
+        float sx, sy;
+        if (!Race::BallPosition(x, y, z))
+            return "no ball position";
+        if (!Camera::Project(x, y, z, sx, sy))
+            return "Camera::Project of the ball false (it isn't on screen)";
+        double ox, oy, oz, dx, dy, dz;
+        bool ray = Camera::Deproject(sx, sy, ox, oy, oz, dx, dy, dz);
+        double bx = x - ox, by = y - oy, bz = z - oz;
+        double toBall = Math::sqrt(bx * bx + by * by + bz * bz);
+        double hx, hy, hz, nx, ny, nz;
+        int surface = 0;
+        bool picked = Camera::Pick(sx, sy, hx, hy, hz, nx, ny, nz, surface);
+        double px, py, pz, qx, qy, qz;
+        bool on = Camera::PickOn(surface, sx, sy, px, py, pz, qx, qy, qz);
+        double ux, uy, uz, vx, vy, vz;
+        array<string> c = {Is(ray, "Camera::Deproject false with a player view"),
+                           Near(dx * dx + dy * dy + dz * dz, 1, "Camera::Deproject direction length", 0.001),
+                           Near((bx * dx + by * dy + bz * dz) / toBall, 1, "Camera::Deproject: the ray under the ball's screen point, towards the ball", 0.001),
+                           Is(picked, "Camera::Pick under the ball false"),
+                           Is((hx - ox) * dx + (hy - oy) * dy + (hz - oz) * dz > toBall, "Camera::Pick hit something before the ball (balls are ignored)"),
+                           Near(nx * nx + ny * ny + nz * nz, 1, "Camera::Pick normal length", 0.001),
+                           Is(on, "Camera::PickOn of the picked object false"),
+                           Near(Math::sqrt((px - hx) * (px - hx) + (py - hy) * (py - hy) + (pz - hz) * (pz - hz)), 0, "Camera::PickOn: distance from Pick's point", 1),
+                           Is(!Camera::PickOn(-1, sx, sy, ux, uy, uz, vx, vy, vz), "Camera::PickOn of a missing object true"),
+                           Is(!Camera::Inspecting(), "Camera::Inspecting true in a race")};
+        return All(c);
+    });
     Add("race", "Race::FreezeBall refused in a run that counts", "Race::FreezeBall", function() {
         if (Race::IsPractice())
             return "SKIP: this run is practice (only a run that counts refuses)";
@@ -2622,6 +2685,63 @@ void RegisterEditor()
         array<int> none;
         Editor::Select(none);
         return Near(Math::abs(Math::sin((w2 - w - 90) * 3.14159265 / 180)), 0, "Editor::RotatePieces: yaw after 90 about z", 0.001);
+    });
+    Add("editor", "Editor piece scale", "Editor::GetScale", function() {
+        double sx = 0, sy = 0, sz = 0, mx, my, mz;
+        bool ok = Editor::GetScale(piece, sx, sy, sz);
+        array<string> c = {Is(ok && sx > 0 && sy > 0 && sz > 0, "Editor::GetScale: " + ok + " " + sx + " " + sy + " " + sz),
+                           Is(!Editor::GetScale(-5, mx, my, mz), "Editor::GetScale of a missing piece true")};
+        return All(c);
+    });
+    // A piece pasted out of the way (the map is never saved), then the editor's undo takes it away and redo brings it back:
+    // each one step of HistoryMoves.
+    Add("editor", "Editor spawn, undo and redo", "Editor::SpawnPieces,Editor::Undo,Editor::Redo,Editor::HistoryMoves", function() {
+        if (step == 0)
+        {
+            double x, y, z;
+            Editor::GetLocation(piece, x, y, z);
+            array<string> classes = {Editor::PieceClass(piece)};
+            array<double> transforms = {x, y, z + 6000, 0, 0, 0, 2, 1, 1};
+            array<int>@ made = Editor::SpawnPieces(classes, transforms);
+            if (made.length() != 1)
+                return "Editor::SpawnPieces made " + made.length();
+            id1 = made[0];
+            id2 = Editor::Pieces().length();
+            double sx, sy, sz;
+            if (!Editor::GetScale(id1, sx, sy, sz) || Abs(sx - 2) > 0.001)
+                return "Editor::SpawnPieces: scale x of the new piece " + sx + ", want 2";
+            array<string> bad = {"/Game/NoSuch/BP_NoSuch.BP_NoSuch_C"};
+            array<double> one = {x, y, z + 6000, 0, 0, 0, 1, 1, 1};
+            if (Editor::SpawnPieces(bad, one).length() != 0)
+                return "Editor::SpawnPieces of a missing class made pieces";
+            id3 = Editor::HistoryMoves();
+            if (!Editor::Undo())
+                return "Editor::Undo false in the editor";
+            t0 = Host::Time();
+            step = 1;
+            return WAIT;
+        }
+        if (step == 1)
+        {
+            if (Elapsed() < 1)
+                return WAIT;
+            if (Editor::HistoryMoves() != id3 + 1)
+                return "Editor::HistoryMoves " + Editor::HistoryMoves() + " after Editor::Undo, want " + (id3 + 1);
+            if (int(Editor::Pieces().length()) != id2 - 1 || Editor::Pieces().find(id1) >= 0)
+                return "Editor::Undo: the pasted piece is still there (" + Editor::Pieces().length() + " pieces, were " + id2 + ")";
+            if (!Editor::Redo())
+                return "Editor::Redo false in the editor";
+            t0 = Host::Time();
+            step = 2;
+            return WAIT;
+        }
+        if (Elapsed() < 1)
+            return WAIT;
+        array<int> none;
+        Editor::Select(none);
+        array<string> c = {Near(Editor::HistoryMoves(), id3 + 2, "Editor::HistoryMoves after Editor::Redo"),
+                           Is(int(Editor::Pieces().length()) == id2, "Editor::Redo: " + Editor::Pieces().length() + " pieces, want " + id2)};
+        return All(c);
     });
     Add("editor", "Editor modes", "Editor::SetTabCycling,Editor::SetRotateAroundCenter,Editor::SetRotateMode,Editor::GetRotateMode", function() {
         Editor::RotateMode before = Editor::GetRotateMode();
