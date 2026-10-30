@@ -75,6 +75,7 @@ string s1 = "";
 UI::Window@ win;
 UI::Window@ clearWin;
 UI::Window@ hoverWin;
+UI::Window@ tabWin;
 UI::TextInput@ clearInput;
 string level = "";              // the first official track
 string savedBall = "";
@@ -2742,6 +2743,85 @@ void RegisterEditor()
         array<string> c = {Near(Editor::HistoryMoves(), id3 + 2, "Editor::HistoryMoves after Editor::Redo"),
                            Is(int(Editor::Pieces().length()) == id2, "Editor::Redo: " + Editor::Pieces().length() + " pieces, want " + id2)};
         return All(c);
+    });
+    // Two pieces saved as a prefab through the game's own saveprefab (asked before replacing it), copied with Write,
+    // the copy placed with spawnprefab (in front of the camera, its pieces selected), that placement undone, and both
+    // files deleted. The map is never saved.
+    Add("editor", "Prefabs save, read, write, place and delete", "Prefabs::Folder,Prefabs::ValidName,Prefabs::List,Prefabs::Read,Prefabs::Write,Prefabs::Save,Prefabs::Spawn,Prefabs::Delete", function() {
+        if (step == 0)
+        {
+            array<int>@ pieces = Editor::Pieces();
+            array<int> two;
+            for (uint i = 0; i < pieces.length() && two.length() < 2; i++)
+                if (Editor::PieceClass(pieces[i]) != "MP_PlayerStart_C")
+                    two.insertLast(pieces[i]);
+            if (two.length() < 2)
+                return "Prefabs: the map needs two pieces besides the start pad";
+            Editor::Select(two);
+            string reply, reply2, reply3;
+            bool saved = Prefabs::Save("api_tests_prefab", true, reply);
+            bool again = Prefabs::Save("api_tests_prefab", false, reply2);
+            bool over = Prefabs::Save("api_tests_prefab", true, reply3);
+            string text = Prefabs::Read("api_tests_prefab");
+            string copied = Prefabs::Write("api_tests_copy", text);
+            array<string> c = {Is(Prefabs::Folder().findLast("Prefabs\\") == int(Prefabs::Folder().length()) - 8, "Prefabs::Folder '" + Prefabs::Folder() + "'"),
+                               Is(Prefabs::ValidName("a_b-1") && !Prefabs::ValidName("a b") && !Prefabs::ValidName(""), "Prefabs::ValidName"),
+                               Is(saved, "Prefabs::Save false: " + reply), Is(!again && reply2.findFirst("already exists") >= 0, "Prefabs::Save without overwrite: " + reply2),
+                               Is(over, "Prefabs::Save with overwrite false: " + reply3), Is(Json::Count(text, "items") == 2, "Prefabs::Read: " + Json::Count(text, "items") + " items"),
+                               Is(copied == "", "Prefabs::Write: " + copied), Is(Prefabs::Write("bad name", text) != "", "Prefabs::Write took a bad name"),
+                               Is(Prefabs::Write("api_tests_bad", "{\"format\":\"BallestPrefab\"}") != "", "Prefabs::Write took a file with no pieces"),
+                               Is(Prefabs::List().find("api_tests_copy") >= 0, "Prefabs::List lacks the copy")};
+            string failed = All(c);
+            if (failed != PASS)
+                return failed;
+            id3 = Editor::HistoryMoves();
+            string spawned;
+            array<int>@ made = Prefabs::Spawn("api_tests_copy", spawned);
+            array<int>@ sel = Editor::Selection();
+            if (made.length() != 2 || sel.length() != 2)
+                return "Prefabs::Spawn made " + made.length() + ", selected " + sel.length() + ": " + spawned;
+            Editor::Undo();
+            t0 = Host::Time();
+            step = 1;
+            return WAIT;
+        }
+        if (Elapsed() < 1)
+            return WAIT;
+        string r1, r2;
+        bool gone1 = Prefabs::Delete("api_tests_prefab", r1), gone2 = Prefabs::Delete("api_tests_copy", r2);
+        array<int> none;
+        Editor::Select(none);
+        array<string> c = {Is(gone1 && gone2, "Prefabs::Delete: " + r1 + " / " + r2), Is(Prefabs::List().find("api_tests_copy") < 0, "Prefabs::List still has the copy"),
+                           Is(Prefabs::Read("api_tests_copy") == "", "Prefabs::Read of a deleted prefab")};
+        return All(c);
+    });
+    // A window as a tab of its own in the editor's left panel: shut until opened, open after OpenTab.
+    Add("editor", "Window as an editor tab", "UI::Window.DockInEditorTab,UI::Window.IsTabOpen,UI::Window.OpenTab", function() {
+        if (step == 0)
+        {
+            @tabWin = UI::CreateWindow();
+            tabWin.DockInEditorTab("/Game/Art/UI/Textures/T_List_Icon.T_List_Icon");
+            tabWin.AddText("api tests tab", 16);
+            t0 = Host::Time();
+            step = 1;
+            return WAIT;
+        }
+        if (step == 1)
+        {
+            if (Elapsed() < 0.5)
+                return WAIT;
+            if (tabWin.IsTabOpen())
+                return "UI::Window.IsTabOpen true before it was opened";
+            tabWin.OpenTab();
+            t0 = Host::Time();
+            step = 2;
+            return WAIT;
+        }
+        if (Elapsed() < 0.5)
+            return WAIT;
+        bool open = tabWin.IsTabOpen();
+        tabWin.visible = false;
+        return Is(open, "UI::Window.IsTabOpen false after OpenTab");
     });
     // A piece pasted out of the way is replaced by another: the old one goes and the new one comes in one step, and one
     // undo takes the new one away again. Then a replace with no classes only deletes.

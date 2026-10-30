@@ -371,10 +371,11 @@ void Forget(Window& win) {
     }
 }
 
-Obj DockTarget(Dock dock) {
-    switch (dock) {
+Obj DockTarget(const Window& win) {
+    switch (win.dock) {
         case Dock::Hub: return hub::DockPanel();
         case Dock::EditorDetails: return editor::DetailsContainer();
+        case Dock::EditorTab: return editor::TabPage(win.editorTab);
         default: return nullptr;
     }
 }
@@ -383,7 +384,7 @@ void Build(Window& win) {
     Obj host = nullptr, tree = nullptr, canvas = nullptr, dock = nullptr;
     if (win.dock != Dock::Screen) {
         // A section of the editor's details panel, or a row of the track hub: built into that panel's own widget tree.
-        dock = DockTarget(win.dock);
+        dock = DockTarget(win);
         if (!dock) return;
         tree = eng::OuterOf(dock);
     } else if (!w::NewScreen(game::PlayerController(), &host, &tree, &canvas)) {
@@ -395,7 +396,9 @@ void Build(Window& win) {
     if (dock) {
         Obj slot = eng::Call(dock, "AddChildToVerticalBox", border).ReturnObj();
         if (!slot) return;
-        eng::Call(slot, "SetPadding", win.dock == Dock::Hub ? w::Margin{0, 0, 0, 8} : w::Margin{0, 10, 0, 0});
+        eng::Call(slot, "SetPadding", win.dock == Dock::Hub         ? w::Margin{0, 0, 0, 8}
+                                      : win.dock == Dock::EditorTab ? w::Margin{0, 0, 0, 0}
+                                                                    : w::Margin{0, 10, 0, 0});
         host = border;                          // what is removed when the section is rebuilt
     } else if (sized) {
         const double marginX = (1.0 - win.screenWidth) / 2, marginY = (1.0 - win.screenHeight) / 2;
@@ -1011,7 +1014,7 @@ void Frame() {
         // Built in an earlier map: those widgets went with it. Forgotten without being touched.
         if (win.host.o && win.generation != game::Generation()) Forget(win);
         // Docked into a panel that has been replaced (the editor was reopened): build it again in the new one.
-        if (win.dock != Dock::Screen && eng::Get(win.host) && eng::Get(win.dockedIn) != DockTarget(win.dock)) {
+        if (win.dock != Dock::Screen && eng::Get(win.host) && eng::Get(win.dockedIn) != DockTarget(win)) {
             eng::Call(eng::Get(win.host), "RemoveFromParent");
             Forget(win);
         }

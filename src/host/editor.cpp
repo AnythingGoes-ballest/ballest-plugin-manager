@@ -394,6 +394,7 @@ void WatchClicks();          // clicks, toolbar choices and key rows: further do
 void WatchSaving();
 void KeepToolbarChoices();
 void KeepHotkeys();
+void KeepTabs();
 void KeepRestores();
 void MoveDrops();          // pieces from SpawnPieces falling into place: further down
 void BeginSpawnBatch();    // SpawnPieces' UI refreshes held to the end: further down
@@ -427,6 +428,7 @@ void Frame() {
     WatchSaving();
     KeepToolbarChoices();
     KeepHotkeys();
+    KeepTabs();
     KeepRestores();
 }
 
@@ -1496,7 +1498,154 @@ void KeepHotkeys() {
     }
 }
 
+// --- plugin tabs -----------------------------------------------------------------------------------------------------
+// The editor's left panel (W_MapEditor_C, measured 2026-10-30): four tab buttons, WBP_SimpleIconButton_C named
+// WBP_ContentBrowserButton, WBP_ObjectDetailsButton, WBP_WorldSettingsButton and WBP_OutlinerButton, side by side in
+// one HorizontalBox, over WS_Tabs, a WidgetSwitcher of their four pages (W_Categories, W_Details, W_WorldSettings,
+// W_Outliner). A plugin's tab is a button of the same kind after theirs and a page added to WS_Tabs; its button shows
+// its page, theirs show the game's. Built again in each new editor (the handler changes when the editor reopens).
+struct Tab {
+    int owner = -1;
+    std::string icon;
+    eng::Weak editor, button, page;
+    Obj handlerSeen = nullptr;
+    bool wasPressed = false, shownOpen = false, openRequested = false, removed = false;
+};
+std::vector<Tab> gTabs;
+const char* const kGameTabButtons[] = {"WBP_ContentBrowserButton", "WBP_ObjectDetailsButton", "WBP_WorldSettingsButton",
+                                       "WBP_OutlinerButton"};
+
+// A game button released while the mouse is still on it: a click (polled, as the leaderboard's tab is).
+bool TabReleased(Obj button, bool* wasPressed) {
+    Obj hit = button ? eng::ReadObj(button, "HitBox") : nullptr;
+    if (!hit) return false;
+    const bool pressed = eng::Call(hit, "IsPressed").ReturnBool();
+    const bool clicked = *wasPressed && !pressed && eng::Call(hit, "IsHovered").ReturnBool();
+    *wasPressed = pressed;
+    return clicked;
+}
+
+struct SlateChildSize {
+    float value;
+    uint8_t rule;
+};
+
+bool BuildTab(Tab& t, Obj ed) {
+    Obj switcher = eng::ReadObj(ed, "WS_Tabs"), theirs = eng::ReadObj(ed, "WBP_OutlinerButton");
+    Obj row = theirs ? eng::Call(theirs, "GetParent").ReturnObj() : nullptr, tree = eng::ReadObj(ed, "WidgetTree");
+    if (!switcher || !row || !tree) return false;
+    Obj button = NewUserWidget("WBP_SimpleIconButton_C");
+    if (!button) return false;
+    // looks as the outliner's button does (copied before it's built: its PreConstruct reads them)
+    const struct {
+        const char* name;
+        size_t size;
+    } looks[] = {{"In User Specified Scale", 4}, {"bShowBackground", 1}, {"bOnWhite", 1}, {"InactiveBG", 16}, {"InactiveFG", 16},
+                 {"BrandColor", 20},          {"LightGrey", 20},      {"GreyText", 20}};
+    for (const auto& look : looks) {
+        uint8_t bytes[32];
+        if (eng::ReadBytes(theirs, look.name, bytes, look.size)) eng::WriteBytes(button, look.name, bytes, look.size);
+    }
+    Obj icon = IconTexture(t.icon);
+    if (icon) eng::WriteBytes(button, "DesiredIcon", &icon, sizeof icon);
+    Obj slot = eng::Call(row, "AddChildToHorizontalBox", button).ReturnObj();
+    if (!slot) return false;
+    if (Obj theirSlot = eng::ReadObj(theirs, "Slot")) {
+        w::Margin padding{};
+        SlateChildSize size{};
+        uint8_t h = 0, v = 0;
+        if (eng::ReadBytes(theirSlot, "Padding", &padding, sizeof padding)) eng::Call(slot, "SetPadding", padding);
+        if (eng::ReadBytes(theirSlot, "Size", &size, sizeof size)) eng::Call(slot, "SetSize", size);
+        if (eng::ReadBytes(theirSlot, "HorizontalAlignment", &h, 1)) eng::Call(slot, "SetHorizontalAlignment", h);
+        if (eng::ReadBytes(theirSlot, "VerticalAlignment", &v, 1)) eng::Call(slot, "SetVerticalAlignment", v);
+    }
+    if (icon) eng::Call(button, "UpdateIcon", icon);
+    eng::Call(button, "SetIsActive", uint8_t{0});
+    Obj page = w::Spawn("VerticalBox", tree);
+    if (!page || !w::AddChild(switcher, page)) {
+        eng::Call(button, "RemoveFromParent");
+        return false;
+    }
+    t.editor = eng::MakeWeak(ed);
+    t.button = eng::MakeWeak(button);
+    t.page = eng::MakeWeak(page);
+    t.handlerSeen = Handler();
+    t.wasPressed = t.shownOpen = false;
+    hostlog::Info("editor: plugin tab added to the left panel (page " +
+                  std::to_string(eng::Call(switcher, "GetChildIndex", page).ReturnAs<int32_t>(-1)) + ")");
+    return true;
+}
+
+void KeepTabs() {
+    Obj ed = nullptr;
+    bool looked = false;
+    for (auto& t : gTabs) {
+        if (t.removed) continue;
+        Obj page = eng::Get(t.page), button = eng::Get(t.button);
+        if (!page || !button || !eng::Get(t.editor) || t.handlerSeen != Handler()) {
+            if (Obj old = eng::Get(t.button)) eng::Call(old, "RemoveFromParent");
+            if (Obj old = eng::Get(t.page)) eng::Call(old, "RemoveFromParent");
+            t.button = t.page = t.editor = {};
+            if (!looked) {
+                ed = Live("W_MapEditor_C");
+                looked = true;
+            }
+            if (!ed || !BuildTab(t, ed)) continue;
+            page = eng::Get(t.page);
+            button = eng::Get(t.button);
+        }
+        Obj switcher = eng::ReadObj(eng::Get(t.editor), "WS_Tabs");
+        if (!switcher) continue;
+        const int32_t index = eng::Call(switcher, "GetChildIndex", page).ReturnAs<int32_t>(-1);
+        if (index < 0) continue;
+        if (TabReleased(button, &t.wasPressed) || t.openRequested) {
+            t.openRequested = false;
+            eng::Call(switcher, "SetActiveWidgetIndex", index);
+            for (const char* name : kGameTabButtons)
+                if (Obj theirs = eng::ReadObj(eng::Get(t.editor), name)) eng::Call(theirs, "SetIsActive", uint8_t{0});
+        }
+        const bool open = eng::Call(switcher, "GetActiveWidgetIndex").ReturnAs<int32_t>(-1) == index;
+        if (open != t.shownOpen) {
+            eng::Call(button, "SetIsActive", static_cast<uint8_t>(open));
+            t.shownOpen = open;
+        }
+    }
+}
+
 }  // namespace
+
+int AddTab(int owner, const std::string& icon) {
+    Tab t;
+    t.owner = owner;
+    t.icon = icon;
+    gTabs.push_back(t);
+    return static_cast<int>(gTabs.size()) - 1;
+}
+
+eng::Obj TabPage(int tab) {
+    if (tab < 0 || tab >= static_cast<int>(gTabs.size()) || gTabs[static_cast<size_t>(tab)].removed) return nullptr;
+    const Tab& t = gTabs[static_cast<size_t>(tab)];
+    return t.handlerSeen == Handler() ? eng::Get(t.page) : nullptr;
+}
+
+bool TabOpen(int tab) {
+    return tab >= 0 && tab < static_cast<int>(gTabs.size()) && !gTabs[static_cast<size_t>(tab)].removed &&
+           gTabs[static_cast<size_t>(tab)].shownOpen && Open();
+}
+
+void OpenTab(int tab) {
+    if (tab >= 0 && tab < static_cast<int>(gTabs.size())) gTabs[static_cast<size_t>(tab)].openRequested = true;
+}
+
+bool TabTapped(eng::Obj button) {
+    for (auto& t : gTabs)
+        if (!t.removed && button && eng::Get(t.button) == button) {
+            t.openRequested = true;
+            return true;
+        }
+    return false;
+}
+
 
 bool NextClick(Click* out) {
     if (gClicks.empty()) return false;
@@ -1801,6 +1950,12 @@ void RemoveOwner(int owner) {
         if (h.owner == owner && !h.removed) {
             if (Obj r = eng::Get(h.row)) eng::Call(r, "RemoveFromParent");
             h.removed = true;
+        }
+    for (auto& t : gTabs)
+        if (t.owner == owner && !t.removed) {
+            for (eng::Weak* weak : {&t.button, &t.page})
+                if (Obj o = eng::Get(*weak)) eng::Call(o, "RemoveFromParent");
+            t.removed = true;
         }
 }
 

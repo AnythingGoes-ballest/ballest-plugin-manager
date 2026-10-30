@@ -84,8 +84,9 @@ enum class Kind { Text, Button, IconButton, Slider, Dropdown, Space, TextArea, T
 
 // Where a window lives: its own layer on screen, docked as a section of the track editor's details panel
 // (shown only while pieces are selected, since the panel's section list is), or docked as a row of the game's track
-// hub, under its header and page row (hub.hpp: DockPanel).
-enum class Dock { Screen, EditorDetails, Hub };
+// hub, under its header and page row (hub.hpp: DockPanel), or as the page of a tab of its own in the track editor's
+// left panel (editor.hpp: AddTab).
+enum class Dock { Screen, EditorDetails, Hub, EditorTab };
 
 struct Window;
 
@@ -160,6 +161,7 @@ struct Window {
     int zOrder = 100;                           // windows with a higher z-order are drawn in front
     std::string font, typeface;                 // the texts' and buttons' font (SetFont), "" the engine's default
     Dock dock = Dock::Screen;
+    int editorTab = -1;                         // Dock::EditorTab: its tab (editor::AddTab)
     eng::Weak dockedIn;                         // the container a docked window was built into
     // Movable: while the cursor is on screen the window can be dragged; its position is saved per plugin
     // (Storage "window.<n>.x/y", n = the plugin's nth window) and restored when it is made movable.

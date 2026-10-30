@@ -23,6 +23,7 @@
 #include "cosmetics.hpp"
 #include "draw.hpp"
 #include "postprocess.hpp"
+#include "prefabs.hpp"
 #include "ghosts.hpp"
 #include "ghostdata.hpp"
 #include "tracks.hpp"
@@ -500,6 +501,17 @@ void WinDockInHub(ui::Window* w) {
     w->dock = ui::Dock::Hub;
     w->layoutDirty = true;
 }
+std::string IconPath(const std::string& icon);      // below (Editor)
+void WinDockInEditorTab(ui::Window* w, const std::string& icon) {
+    if (w->dock == ui::Dock::EditorTab) return;      // one tab per window
+    w->dock = ui::Dock::EditorTab;
+    w->editorTab = editor::AddTab(plugins::Current(), IconPath(icon));
+    w->layoutDirty = true;
+}
+bool WinIsTabOpen(ui::Window* w) { return w->dock == ui::Dock::EditorTab && editor::TabOpen(w->editorTab); }
+void WinOpenTab(ui::Window* w) {
+    if (w->dock == ui::Dock::EditorTab) editor::OpenTab(w->editorTab);
+}
 
 // --- Editor ----------------------------------------------------------------------------------------------------------
 CScriptArray* IdArray(const std::vector<int>& ids) {
@@ -820,6 +832,9 @@ void RegisterUi() {
     Method("Window", "CheckBox@ AddCheckBox(const string &in label, float size = 16)", asFUNCTION(WinCheckBox));
     Method("Window", "void DockInEditorDetails()", asFUNCTION(WinDockInEditorDetails));
     Method("Window", "void DockInHub()", asFUNCTION(WinDockInHub));
+    Method("Window", "void DockInEditorTab(const string &in)", asFUNCTION(WinDockInEditorTab));
+    Method("Window", "bool IsTabOpen()", asFUNCTION(WinIsTabOpen));
+    Method("Window", "void OpenTab()", asFUNCTION(WinOpenTab));
     Method("Window", "void StartHeader()", asFUNCTION(WinStartHeader));
     Method("Window", "void StartCard()", asFUNCTION(WinStartCard));
     Method("Window", "void EndCard()", asFUNCTION(WinEndCard));
@@ -2485,6 +2500,38 @@ void RegisterCampaigns() {
     Global("bool ListShown()", asFUNCTION(campaigns::ListShown));
 }
 
+// --- Prefabs ---------------------------------------------------------------------------------------------------------
+CScriptArray* PrefabsList() { return StringArrayOf(prefabs::List()); }
+bool PrefabsSave(const std::string& name, bool overwrite, std::string& reply) {
+    plugins::GameWork work;
+    bool saved = false;
+    reply = prefabs::SaveSelection(name, overwrite, &saved).text;
+    return saved;
+}
+CScriptArray* PrefabsSpawn(const std::string& name, std::string& reply) {
+    plugins::GameWork work;
+    std::vector<int> made;
+    reply = prefabs::Spawn(name, &made).text;
+    return IdArray(made);
+}
+bool PrefabsDelete(const std::string& name, std::string& reply) {
+    const prefabs::Reply r = prefabs::Delete(name);
+    reply = r.text;
+    return r.ran && prefabs::Read(name).empty();
+}
+
+void RegisterPrefabs() {
+    e->SetDefaultNamespace("Prefabs");
+    Global("string Folder()", asFUNCTION(prefabs::Folder));
+    Global("bool ValidName(const string &in)", asFUNCTION(prefabs::ValidName));
+    Global("array<string>@ List()", asFUNCTION(PrefabsList));
+    Global("string Read(const string &in)", asFUNCTION(prefabs::Read));
+    Global("string Write(const string &in name, const string &in text)", asFUNCTION(prefabs::Write));
+    Global("bool Save(const string &in name, bool overwrite, string &out reply)", asFUNCTION(PrefabsSave));
+    Global("array<int>@ Spawn(const string &in name, string &out reply)", asFUNCTION(PrefabsSpawn));
+    Global("bool Delete(const string &in name, string &out reply)", asFUNCTION(PrefabsDelete));
+}
+
 void Register(asIScriptEngine* engine) {
     e = engine;
     RegisterCore();
@@ -2497,6 +2544,7 @@ void Register(asIScriptEngine* engine) {
     RegisterRace();
     RegisterHud();
     RegisterEditor();
+    RegisterPrefabs();
     RegisterReplay();
     RegisterCosmetics();
     RegisterLeaderboard();

@@ -23,6 +23,7 @@
 #include "engine.hpp"
 #include "draw.hpp"
 #include "postprocess.hpp"
+#include "prefabs.hpp"
 #include "game.hpp"
 #include "hud.hpp"
 #include "race.hpp"
@@ -721,6 +722,7 @@ void StartTap(const Args& a, const std::string& c) {
     if (ui::SimulateClickAt(x, y, &what)) return Report(c + " -> plugin window button '" + what + "'");
     if (eng::Obj button = GameButtonAt(x, y)) {
         eng::Obj owner = eng::OuterOf(eng::OuterOf(button));     // (its widget tree, then the user widget)
+        if (editor::TabTapped(owner)) return Report(c + " -> a plugin's tab in the editor");
         const int pressed = CallHandlers(button, "OnPressed"), released = CallHandlers(button, "OnReleased"),
                   clicked = CallHandlers(button, "OnClicked");
         return Report(c + " -> game button " + eng::ObjName(button) + (owner ? " in " + eng::ObjName(owner) : std::string()) +
@@ -1482,6 +1484,10 @@ void Run(const std::string& cmd) {
              p.Set("WorldContextObject", game::PlayerController());
              p.Set("Command", eng::FString{command.c_str(), static_cast<int32_t>(command.size() + 1), static_cast<int32_t>(command.size() + 1)});
              Report(c + (eng::Invoke(lib, p) ? " -> ok" : " -> failed"));
+         }},
+        {"prefab", [](const Args&, const std::string& c) {         // prefab <line>: a line through the game's own console
+             const prefabs::Reply r = prefabs::RunLine(c.size() > 7 ? c.substr(7) : "");
+             Report(c + (r.ran ? " -> " : " -> failed: ") + r.text + " | folder " + prefabs::Folder());
          }},
         {"spin", [](const Args& a, const std::string& c) {         // spin <x> <y> <z>: the ball's spin (degrees a second)
              eng::Obj pawn = eng::Call(game::PlayerController(), "K2_GetPawn").ReturnObj();

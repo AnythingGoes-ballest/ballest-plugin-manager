@@ -857,6 +857,29 @@ section.DockInEditorDetails();
 section.SetBackground(0, 0, 0, 0);
 section.AddText("rotated copy", 18);
 
+== UI::Window.DockInEditorTab
+Makes the window the page of a tab of its own in the track editor's left panel: a button of the game's kind after its
+four (pieces, details, world settings, outliner) shows the window, the game's buttons show their pages. `icon` is a PNG
+in your plugin's folder (full path, as `Plugins::Folder()` gives it) or a game texture ("/Game/..."), drawn as the game
+draws its own tab icons. The tab is built in each editor as it opens and is gone when your plugin stops. Call it before
+adding widgets; `SetAnchor`, `SetOffset` and `movable` don't apply. One tab per window. Requires host 0.33.0.
+--
+UI::Window@ page = UI::CreateWindow();
+page.DockInEditorTab(Plugins::Folder() + "tab.png");
+page.SetBackground(0, 0, 0, 0);
+page.AddText("my tab", 24);
+
+== UI::Window.IsTabOpen
+Whether the window's editor tab (`DockInEditorTab`) is the page the left panel shows. Requires host 0.33.0.
+--
+if (page.IsTabOpen())
+    RefreshList();
+
+== UI::Window.OpenTab
+Shows the window's editor tab (`DockInEditorTab`) in the left panel, as clicking its button does. Requires host 0.33.0.
+--
+page.OpenTab();
+
 == UI::Window.DockInHub
 Makes the window a row of the game's track hub, under the hub's header and its page row, shown with the hub. The hub's
 pages get shorter by the row's height, so the hub keeps its size. Call it before adding widgets. `SetAnchor`,
@@ -3358,6 +3381,64 @@ if (Net::Get(url) == 0)
 The hosts your info.toml lets `Net::` reach. Requires host 0.26.0.
 --
 array<string>@ hosts = Net::Domains();
+
+== Prefabs::Folder
+The folder the game keeps prefabs in (its `Saved\SaveGames\Prefabs`, a test copy's own under its `-userdir`), ending in a
+backslash; `""` before the game can say. Prefabs are groups of editor pieces saved as files there by the game's own
+commands; the functions here run those commands for you (`saveprefab`, `spawnprefab`, `deleteprefab`) and read and write
+the files, never anything else. Requires host 0.33.0.
+--
+Log::Info("prefabs are kept in " + Prefabs::Folder());
+
+== Prefabs::ValidName
+Whether a prefab name is one the game takes: 1 to 64 letters, digits, `_` and `-` (its file is `<name>.json`).
+Requires host 0.33.0.
+--
+if (!Prefabs::ValidName(name))
+    Log::Warn("not a prefab name: " + name);
+
+== Prefabs::List
+The prefab files in the folder, by name (without `.json`), sorted. Requires host 0.33.0.
+--
+array<string>@ names = Prefabs::List();
+
+== Prefabs::Read
+A prefab file's text, or `""` if there is none (or it is over 4 MB). Requires host 0.33.0.
+--
+string text = Prefabs::Read("bench");
+int pieces = Json::Count(text, "items");
+
+== Prefabs::Write
+Writes a prefab file from text, such as one downloaded: only a BallestPrefab version 1 file with 2 to 4096 pieces, up to
+4 MB, under a valid name; a file of that name is replaced. Answers `""` when written, else why not. Requires host 0.33.0.
+--
+string failed = Prefabs::Write("bench", text);
+if (failed != "")
+    Log::Warn("not saved: " + failed);
+
+== Prefabs::Save
+Saves the editor's selected pieces as the prefab `name`, as the game's `saveprefab` does (its own file format). The game
+won't replace a file without being asked: with `overwrite` it is asked, else an existing file is left as it was. True
+when the game says it saved; `reply` is what it said. Only in the track editor. Requires host 0.33.0.
+--
+string reply;
+if (!Prefabs::Save("my_ramp", false, reply))
+    Log::Warn(reply);           // "Prefab my_ramp already exists. ..."
+
+== Prefabs::Spawn
+Places a prefab in the editor as the game's `spawnprefab` does: in front of the camera, one step of the undo history,
+its pieces one group and selected. Answers the new pieces (none if it wasn't placed); `reply` is what the game said
+("Spawned prefab bench (28 items) in front of the camera."). Only in the track editor. Requires host 0.33.0.
+--
+string reply;
+array<int>@ made = Prefabs::Spawn("bench", reply);
+
+== Prefabs::Delete
+Deletes a prefab's file, as the game's `deleteprefab` does. True when it is gone; `reply` is what the game said.
+Requires host 0.33.0.
+--
+string reply;
+Prefabs::Delete("old_ramp", reply);
 
 == Json::Has
 Whether a JSON text has a value at a dotted path (`"entries.0.name"`: object keys and array indices). Requires host 0.26.0.

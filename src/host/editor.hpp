@@ -123,6 +123,14 @@ bool SetBudgetLimit(int owner, int limit);
 void ForceRotateContext(bool on);       // test hook: treat rotations as user rotations without a mouse drag
 
 eng::Obj DetailsContainer();            // where plugin sections are added in the details panel, or null
+// A plugin's tab in the editor's left panel: a button of the game's kind after its four, showing a page of the panel
+// (built in each editor as it opens). AddTab returns its number; TabPage is the page a docked window builds into (null
+// outside the editor); TabOpen whether its page is showing; OpenTab shows it.
+int AddTab(int owner, const std::string& icon);
+eng::Obj TabPage(int tab);
+bool TabOpen(int tab);
+void OpenTab(int tab);
+bool TabTapped(eng::Obj button);         // test: a tap on a game button, opening the plugin tab it is
 std::string Status();                   // for the test channel
 std::string PiecesStatus();             // test: every piece with its attach parent
 bool CallHandler(const std::string& function);   // test: a handler function without parameters

@@ -78,6 +78,7 @@ nav:
       - Race: reference/api/race.md
       - Replay: reference/api/replay.md
       - Editor: reference/api/editor.md
+      - Prefabs: reference/api/prefabs.md
       - Hud: reference/api/hud.md
       - Cosmetics: reference/api/cosmetics.md
       - Leaderboard: reference/api/leaderboard.md
