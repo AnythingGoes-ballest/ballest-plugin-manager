@@ -23,6 +23,7 @@ struct PackEntry {
     std::string title;
     std::vector<const Cos*> items;
     bool installed = false;
+    std::string slot;                       // the one slot all its cosmetics are for, else "" (mixed, or none known yet)
 };
 std::vector<PackEntry> gPacks;
 
@@ -74,8 +75,12 @@ void BuildPacks() {
         if (registry::IsCosmetic(e.id, e.dependencies)) add(e.id);
     for (const Cos& c : gCos)
         if (!c.pack.empty()) add(c.pack).items.push_back(&c);
-    for (PackEntry& p : gPacks)
+    for (PackEntry& p : gPacks) {
         std::stable_sort(p.items.begin(), p.items.end(), [](const Cos* a, const Cos* b) { return a->day > b->day; });
+        p.slot = p.items.empty() ? "" : p.items[0]->slot;
+        for (const Cos* c : p.items)
+            if (c->slot != p.slot) p.slot.clear();
+    }
     std::stable_sort(gPacks.begin(), gPacks.end(), [](const PackEntry& a, const PackEntry& b) { return Lower(PackName(a.name)) < Lower(PackName(b.name)); });
 }
 
@@ -198,10 +203,21 @@ void SideAccent(Layer& sb, const std::string& k, const Rect& r, bool over, doubl
 }
 
 // --- the page ------------------------------------------------------------------------------------------------------------
-// The plugins page's own rows for the cosmetic packs (they are plugins): owned / explore for installed / browse, its
+// The plugins page's own rows for the cosmetic packs (they are plugins), in both modes (installed / browse), its
 // views (compact and big), its search, its open card (the description and facts, then the pack's cosmetics as little
 // cards). Where a plugin's cog would be, the pack's symbol (they have no settings). Getting is the whole plugin, always.
-// Its own tab, searches, open row, slide and view: swapped in round the plugins page's while it draws.
+// Its own search, open row and view: swapped in round the plugins page's while it draws.
+
+// An installed pack's section (SectionOf): its slot's, as the Customize page names and orders its slots (the extra
+// ones plugins add after them), or MISCELLANEOUS, always last.
+std::pair<int, std::string> PackSection(const std::string& id) {
+    const PackEntry* p = FindPack(id);
+    if (!p || p->slot.empty()) return {1000, "MISCELLANEOUS"};
+    const auto& slots = packages::Slots();
+    for (size_t i = 0; i < slots.size(); ++i)
+        if (p->slot == slots[i].id) return {static_cast<int>(i), Upper(slots[i].label)};
+    return {500, Upper(p->slot)};
+}
 
 std::string PackSymbol(const std::string& id) {
     const PackEntry* p = FindPack(id);
@@ -250,8 +266,7 @@ double PackItems(Layer& row, const std::string& u, const std::string& id, double
     return y + kItem + kNameH;
 }
 
-// (the tab, installed / browse = owned / explore, is shared by both pages (Lvcid): picking explore on the plugins page
-// and going to cosmetics shows explore, not one click more; so is the strip's sliding box with it)
+// (the mode, installed / browse, is the top bar's and shared by both pages: the strip picks the page in it, Lvcid)
 struct RowsState {
     std::string installedSearch, expanded, scrollTo, view;     // (view "": read from the prefs)
     double installedReadAt = -100;
