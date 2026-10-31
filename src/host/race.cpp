@@ -43,10 +43,86 @@ struct Rot {
 };
 constexpr uint64_t kNoBone = 0;             // FName None, for the physics functions' BoneName
 
+// --- the run, as the game keeps it ------------------------------------------------------------------------------------
+// Since the game's 2026-10-31 update the race is native: the player state (BallestRacePlayerState) keeps the run in
+// RaceRunState (BallestRaceRunState: phase, attempt serial, start and finish times, faults, checkpoint splits, score
+// eligibility). The controller's Blueprint race fields (bRaceActive, bRaceComplete, ActualRaceFaults, its timer
+// timelines) and the ball's RaceId are gone. Members are found by name in the game's own types.
+enum Phase : uint8_t { kIdle = 0, kCountdown = 1, kRunning = 2, kFinished = 3, kCancelled = 4 };
+struct RunState {
+    bool ok = false;
+    uint8_t phase = kIdle;
+    int64_t attempt = 0;
+    double raceStart = 0, finishTime = 0, completed = 0;
+    int nextGoal = 0, faults = 0, required = 0, splits = 0;
+    bool scoreEligible = false;
+    uint8_t* state = nullptr;           // the struct itself, in the player state
+};
+struct RunOffsets {
+    Obj structure = nullptr;
+    int phase = -1, attempt = -1, raceStart = -1, finishTime = -1, completed = -1, nextGoal = -1, faults = -1,
+        required = -1, splits = -1, scoreEligible = -1;
+};
+RunOffsets gRunAt;
+
+RunState ReadRun(Obj controller) {
+    RunState r;
+    if (!controller) return r;
+    // Read through the game's own BallestCourseModeLibrary.GetParticipantRaceRun: it finds the run wherever it is kept
+    // (measured: an editor test run's player state is not a BallestRacePlayerState, yet its timer runs). The player
+    // state's own copy, when it is a race one, is what practice writes to.
+    static Obj lib = nullptr;
+    if (!lib) lib = eng::FindCdo("BallestCourseModeLibrary");
+    Obj fn = lib ? eng::FunctionOn(lib, "GetParticipantRaceRun") : nullptr;
+    Obj structure = fn ? eng::StructOf(eng::FindProp(fn, "RunState")) : nullptr;
+    if (!structure) return r;
+    eng::Params call(fn);
+    call.Set("Controller", controller);
+    if (!eng::Invoke(lib, call) || !call.ReturnBool()) return r;
+    size_t size = 0;
+    const uint8_t* read = call.Get("RunState", &size);
+    if (!read) return r;
+    Obj ps = eng::ReadObj(controller, "PlayerState");
+    static Obj psClass = nullptr;
+    if (!psClass) psClass = eng::FindClass("BallestRacePlayerState");
+    const eng::Prop runProp = ps && psClass && eng::IsA(ps, psClass) ? eng::FindProp(eng::ClassOf(ps), "RaceRunState") : eng::Prop{};
+    if (gRunAt.structure != structure) {
+        auto at = [&](const char* name) { const eng::Prop p = eng::FindProp(structure, name); return p ? p.offset : -1; };
+        gRunAt = {structure, at("Phase"), at("AttemptSerial"), at("RaceStartTime"), at("FinishTime"),
+                  at("CompletedElapsedSeconds"), at("NextGoalIndex"), at("FaultCount"), at("RequiredCheckpointCount"),
+                  at("CheckpointSplits"), at("bScoreEligible")};
+    }
+    const RunOffsets& o = gRunAt;
+    if (o.phase < 0 || o.attempt < 0 || o.raceStart < 0 || o.finishTime < 0 || o.completed < 0 || o.nextGoal < 0 ||
+        o.faults < 0 || o.required < 0 || o.splits < 0 || o.scoreEligible < 0)
+        return r;
+    const uint8_t* s = read;
+    r.state = runProp && eng::StructOf(runProp) == structure ? ps + runProp.offset : nullptr;
+    r.phase = s[o.phase];
+    std::memcpy(&r.attempt, s + o.attempt, 8);
+    std::memcpy(&r.raceStart, s + o.raceStart, 8);
+    std::memcpy(&r.finishTime, s + o.finishTime, 8);
+    std::memcpy(&r.completed, s + o.completed, 8);
+    std::memcpy(&r.nextGoal, s + o.nextGoal, 4);
+    std::memcpy(&r.faults, s + o.faults, 4);
+    std::memcpy(&r.required, s + o.required, 4);
+    std::memcpy(&r.splits, s + o.splits + 8, 4);            // the array's Num
+    r.scoreEligible = s[o.scoreEligible] != 0;
+    r.ok = true;
+    return r;
+}
+
+// A racing ball: the game's native BallestBallPawn (BP_RollingBall_C and the editor's test ball).
+bool IsBall(Obj o) {
+    static Obj cls = nullptr;
+    if (!cls) cls = eng::FindClass("BallestBallPawn");
+    return o && cls && eng::IsA(o, cls);
+}
+
 Obj Ball() {
     Obj controller = game::PlayerController();
     Obj pawn = controller ? eng::Call(controller, "K2_GetPawn").ReturnObj() : nullptr;
-    return pawn && eng::FindProp(eng::ClassOf(pawn), "RaceId") ? pawn : nullptr;
+    return IsBall(pawn) ? pawn : nullptr;
 }
 
 // The ball being played: the controlled pawn when it's a ball, else the view target when that is one (in the track
@@ -55,7 +131,7 @@ Obj PlayedBall() {
     if (Obj b = Ball()) return b;
     Obj controller = game::PlayerController();
     Obj target = controller ? eng::Call(controller, "GetViewTarget").ReturnObj() : nullptr;
-    return target && eng::FindProp(eng::ClassOf(target), "RaceId") ? target : nullptr;
+    return IsBall(target) ? target : nullptr;
 }
 
 Obj Library(const char* name) { return eng::FindCdo(name); }
@@ -107,10 +183,13 @@ int gLiveRunId = -1;            // the run id last raced (the last pawn with an 
 int gFinishedRunId = -1;        // that run's id when the game took a finish
 bool gFinishesWatched = false;
 
+}  // namespace
+
+// The race UI (WBP_RaceUIManager_C). The controller's cached reference to it (DONOTACCESS_UseGetter_
+// CachedRaceUIManager) is gone since the game's 2026-10-31 update: the last one found is kept while it lives.
 Obj RaceUi() {
-    Obj controller = game::PlayerController();
-    Obj ui = eng::ReadObj(controller, "DONOTACCESS_UseGetter_CachedRaceUIManager");
-    if (ui && eng::IsLive(ui)) return ui;
+    static eng::Weak last;
+    if (Obj ui = eng::Get(last); ui && eng::IsLive(ui)) return ui;
     static Obj cls = nullptr;
     if (!cls) cls = eng::FindClass("WBP_RaceUIManager_C");
     Obj found = nullptr;
@@ -118,8 +197,11 @@ Obj RaceUi() {
         if (eng::ClassOf(o) == cls && !eng::IsDefaultObject(o)) found = o;
         return found == nullptr;
     });
+    if (found) last = eng::MakeWeak(found);
     return found;
 }
+
+namespace {
 
 void ReadTrack() {
     Obj controller = game::PlayerController();
@@ -217,8 +299,6 @@ int gPracticeRun = -1, gPracticeGeneration = -1;
 eng::Weak gPracticeBall;
 std::vector<Hidden> gHidden;
 double gNextPracticeApply = 0;
-bool gTimerShifted = false;
-constexpr double kPracticeTime = 999.999;
 
 bool AlreadyHidden(Obj o, int kind) {
     for (const auto& h : gHidden)
@@ -229,35 +309,16 @@ bool AlreadyHidden(Obj o, int kind) {
 bool ApplyPractice() {
     Obj controller = game::PlayerController();
     if (!controller) return false;
-    int timelines = 0, triggers = 0, liveTriggers = 0;
-    // The race timer (BP_MyPlayerController): its two timelines stopped, the times it keeps at 999.999, the text the
-    // timer shows (RaceTimeText, which the HUD reads) set once. The text block itself is left alone: setting it would
-    // replace its binding.
-    bool stopped = false;
-    for (const char* timeline : {"GameTime2", "LapTime"})
-        if (Obj t = eng::ReadObj(controller, timeline)) {
-            ++timelines;
-            if (eng::Call(t, "IsPlaying").ReturnBool()) {
-                eng::Call(t, "Stop");
-                stopped = true;
-            }
-        }
-    for (const char* name : {"ActualRaceTime", "ActualLapTime"}) eng::WriteBytes(controller, name, &kPracticeTime, sizeof kPracticeTime);
-    if (!gTimerShifted) {
-        double start = 0;
-        if (eng::ReadBytes(controller, "RealTimeStart", &start, sizeof start)) {
-            start -= kPracticeTime;
-            eng::WriteBytes(controller, "RealTimeStart", &start, sizeof start);
-        }
-        gTimerShifted = true;
-        stopped = true;
+    int triggers = 0, liveTriggers = 0;
+    // The run kept off the scores: since the game's 2026-10-31 update the race timer is native (the controller's timer
+    // timelines and times are gone), and the run's own state says whether it may score (RaceRunState.bScoreEligible,
+    // copied into the finish snapshot). It's set off here, again on every apply, and read back below.
+    RunState run = ReadRun(controller);
+    if (run.ok && run.scoreEligible && run.state && gRunAt.scoreEligible >= 0) {
+        run.state[gRunAt.scoreEligible] = 0;
+        run = ReadRun(controller);
     }
-    if (stopped) {
-        const eng::Params text = eng::MakeText("999:999.999");
-        size_t size = 0;
-        const uint8_t* ftext = text.Return(&size);
-        if (ftext && size == 16) eng::WriteBytes(controller, "RaceTimeText", ftext, size);   // its one reference moves in
-    }
+    const bool offScores = run.ok && !run.scoreEligible;
     // Checkpoints and the finish (both BP_Checkpoint_C), the leaderboard, personal standing and ghosts.
     // A checkpoint's triggers are its query-only components (GoalHitbox1 and 2, with the begin-overlap handler; its
     // sprites are too, with none): only they lose their collision. The goal ring (Main, query and physics) stays solid.
@@ -300,8 +361,8 @@ bool ApplyPractice() {
             }
         return true;
     });
-    // Verified, or practice isn't on: the timer's two timelines found, and checkpoint triggers found, all off.
-    return timelines == 2 && triggers > 0 && liveTriggers == 0;
+    // Verified, or practice isn't on: the run off the scores, and checkpoint triggers found, all off.
+    return offScores && triggers > 0 && liveTriggers == 0;
 }
 
 void ReleasePractice(const std::string& why) {
@@ -314,15 +375,15 @@ void ReleasePractice(const std::string& why) {
     }
     gHidden.clear();
     gPractice = false;
-    gTimerShifted = false;
     hostlog::Info("race: practice off (" + why + ")");
 }
 
 // --- checkpoint respawns and falls ----------------------------------------------------------------------------------
 // Read from the game's Blueprints (BP_MyPlayerController, MP_ActualCheckpoint_Strip, BP_KillZone):
 //   * a respawn at a checkpoint (R once a checkpoint is cleared, or a fall after one) runs the controller's
-//     EventResetBall with bRespawnOnly, the one caller of IncrementPlayerFaults: ActualRaceFaults (a double) goes up
-//     by one. Before the first checkpoint both go back to the start instead, and the faults don't move.
+//     EventResetBall with bRespawnOnly, the one caller of IncrementPlayerFaults: the run's FaultCount goes up by one
+//     (the controller's ActualRaceFaults before the game's 2026-10-31 update). Before the first checkpoint both go
+//     back to the start instead, and the faults don't move.
 //   * a fall is the kill zone calling the native BallestRestartBlueprintLibrary.BeginKillzoneRestart, which respawns
 //     the ball a moment later (its delay is 1 s). That function's entry is wrapped (as the cosmetics wrap theirs) to
 //     tell falls from R.
@@ -366,11 +427,9 @@ void WatchKillzone() {
     hostlog::Info("race: counting falls");
 }
 
-void CountRespawns(Obj controller) {
-    double faults = 0;
-    if (!eng::FindProp(eng::ClassOf(controller), "ActualRaceFaults") ||
-        !eng::ReadBytes(controller, "ActualRaceFaults", &faults, sizeof faults))
-        return;
+void CountRespawns(Obj controller, const RunState& run) {
+    if (!run.ok) return;
+    const double faults = run.faults;           // the run's FaultCount (was the controller's ActualRaceFaults)
     // Only during a race: loading a map moves the faults too (measured on Chaos2), without any respawn.
     if (eng::Get(gFaultsController) == controller && faults > gLastFaults && gActive) {
         const int added = static_cast<int>(std::lround(faults - gLastFaults));
@@ -519,7 +578,11 @@ void Frame() {
     ResolveBounces();
     WatchKillzone();
     Obj controller = game::PlayerController();
-    gOnTrack = controller && eng::FindProp(eng::ClassOf(controller), "bRaceActive");
+    const RunState run = ReadRun(controller);
+    // On a track: the race controller (BP_MyPlayerController_C, the editor's too; the main menu has its own)
+    static Obj raceController = nullptr;
+    if (!raceController) raceController = eng::FindClass("BP_MyPlayerController_C");
+    gOnTrack = controller && raceController && eng::IsA(controller, raceController);
     gActive = gComplete = false;
     if (gTrackGeneration != game::Generation()) {
         gTrackGeneration = game::Generation();
@@ -533,7 +596,6 @@ void Frame() {
     if (gPractice && gPracticeGeneration != game::Generation()) {
         gHidden.clear();                                        // gone with the old map: never touched
         gPractice = false;
-        gTimerShifted = false;
         hostlog::Info("race: practice off (new map)");
     }
     if (!gOnTrack) {
@@ -542,17 +604,19 @@ void Frame() {
         return;
     }
     ScanCheckpoints(controller);
-    eng::ReadBool(controller, "bRaceActive", &gActive);
-    CountRespawns(controller);
-    eng::ReadBool(controller, "bRaceComplete", &gComplete);
+    // Measured on stasis (2026-10-31): Idle with attempt 0 before Play, Running with attempt 1 after it, a restart
+    // (ManuallyRestartBall) the next attempt, still Running.
+    gActive = run.phase == kRunning;
+    CountRespawns(controller, run);
+    gComplete = run.phase == kFinished;
     if (!gTrackDone && game::Seconds() >= gNextTrackRead) {
         gNextTrackRead = game::Seconds() + 1;
         ReadTrack();
     }
 
     Obj pawn = eng::Call(controller, "K2_GetPawn").ReturnObj();
-    int32_t runId = -1;
-    if (pawn && eng::FindProp(eng::ClassOf(pawn), "RaceId")) eng::ReadBytes(pawn, "RaceId", &runId, sizeof runId);
+    // The run id: the run's attempt serial (the ball's RaceId before the update), only while a ball is played
+    const int32_t runId = IsBall(pawn) ? static_cast<int32_t>(run.attempt & 0x7fffffff) : -1;
     gRunId = runId;
     // Complete only once the run raced last is the one the game took a finish for: a run after the finish isn't, nor
     // is it while its ball is gone for a moment (a fall's respawn takes the pawn away too, measured).
@@ -603,7 +667,7 @@ void Frame() {
     // RestartCounterThisSession (measured on stasis: run 93 -> 26, counter stays 1). Only runs that were raced count:
     // before the first Play the ball reads run 0 with no race active (measured), and the first raced run on a new ball
     // (a new map) is not a restart either.
-    if (!pawn || !eng::FindProp(eng::ClassOf(pawn), "RaceId")) return;
+    if (!IsBall(pawn)) return;
     if (eng::Get(gBall) != pawn) {
         gBall = eng::MakeWeak(pawn);
         gLastRun = -1;
@@ -882,7 +946,23 @@ bool Input(double* x, double* y, bool* jump) {
     if (!ball || !eng::ReadBytes(ball, "InputAxes", &axes, sizeof axes)) return false;
     *x = axes.x;
     *y = axes.y;
-    eng::ReadBool(ball, "InputJump", jump);
+    // Jump held: the jump action's value as the ball's input has it (the ball's InputJump flag is gone since the game's
+    // 2026-10-31 update). FInputActionValue: its value (a vector, x for a button) first.
+    static eng::Weak jumpAction;
+    static double nextLookup = 0;
+    Obj action = eng::Get(jumpAction);
+    if (!action && game::Seconds() >= nextLookup) {
+        nextLookup = game::Seconds() + 5;
+        if ((action = eng::FindObjectByName("IA_Jump"))) jumpAction = eng::MakeWeak(action);
+    }
+    if (action) {
+        const eng::Params value = eng::Call(Library("EnhancedInputLibrary"), "GetBoundActionValue", ball, action);
+        size_t size = 0;
+        const uint8_t* v = value.Return(&size);
+        double held = 0;
+        if (v && size >= sizeof held) std::memcpy(&held, v, sizeof held);
+        *jump = held > 0.5;
+    }
     return true;
 }
 
@@ -1025,14 +1105,41 @@ void StartPractice() {
     gPracticeBall = eng::MakeWeak(ball);
     gPracticeGeneration = game::Generation();
     if (!ApplyPractice()) {             // fails closed: if the game changed and practice can't be verified, no practice
-        ReleasePractice("practice could not be verified (timer or checkpoints not found)");
+        ReleasePractice("practice could not be verified (run still scores, or checkpoints not found)");
         hostlog::Warn("race: practice could not be verified; not turned on");
         return;
     }
     gNextPracticeApply = game::Seconds() + 0.5;
-    hostlog::Info("race: practice on (timer stopped, checkpoints and finish off, leaderboard and ghosts hidden)");
+    hostlog::Info("race: practice on (the run can't score, checkpoints and finish off, leaderboard and ghosts hidden)");
 }
 
 bool Practice() { return gPractice; }
+
+Obj RacingBall() { return Ball(); }
+
+double RaceElapsed() {
+    Obj controller = game::PlayerController();
+    if (!gOnTrack || !controller || !ReadRun(controller).ok) return -1;
+    return eng::Call(Library("BallestCourseModeLibrary"), "GetParticipantRaceElapsed", controller).ReturnAs<double>(-1);
+}
+
+std::string DescribeRun() {
+    Obj controller = game::PlayerController();
+    const RunState r = ReadRun(controller);
+    Obj pawn = controller ? eng::Call(controller, "K2_GetPawn").ReturnObj() : nullptr;
+    Obj gs = Library("GameplayStatics");
+    const double gameT = controller ? eng::Call(gs, "GetTimeSeconds", controller).ReturnAs<double>(-1) : -1;
+    const double realT = controller ? eng::Call(gs, "GetRealTimeSeconds", controller).ReturnAs<double>(-1) : -1;
+    const double audioT = controller ? eng::Call(gs, "GetAudioTimeSeconds", controller).ReturnAs<double>(-1) : -1;
+    char buf[520];
+    std::snprintf(buf, sizeof buf,
+                  "race elapsed %.3f | clocks game %.3f real %.3f audio %.3f | run: %s phase %d attempt %lld start %.3f finish %.3f completed %.3f next goal %d faults %d required %d "
+                  "splits %d eligible %d writable %d | controller %s pawn %s | host: on track %d active %d complete %d run %d",
+                  RaceElapsed(), gameT, realT, audioT, r.ok ? "read" : "NOT READ", r.phase, static_cast<long long>(r.attempt), r.raceStart, r.finishTime,
+                  r.completed, r.nextGoal, r.faults, r.required, r.splits, r.scoreEligible ? 1 : 0, r.state ? 1 : 0,
+                  controller ? eng::ObjName(eng::ClassOf(controller)).c_str() : "none",
+                  pawn ? eng::ObjName(eng::ClassOf(pawn)).c_str() : "none", gOnTrack, gActive, gComplete, gRunId);
+    return buf;
+}
 
 }  // namespace race

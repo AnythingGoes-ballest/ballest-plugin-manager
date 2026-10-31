@@ -18,9 +18,19 @@ using eng::Obj;
 using eng::Params;
 using NativeFunction = void (*)(Obj context, uint8_t* frame, void* result);
 
-constexpr size_t kHighScoreSize = 312;          // SLevelHighScore (types dump)
-constexpr size_t kHighScoreOffset = 0x20;       // SBallerProfile.HighScoreToSave
-constexpr size_t kSkinPrefsOffset = 0x168;      // SBallerProfile.BallerSkinPrefs (16)
+// SLevelHighScore and SBallerProfile change size between game builds (2026-10-31: SLevelHighScore 312 -> 448 bytes,
+// BallerSkinPrefs 0x168 -> 0x1f0), so their members are found by name in the game's own types.
+
+// The struct member whose name starts with `prefix` (the game's structs carry a GUID after each name); -1 if none.
+eng::Prop Member(Obj structure, const std::string& prefix) {
+    for (const auto& name : eng::PropertyNames(structure))
+        if (name.rfind(prefix, 0) == 0) return eng::FindProp(structure, name);
+    return {};
+}
+int MemberOffset(Obj structure, const std::string& prefix) {
+    const eng::Prop p = Member(structure, prefix);
+    return p ? p.offset : -1;
+}
 
 std::set<std::string> gSuppressed;
 NativeFunction gCaptureOriginal = nullptr;
@@ -107,7 +117,12 @@ bool ClearNow(const std::string& levelName, std::string* error) {
     if (best <= 0 && splits == 0 && samples == 0) return true;               // already empty
     Params save(eng::FunctionOn(gi, "AsyncSaveProfileChanges"));
     const int32_t size = save.SizeOf("SaveParams");
-    if (!save.Fn() || size < static_cast<int32_t>(kSkinPrefsOffset + 16)) {
+    Obj params_ = save.Fn() ? eng::StructOf(eng::FindProp(save.Fn(), "SaveParams")) : nullptr;     // SBallerProfile
+    Obj record = params_ ? eng::StructOf(Member(params_, "HighScoreToSave")) : nullptr;                // SLevelHighScore
+    const int highScoreAt = params_ ? MemberOffset(params_, "HighScoreToSave") : -1;
+    const int skinPrefsAt = params_ ? MemberOffset(params_, "BallerSkinPrefs") : -1;
+    const int nameAt = record ? MemberOffset(record, "levelName") : -1;
+    if (!save.Fn() || highScoreAt < 0 || skinPrefsAt < 0 || nameAt < 0 || size < skinPrefsAt + 16) {
         if (error) *error = "AsyncSaveProfileChanges is not as measured";
         return false;
     }
@@ -115,7 +130,7 @@ bool ClearNow(const std::string& levelName, std::string* error) {
     // the record: the level's name and nothing else (no time, medal, splits or replay)
     const std::wstring wide = eng::Widen(levelName);
     const eng::FString name{wide.c_str(), static_cast<int32_t>(wide.size() + 1), static_cast<int32_t>(wide.size() + 1)};
-    std::memcpy(params.data() + kHighScoreOffset, &name, sizeof name);
+    std::memcpy(params.data() + highScoreAt + nameAt, &name, sizeof name);
     // every other field as the game skips it: no name, no objects, the welcome flag off, the profile's own skin
     // preferences (the queue copies them when they differ)
     uint8_t prefs[16] = {};
@@ -123,7 +138,7 @@ bool ClearNow(const std::string& levelName, std::string* error) {
         if (error) *error = "the profile's skin preferences can't be read";
         return false;
     }
-    std::memcpy(params.data() + kSkinPrefsOffset, prefs, sizeof prefs);
+    std::memcpy(params.data() + skinPrefsAt, prefs, sizeof prefs);
     save.Set("SaveParams", params.data(), params.size());
     save.Set("bSyncronous", uint8_t{0});
     const bool ok = eng::Invoke(gi, save);
@@ -170,31 +185,23 @@ bool Read(const std::string& levelName, double* best, int* splits, int* samples)
     Obj profile = Profile();
     const eng::Prop map = profile ? eng::FindProp(eng::ClassOf(profile), "HighScores") : eng::Prop{};
     if (!map) return false;
-    // TMap<FString, SLevelHighScore> as UE lays it out: a sparse array of set elements (the pair, then the hash's
-    // next id and index), its allocation bits in a TBitArray (4 inline words, else a heap pointer)
-    const uint8_t* m = profile + map.offset;
-    const uint8_t* data = nullptr;
-    int32_t num = 0, maxBits = 0;
-    std::memcpy(&data, m, 8);
-    std::memcpy(&num, m + 8, 4);
-    const uint8_t* bits = m + 0x10;
-    std::memcpy(&maxBits, m + 0x10 + 16 + 8 + 4, 4);
-    if (maxBits > 128) std::memcpy(&bits, m + 0x10 + 16, 8);
-    constexpr size_t kStride = 16 + kHighScoreSize + 8;
-    for (int32_t i = 0; data && bits && i < num && i < 100000; ++i) {
-        if (!(bits[i / 8] & (1 << (i % 8)))) continue;
-        const uint8_t* element = data + static_cast<size_t>(i) * kStride;
-        if (eng::ReadFString(element) != levelName) continue;
-        const uint8_t* record = element + 16;
-        std::memcpy(best, record + 0x10, 8);                    // BestTime
-        int32_t n = 0;
-        std::memcpy(&n, record + 0x108 + 8, 4);                 // ?CheckpointSplits (Array<Double>) Num
-        *splits = n;
-        std::memcpy(&n, record + 0xa0 + 8, 4);                  // Locations Num
-        *samples = n;
-        return true;
-    }
-    return false;
+    // TMap<FString, SLevelHighScore>: the record's members by name, its size from the map's own value property
+    const uint8_t* valueProp = nullptr;
+    std::memcpy(&valueProp, map.field + layout::kFMapPropertyValueOffset, sizeof valueProp);
+    Obj record = valueProp ? eng::StructOf(eng::Prop{const_cast<uint8_t*>(valueProp), 0, 0}) : nullptr;
+    const int bestAt = record ? MemberOffset(record, "BestTime") : -1;
+    const int splitsAt = record ? MemberOffset(record, "?CheckpointSplits") : -1;      // Array<Double>
+    const int locationsAt = record ? MemberOffset(record, "Locations") : -1;
+    if (bestAt < 0 || splitsAt < 0 || locationsAt < 0) return false;
+    bool found = false;
+    eng::ForEachMapEntry(profile, "HighScores", 8, 8, [&](const uint8_t* key, const uint8_t* value) {
+        if (found || eng::ReadFString(key) != levelName) return;
+        std::memcpy(best, value + bestAt, 8);
+        std::memcpy(splits, value + splitsAt + 8, 4);           // the array's Num
+        std::memcpy(samples, value + locationsAt + 8, 4);
+        found = true;
+    });
+    return found;
 }
 
 int Medal(const std::string& levelName) {

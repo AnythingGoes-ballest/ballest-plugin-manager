@@ -264,7 +264,9 @@ the saved map, `--keep` leaves the game open.
   [frames]` / `gamehold <key> 1|0` (host 0.32.0+: a game key, T inspect, W, SpaceBar, R, Escape ..., through the game's
   own Enhanced Input: the actions the player's active mappings give that key, injected each frame it's held with that
   mapping's modifiers and triggers; `gamekeys` lists them; menus read Enter and the arrows through focus instead, so
-  tap their buttons; on a headless slot `post <vk>` is a gamekey and `clickat` a tap) and
+  tap their buttons; on a headless slot `post <vk>` is a gamekey and `clickat` a tap), `racerun` (host 0.32.1+: the
+  game's own run state, BallestRaceRunState through BallestCourseModeLibrary.GetParticipantRaceRun: phase, attempt,
+  faults, checkpoint splits, score eligibility, the race clock, and what the host makes of it) and
   `-c "cmd; cmd"` (any test commands, run together). From Python, `from agent import Slot` keeps the pipe open: a
   command is about one frame (33 ms at the headless 30 fps), `state` about 8 ms, `render` about 0.1 s (measured
   2026-10-24; through the file channel one command took about 6 s). `sandbox.py run` and `shot` use the pipe

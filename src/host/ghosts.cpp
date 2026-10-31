@@ -579,35 +579,20 @@ const Rig& ReadRig() {
     if (gRigGeneration == game::Generation() && gRig.ok) return gRig;
     gRigGeneration = game::Generation();
     gRig = Rig{};
-    Obj cls = eng::FindClass("BallAsyncCameraTargetComponent");
-    Obj found = nullptr;
-    if (cls)
+    // The player's ball (BP_RollingBall_C) holds its own SpringArm, Camera and Sphere (type dump). The game's
+    // BallAsyncCameraTargetComponent, read first before, is gone since its 2026-10-31 update.
+    Obj ballClass = eng::FindClass("BP_RollingBall_C");
+    Obj ball = nullptr;
+    if (ballClass)
         eng::ForEachObject([&](Obj o) {
-            if (eng::ClassOf(o) == cls && !eng::IsDefaultObject(o) && eng::IsLive(o)) found = o;
-            return found == nullptr;
+            if (eng::ClassOf(o) == ballClass && !eng::IsDefaultObject(o) && eng::IsLive(o)) ball = o;
+            return ball == nullptr;
         });
-    Obj arm = found ? eng::ReadObj(found, "SpringArmComponent") : nullptr;
-    Obj camera = found ? eng::ReadObj(found, "CameraComponent") : nullptr;
-    Obj tracked = found ? eng::ReadObj(found, "TrackedComponent") : nullptr;
+    Obj arm = ball ? eng::ReadObj(ball, "SpringArm") : nullptr;
+    Obj camera = ball ? eng::ReadObj(ball, "Camera") : nullptr;
+    Obj tracked = ball ? eng::ReadObj(ball, "Sphere") : nullptr;
     if (!arm) {
-        // Before the race the component's references aren't filled in (measured: SpringArmComponent empty on the
-        // pre-race screen) and the ball isn't the controller's pawn. The player's ball (BP_RollingBall_C) holds its
-        // own SpringArm, Camera and Sphere (read from the type dump).
-        Obj ballClass = eng::FindClass("BP_RollingBall_C");
-        Obj ball = nullptr;
-        if (ballClass)
-            eng::ForEachObject([&](Obj o) {
-                if (eng::ClassOf(o) == ballClass && !eng::IsDefaultObject(o) && eng::IsLive(o)) ball = o;
-                return ball == nullptr;
-            });
-        if (ball) {
-            arm = eng::ReadObj(ball, "SpringArm");
-            camera = eng::ReadObj(ball, "Camera");
-            tracked = eng::ReadObj(ball, "Sphere");
-        }
-    }
-    if (!arm) {
-        hostlog::Warn(std::string("ghosts: no camera rig for pov: ") + (found ? "BallAsyncCameraTargetComponent has no spring arm" : "no BallAsyncCameraTargetComponent"));
+        hostlog::Warn(std::string("ghosts: no camera rig for pov: ") + (ball ? "the ball has no spring arm" : "no ball"));
         return gRig;
     }
     struct Vec3 {

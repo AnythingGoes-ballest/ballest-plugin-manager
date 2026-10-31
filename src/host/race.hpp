@@ -112,5 +112,9 @@ bool LoadBall(const std::string& state, bool momentum);
 // changes), a new ball or a new map, and what it hid comes back then. So a run that was practised can't finish.
 void StartPractice();
 bool Practice();
+std::string DescribeRun();
+eng::Obj RaceUi();                // the race UI (WBP_RaceUIManager_C), or null
+eng::Obj RacingBall();            // the controlled pawn when it's a racing ball (BallestBallPawn), else null
+double RaceElapsed();             // the game's race clock (the timer on screen), -1 off a track       // the game's run state and the host's view of it (test command "racerun")
 
 }  // namespace race
