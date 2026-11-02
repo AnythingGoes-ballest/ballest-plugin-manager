@@ -22,7 +22,7 @@ namespace pluginnet {
 namespace {
 
 constexpr size_t kMaxBody = 4 * 1024 * 1024, kMaxResponse = 2 * 1024 * 1024, kMaxUrl = 2048, kMaxBearer = 4096;
-constexpr int kMaxInFlight = 4, kMaxPerMinute = 30, kMaxCacheFiles = 2000;
+constexpr int kMaxInFlight = 4, kMaxPerMinute = 120, kMaxCacheFiles = 2000;
 constexpr ULONGLONG kKeepDoneMs = 5 * 60 * 1000;    // a result nobody asked for again is dropped after this
 
 struct Result {

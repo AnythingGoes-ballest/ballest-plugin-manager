@@ -37,6 +37,7 @@
 #include "manager.hpp"
 #include "packages.hpp"
 #include "pluginnet.hpp"
+#include "screen.hpp"
 #include "splitref.hpp"
 #include "localrecords.hpp"
 #include "json.hpp"
@@ -2203,6 +2204,11 @@ int NetGet(const std::string& url, const std::string& bearer, int timeoutMs) { r
 int NetPost(const std::string& url, const std::string& json, const std::string& bearer, int timeoutMs) {
     return NetSend("POST", url, json, "", bearer, timeoutMs);
 }
+bool ScreenCapture(const std::string& name) {
+    plugins::GameWork work;
+    return screen::Capture(plugins::Current(), plugins::CurrentId(), name, nullptr);
+}
+std::string ScreenCaptureState() { return screen::State(plugins::Current()); }
 std::string NetSaveBody(int id, const std::string& name) { return pluginnet::SaveBody(plugins::Current(), plugins::CurrentId(), id, name); }
 bool NetDone(int id) { return pluginnet::Done(plugins::Current(), id); }
 int NetStatus(int id) { return pluginnet::Status(plugins::Current(), id); }
@@ -2415,6 +2421,9 @@ void RegisterSources() {
     Global("void Forget(int id)", asFUNCTION(NetForget));
     Global("string Refusal()", asFUNCTION(NetRefusal));
     Global("array<string>@ Domains()", asFUNCTION(NetDomains));
+    e->SetDefaultNamespace("Screen");
+    Global("bool Capture(const string &in name)", asFUNCTION(ScreenCapture));
+    Global("string CaptureState()", asFUNCTION(ScreenCaptureState));
     e->SetDefaultNamespace("Json");
     Global("bool Has(const string &in json, const string &in path)", asFUNCTION(JsonHas));
     Global("string String(const string &in json, const string &in path, const string &in fallback = \"\")", asFUNCTION(JsonString));

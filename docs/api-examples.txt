@@ -3349,7 +3349,7 @@ Starts an HTTPS GET; returns its id (poll `Net::Done`), or 0 if refused (`Net::R
 your info.toml names (`[net] domains = ["example.workers.dev"]`, exact names, https on port 443, redirects not
 followed). Domains must be public host names: IP addresses, `localhost`, `*.local` and other local or single-label
 names are left out when the plugin loads (with a warning) and refused. `bearer` (optional) is sent as `Authorization: Bearer <bearer>`. The response may be up to 2 MB; the timeout is
-1 to 30 s. At most 4 requests under way and 30 a minute per plugin. A sandboxed test copy adds the header
+1 to 30 s. At most 4 requests under way and 30 a minute per plugin (120 from host 0.33.0). A sandboxed test copy adds the header
 `X-Ballest-Sandbox: 1`, so your server can keep test traffic apart. Requires host 0.26.0.
 --
 int request = Net::Get("https://example.workers.dev/top?track=a&n=10");
@@ -3373,6 +3373,23 @@ Writes a finished request's body (a 2xx answer only) to a file in your plugin's 
 over if it is there; a plugin keeps at most 2,000 files there. Requires host 0.33.0.
 --
 string picture = Net::SaveBody(request, "wrongwaysign.png");
+
+== Screen::Capture
+Takes a picture of the game's view without any UI (the game's own screenshot: no HUD, no editor panels, no plugin
+windows), cuts the middle of it to 16:10 at 480 x 300 and saves it as a PNG in your plugin's cache,
+`PluginManager\cache\<plugin id>\<name>.png`, written over if it is there. `name` is a plain name (letters, digits,
+`-`, `_`, `.`). It takes a frame or two: poll `Screen::CaptureState`. One capture at a time; false if refused.
+Requires host 0.33.0.
+--
+if (Screen::Capture("my-picture"))
+    waiting = true;
+
+== Screen::CaptureState
+Your last capture: `"idle"`, `"pending"`, `"done: <full path of the PNG>"` or `"error: <why>"`. Requires host 0.33.0.
+--
+string state = Screen::CaptureState();
+if (state.findFirst("done: ") == 0)
+    picture.path = state.substr(6);
 
 == Net::Done
 Whether a request has finished (with a response, or failed). Requires host 0.26.0.

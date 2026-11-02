@@ -3096,6 +3096,23 @@ void RegisterLocalMapsNetSources()
                            Is(Net::Error(id1) == "no such request", "Net::Forget kept the request")};
         return All(c);
     }, 25);
+    Add("core", "Screen capture", "Screen::Capture,Screen::CaptureState", function() {
+        if (step == 0)
+        {
+            if (Screen::Capture("../outside") || Screen::Capture(""))
+                return "Screen::Capture took a name that isn't plain";
+            if (!Screen::Capture("apitest-shot"))
+                return "Screen::Capture refused: " + Screen::CaptureState();
+            if (Screen::Capture("apitest-again"))
+                return "Screen::Capture started a second capture while one was under way";
+            step = 1;
+            return WAIT;
+        }
+        string state = Screen::CaptureState();
+        if (state == "pending")
+            return Elapsed() > 15 ? "Screen::CaptureState still pending after 15 s" : WAIT;
+        return Is(state.findFirst("done: ") == 0 && state.findFirst("\\cache\\api-tests\\apitest-shot.png") >= 0, "Screen::CaptureState: " + state);
+    }, 20);
     Add("core", "UI menu button", "UI::AddMenuButton,UI::MainMenuShown", function() {
         if (@menuButton is null)
             @menuButton = UI::AddMenuButton("api test entry");

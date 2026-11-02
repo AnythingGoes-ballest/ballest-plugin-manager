@@ -6,7 +6,7 @@
 //     Authorization: Bearer <token>, the host's own User-Agent and X-Ballest-Plugin: <plugin id>; in a sandboxed test copy also
 //     X-Ballest-Sandbox: 1, so the server can keep test traffic apart from real records;
 //   * a body up to 4 MB (room for a run's replay or a big prefab), a response up to 2 MB, a timeout of 1..30 s;
-//   * up to 4 requests under way per plugin and 30 started per minute.
+//   * up to 4 requests under way per plugin and 120 started per minute.
 // Requests run on worker threads; the plugin polls for the result. In a sandboxed test copy the game's own network
 // stays blocked (sandbox.cpp hooks the game's imports); these requests are made by the host from this DLL, so the
 // declared domains are the copy's deliberate allow-list and nothing else is opened. Game thread only (the API side).

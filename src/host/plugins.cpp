@@ -24,6 +24,7 @@
 #include "editor.hpp"
 #include "leaderboard.hpp"
 #include "pluginnet.hpp"
+#include "screen.hpp"
 #include "steam.hpp"
 #include "splitref.hpp"
 #include "log.hpp"
@@ -405,6 +406,7 @@ void LoadAll(const std::wstring& pluginsDir) {
 }
 
 void Frame(float dt) {
+    screen::Frame();
     gInFrame = true;
     for (size_t i = 0; i < gPlugins.size(); ++i) {
         Plugin& p = gPlugins[i];
@@ -496,6 +498,7 @@ void Release(size_t i) {
     postprocess::RemoveOwner(static_cast<int>(i));
     hud::RemoveOwner(static_cast<int>(i));
     pluginnet::RemoveOwner(static_cast<int>(i));
+    screen::RemoveOwner(static_cast<int>(i));
     steam::ForgetWebTicket(static_cast<int>(i));
     splitref::Clear(static_cast<int>(i));
 }
