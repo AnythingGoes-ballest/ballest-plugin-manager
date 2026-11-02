@@ -53,7 +53,7 @@ bool CrowdBallScale(int owner, int id, double scale);
 bool CrowdGroupGlass(int owner, int id, int group, float opacity);
 
 // Where a ghost's player's camera was at time t, as the game's own camera would have placed it: the ball's camera
-// rig (BallAsyncCameraTargetComponent's spring arm and camera, read from the game: arm length, target and socket
+// rig (the ball's spring arm and camera, read from the game: arm length, target and socket
 // offsets, field of view) turned by the replay's control rotation. Without the arm's collision and lag. out: x, y,
 // z, pitch, yaw, field of view. False without a rig or a replay with control rotations.
 bool View(size_t ghost, double t, double out[6]);

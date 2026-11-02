@@ -129,20 +129,13 @@ void Prune() {
 }
 
 // --- reading the ball ------------------------------------------------------------------------------------------------
-Obj Ball() {
-    Obj controller = game::PlayerController();
-    Obj pawn = controller ? eng::Call(controller, "K2_GetPawn").ReturnObj() : nullptr;
-    return pawn && eng::FindProp(eng::ClassOf(pawn), "RaceId") ? pawn : nullptr;
-}
+Obj Ball() { return race::RacingBall(); }
 
-// The game's own race clock (BP_MyPlayerController_C.ActualRaceTime, the timer on screen): runs are recorded on it,
-// so a run's ghost lines up with the race timer and with replays (measured: the world clock ran ~2 s apart, the
-// race timer starting before the race turns active).
-double RaceClock(Obj controller) {
-    double t = -1;
-    if (!controller || !eng::ReadBytes(controller, "ActualRaceTime", &t, sizeof t)) return -1;
-    return t;
-}
+// The game's own race clock (the timer on screen): runs are recorded on it, so a run's ghost lines up with the race
+// timer and with replays (measured: the world clock ran ~2 s apart, the race timer starting before the race turns
+// active). Since the game's 2026-10-31 update it's BallestCourseModeLibrary.GetParticipantRaceElapsed (the controller's
+// ActualRaceTime is gone).
+double RaceClock(Obj controller) { return controller ? race::RaceElapsed() : -1; }
 
 void TakeSample(double t) {
     Obj ball = Ball();

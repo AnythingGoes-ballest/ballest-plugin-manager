@@ -147,6 +147,27 @@ bool Record(Obj sub, const uint8_t* key, std::array<uint8_t, kRecordSize>* out) 
     return true;
 }
 
+// BallestGhostRecordState's members that moved in the game's 2026-10-31 update (bSessionPractice and PracticeAttempt
+// went in at 0x92), found by name in the record's own type; the earlier offsets until it is read.
+struct RecordAt {
+    size_t presentation = 0x92, visible = 0x93, username = 0x98, best = 0xa8, duration = 0xb0, samples = 0xb8;
+};
+const RecordAt& At(Obj sub) {
+    static RecordAt at;
+    static Obj readFrom = nullptr;
+    Obj fn = sub ? eng::FunctionOn(sub, "GetGhostRecord") : nullptr;
+    if (!fn || fn == readFrom) return at;
+    Obj state = eng::StructOf(eng::FindProp(fn, "StateOut"));
+    auto offset = [&](const char* name, size_t fallback) {
+        const eng::Prop p = state ? eng::FindProp(state, name) : eng::Prop{};
+        return p ? static_cast<size_t>(p.offset) : fallback;
+    };
+    at = {offset("PresentationState", 0x92), offset("bVisible", 0x93), offset("Username", 0x98), offset("BestTime", 0xa8),
+          offset("Duration", 0xb0), offset("SampleCount", 0xb8)};
+    if (state) readFrom = fn;
+    return at;
+}
+
 Obj GameInstance() {
     Obj controller = game::PlayerController();
     return controller ? eng::Call(eng::FindCdo("GameplayStatics"), "GetGameInstance", controller).ReturnObj() : nullptr;
@@ -296,13 +317,14 @@ std::string SessionDescription() {
         s += " | " + std::to_string(num) + " records:";
         const size_t stride = static_cast<size_t>(Params(eng::FunctionOn(sub, "GetGhostRecord")).SizeOf("StateOut"));
         s += " (" + std::to_string(stride) + " bytes each)";
-        for (int i = 0; i < num && i < 20 && data && stride > 0xbc; ++i) {
+        const RecordAt& at = At(sub);
+        for (int i = 0; i < num && i < 20 && data && stride > at.samples + 3; ++i) {
             const uint8_t* rec = data + static_cast<size_t>(i) * stride;
             double best = 0;
-            std::memcpy(&best, rec + 0xa8, 8);
-            s += " [" + eng::ReadFString(rec + 0x50) + " '" + eng::ReadFString(rec + 0x98) + "' load " + std::to_string(rec[0x7e]) +
-                 " exists " + std::to_string(rec[0x90]) + " replay " + std::to_string(rec[0x91]) + " visible " + std::to_string(rec[0x93]) +
-                 " opts " + std::to_string(rec[0x78]) + std::to_string(rec[0x79]) + std::to_string(rec[0x7a]) + std::to_string(rec[0x7b]) + std::to_string(rec[0x7c]) + " override " + std::to_string(rec[0x7d]) + " best " + std::to_string(best) + " duration " + std::to_string(*reinterpret_cast<const double*>(rec + 0xb0)) + " samples " + std::to_string(*reinterpret_cast<const int32_t*>(rec + 0xb8)) + " present " + std::to_string(rec[0x92]) + " error '" + eng::ReadFString(rec + 0x80) + "']";
+            std::memcpy(&best, rec + at.best, 8);
+            s += " [" + eng::ReadFString(rec + 0x50) + " '" + eng::ReadFString(rec + at.username) + "' load " + std::to_string(rec[0x7e]) +
+                 " exists " + std::to_string(rec[0x90]) + " replay " + std::to_string(rec[0x91]) + " visible " + std::to_string(rec[at.visible]) +
+                 " opts " + std::to_string(rec[0x78]) + std::to_string(rec[0x79]) + std::to_string(rec[0x7a]) + std::to_string(rec[0x7b]) + std::to_string(rec[0x7c]) + " override " + std::to_string(rec[0x7d]) + " best " + std::to_string(best) + " duration " + std::to_string(*reinterpret_cast<const double*>(rec + at.duration)) + " samples " + std::to_string(*reinterpret_cast<const int32_t*>(rec + at.samples)) + " present " + std::to_string(rec[at.presentation]) + " error '" + eng::ReadFString(rec + 0x80) + "']";
         }
     }
     return s;
@@ -383,7 +405,7 @@ bool Visible(const std::string& steamId) {
     if (!CurrentSession(sub)) return false;
     const uint8_t* key = KeyOf(sub, steamId, nullptr);
     std::array<uint8_t, kRecordSize> rec{};
-    return key && Record(sub, key, &rec) && rec[0x93];
+    return key && Record(sub, key, &rec) && rec[At(sub).visible];
 }
 
 bool Watch(const std::string& steamId, std::string* error) {
@@ -727,7 +749,7 @@ void NameWatchedTag(const std::string& steamId, const std::string& name) {
     const uint8_t* key = KeyOf(sub, steamId, nullptr);
     std::array<uint8_t, kRecordSize> rec{};
     if (!key || !Record(sub, key, &rec)) return;
-    const std::string recordName = eng::ReadFString(rec.data() + 0x98);
+    const std::string recordName = eng::ReadFString(rec.data() + At(sub).username);
     if (recordName.empty() || recordName == name) return;
     Obj best = nullptr;
     double bestDistance = 1e30;
@@ -788,10 +810,15 @@ void SetRealSkins(bool on) { gRealSkins = on; }
 
 namespace nativeghost {
 namespace {
-// BallestGhostWorldSubsystem.ActiveAppearance (BallestGhostAppearanceConfig @0x8e0): DefaultLayers (TArray of
+// BallestGhostWorldSubsystem.ActiveAppearance (BallestGhostAppearanceConfig): DefaultLayers (TArray of
 // BallestGhostRenderLayerDefinition, 0xa0 each: MaterialSource @0x10), SpecialAppearances (TArray of
 // BallestGhostSpecialAppearanceDefinition, 0xc0 each: Layers TArray @0x28), MinOpacity @0xf0, MaxOpacity @0xf8.
-constexpr size_t kAppearance = 0x8e0, kLayerSize = 0xa0, kSpecialSize = 0xc0;
+constexpr size_t kLayerSize = 0xa0, kSpecialSize = 0xc0;
+// ActiveAppearance's place in the subsystem (0x8e0 before the game's 2026-10-31 update, 0xa00 after), by name; -1 if gone.
+int AppearanceAt(Obj sub) {
+    const eng::Prop p = sub ? eng::FindProp(eng::ClassOf(sub), "ActiveAppearance") : eng::Prop{};
+    return p ? p.offset : -1;
+}
 struct Arr {
     uint8_t* data;
     int32_t num, max;
@@ -810,8 +837,8 @@ std::string LayerText(const uint8_t* layer) {
 
 std::string Appearance() {
     Obj sub = Subsystem();
-    if (!sub) return "no subsystem";
-    const uint8_t* a = sub + kAppearance;
+    if (!sub || AppearanceAt(sub) < 0) return "no subsystem";
+    const uint8_t* a = sub + AppearanceAt(sub);
     Arr layers{}, specials{};
     std::memcpy(&layers, a, sizeof layers);
     std::memcpy(&specials, a + 0x10, sizeof specials);
@@ -837,8 +864,8 @@ std::string Appearance() {
 // race world's own (a new one with each map), so this stays on the track it was made on.
 int ApplyRealSkins() {
     Obj sub = Subsystem();
-    if (!sub || !gRealSkins) return 0;
-    uint8_t* a = sub + kAppearance;
+    if (!sub || !gRealSkins || AppearanceAt(sub) < 0) return 0;
+    uint8_t* a = sub + AppearanceAt(sub);
     int changed = 0;
     auto layersOf = [&](uint8_t* arr) {
         Arr layers{};

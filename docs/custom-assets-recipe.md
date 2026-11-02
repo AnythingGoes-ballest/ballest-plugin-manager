@@ -82,11 +82,17 @@ When a plugin starts (and on every reload), for each `.utoc` in its `assets/` no
 2. Mounts it (`FPakPlatformFile::HandleMountPakDelegate`).
    - The signing-keys delegate and `bSigned` are cleared only around this one call; the game's own content is untouched.
    - Each newer build goes at a higher order.
-3. Opens that build's shader library (`FShaderCodeLibrary::OpenLibrary`, RVA 0x3308570, bytes checked before calling).
+3. Opens that build's shader library (`FShaderCodeLibrary::OpenLibrary`, bytes checked before calling).
+   - The library holds `PCD3D_SM6` shaders only, so it opens on D3D12 alone: a lite test copy (D3D11) logs
+     `OpenLibrary(...) -> false` and shows the material as grey. Judge a container's look in a `--full` copy.
 4. `material <n> asset /Game/Mods/<mod>/X` then loads `/Game/Mods/<mod>/b<newest>/X`.
 
-The addresses are measured on Ballest CL 56702186. After a game update they must be found again; the host checks the
-bytes and refuses rather than calling a wrong address.
+The addresses move with every game update (the measured ones are listed in `src/host/assets.cpp`). The host tries the
+last measured ones first; when their bytes don't fit, it finds them again in the running game (log: `[assets] MountPak
+delegate found again at rva ...`), by the MountPak/OnUnmountPak delegate pair FPakPlatformFile binds and the OpenLibrary
+wrapper's instruction shape. It uses a result only when exactly one candidate fits every check, and otherwise refuses
+rather than calling a wrong address. Measured on the 2026-11-01 update: started with the previous build's addresses,
+it found the new ones and the container rendered.
 
 ## 6. Iterating on a shader in the running game
 1. Edit the material in the content project and save.

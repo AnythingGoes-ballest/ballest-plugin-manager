@@ -70,7 +70,7 @@ bool ReadOnlyCommand(const std::string& name) {
         "viewtarget", "materials", "watch", "children", "fnbytes", "matparams", "race", "ballstate", "ballsave", "hud",
         "widgetpath", "strprop", "objprop", "listprop", "dumptypes", "objbytes", "membytes", "objarray", "cosmetics",
         "skinmats", "sandbox", "sandboxtest", "splitref", "nghost", "nametags", "localrec", "ghostlook", "fade", "waitframes",
-        "wait", "agentstate", "render", "seq", "repeat", "gamekeys"};
+        "wait", "racerun", "agentstate", "render", "seq", "repeat", "gamekeys"};
     return kReadOnly.count(name) > 0;
 }
 
@@ -2043,6 +2043,7 @@ void Run(const std::string& cmd) {
                  }
              }
          }},
+        {"racerun", [](const Args&, const std::string&) { Report(race::DescribeRun()); }},
         {"dumptypes", [](const Args&, const std::string&) {      // every type: types\\Ballest.usmap + types.txt
              Report(eng::DumpTypes(hostlog::DataDir() + L"\\types"));
          }},

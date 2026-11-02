@@ -142,10 +142,7 @@ void Visit(Obj widget, const std::string& prefix, int depth, bool parentIsCanvas
         Visit(eng::Call(widget, "GetChildAt", i).ReturnObj(), prefix, depth + 1, canvas, listed, skipped);
 }
 
-Obj RaceUi() {
-    Obj ui = eng::ReadObj(game::PlayerController(), "DONOTACCESS_UseGetter_CachedRaceUIManager");
-    return ui && eng::IsLive(ui) ? ui : nullptr;
-}
+Obj RaceUi() { return race::RaceUi(); }
 
 Obj RootOf(Obj userWidget) { return eng::ReadObj(eng::ReadObj(userWidget, "WidgetTree"), "RootWidget"); }
 
@@ -709,7 +706,9 @@ void HookedMove(Obj context, uint8_t* frame, void* result) {
 void HookMove() {
     if (gMoveHookFailed) return;
     Obj cls = eng::FindClass("BP_RollingBall_C");
-    Obj fn = eng::FindFunction(cls, "Server_ExecuteMove"), other = eng::FindFunction(cls, "MoveOnGround");
+    // (JumpUp: another of the ball's Blueprint functions, to compare entries with; MoveOnGround is gone since the
+    // game's 2026-10-31 update)
+    Obj fn = eng::FindFunction(cls, "Server_ExecuteMove"), other = eng::FindFunction(cls, "JumpUp");
     if (!fn || !other) return;
     NativeFunction entry = nullptr, otherEntry = nullptr;
     std::memcpy(&entry, fn + layout::kUFunctionNativeFunctionOffset, sizeof entry);

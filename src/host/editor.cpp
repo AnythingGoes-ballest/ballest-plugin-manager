@@ -578,6 +578,19 @@ std::vector<int> SpawnPieces(const std::vector<Spawn>& pieces, bool drop, const 
     copiedActors.copiedFrom = MakeTransform({0, 0, 0}, {0, 0, 0}, {1, 1, 1});
     std::set<int32_t> before;
     for (Obj a : AllActors()) before.insert(IdOf(a));
+    // Every object of the pasted classes before the paste: the new pieces are the ones that come after it (the handler's
+    // AllActors lists them only once the history step ends since the game's 2026-10-31 update, measured).
+    std::set<Obj> classes;
+    for (const auto& c : list) classes.insert(c.actorClass);
+    auto ofClasses = [&]() {
+        std::set<int32_t> ids;
+        eng::ForEachObject([&](Obj o) {
+            if (classes.count(eng::ClassOf(o)) && !eng::IsDefaultObject(o)) ids.insert(IdOf(o));
+            return true;
+        });
+        return ids;
+    };
+    const std::set<int32_t> classBefore = ofClasses();
     // The editor's own Paste (which records the step in its undo history, then spawns through
     // Server_SpawnActorPaste) pastes the handler's CopiedActors: this list goes there for the one call, and what was
     // there (the player's own copy, in the engine's memory) is put back straight after, so the editor never keeps it.
@@ -632,8 +645,9 @@ std::vector<int> SpawnPieces(const std::vector<Spawn>& pieces, bool drop, const 
     // The paste leaves every piece at scale 1 (measured: the copied scale isn't used), so each new piece is given its
     // whole transform the way the editor's own gizmo does (Server_SetActorTransforms), in the same step of the history.
     std::vector<Obj> fresh;
-    for (Obj a : AllActors())
-        if (!before.count(IdOf(a))) fresh.push_back(a);
+    for (int32_t id : ofClasses())
+        if (!classBefore.count(id))
+            if (Obj a = eng::ObjectAt(id); a && eng::IsLive(a)) fresh.push_back(a);
     struct ItemTransform {                                          // FSKGMLEItemTransform: the actor, then its
         Obj actor;                                                  // transform at 0x10; 0x70 bytes
         uint8_t pad[8];
@@ -661,6 +675,13 @@ std::vector<int> SpawnPieces(const std::vector<Spawn>& pieces, bool drop, const 
         item.actor = a;
         item.transform = MakeTransform(pieces[best].location, pieces[best].rotation, pieces[best].scale);
         items.push_back(item);
+    }
+    if (items.size() < pieces.size()) {
+        std::string seen;
+        for (Obj a : fresh) seen += " " + eng::ObjName(eng::ClassOf(a));
+        hostlog::Warn("editor: SpawnPieces matched " + std::to_string(items.size()) + " of " + std::to_string(pieces.size()) +
+                      " pieces; new actors listed:" + (seen.empty() ? std::string(" none") : seen) + "; asked for " +
+                      (pieces.empty() ? std::string("-") : eng::ObjName(list[0].actorClass)));
     }
     if (!items.empty()) {
         struct {
