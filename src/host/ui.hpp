@@ -110,6 +110,7 @@ struct Widget {
     float height = 0;                   // text area and image height; 0 = fill
     float textWidth = 0;                // text: a fixed width (0 = as wide as the text)
     bool wrap = false;                  // text: wraps onto more lines at its fixed width
+    std::string tooltip;                // button: shown when the cursor rests on it
     uint8_t justify = 0;                // text: 0 left, 1 centre, 2 right (ETextJustify)
     bool fill = false;                  // text: takes the row's leftover width, pushing what follows to the right
     float gapBefore = -1;               // pixels between it and the widget before it in its row; -1 the default
@@ -184,6 +185,10 @@ struct Window {
     std::vector<int> rowCard{-1};               // the card each row is in, or -1
     int openCard = -1;                          // the card new rows go into, or -1
     int cards = 0;
+    // Clickable cards (StartCard(true)): a click on the card anywhere but its buttons
+    std::vector<bool> cardClickable;
+    std::vector<eng::Weak> cardBoxes;
+    std::vector<bool> cardPressed, cardClickPending, cardShownHover;
     Color cardBackground{0.12f, 0.13f, 0.16f, 1};
     int addRow = 0;                             // the row new widgets go into
     int views = 1;
@@ -216,7 +221,8 @@ void ClearView(Window* w, int view);    // retires the view's widgets; widgets a
 void SetScrolling(Window* w, int view, bool on);  // a view whose rows scroll (not for a view with a fill-height text area)
 void StartHeader(Window* w);            // rows added after this sit above the views, shown with every view,
                                         // until StartView
-void StartCard(Window* w);              // rows added after this share one rounded box, until EndCard
+int StartCard(Window* w, bool clickable = false);   // rows added after this share one rounded box, until EndCard
+bool CardClicked(Window* w, int card);  // a clickable card clicked (not on one of its buttons) since last asked
 void EndCard(Window* w);
 void SetMovable(Window* w, bool movable, const std::string& pluginId);
 void ResetPositions(const std::string& pluginId);   // movable windows of a plugin back where the plugin put them

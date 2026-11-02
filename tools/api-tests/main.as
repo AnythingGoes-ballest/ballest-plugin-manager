@@ -65,6 +65,8 @@ int passed = 0, failed = 0, skipped = 0;
 int settingsChanged = 0;
 
 // Per test: cleared before each one starts.
+int uCard = -1;
+UI::Window@ uCardWin;
 int step = 0;
 double t0 = 0;
 uint mark = 0;                  // the log's line count when the test started
@@ -1171,7 +1173,7 @@ void RegisterUi()
                            Is(uArea.visible && uImage.visible, "TextArea.visible/Image.visible false")};
         return All(c);
     });
-    Add("ui", "UI views, cards, sidebar and scrolling", "Window.StartView,Window.ShowView,Window.ClearView,Window.SetScrolling,Window.StartSidebar,Window.StartMain,Window.StartHeader,Window.StartCard,Window.EndCard,Window.SetCardBackground", function() {
+    Add("ui", "UI views, cards, sidebar and scrolling", "Window.StartView,Window.ShowView,Window.ClearView,Window.SetScrolling,Window.StartSidebar,Window.StartMain,Window.StartHeader,Window.StartCard,Window.EndCard,Window.SetCardBackground,Window.CardClicked,Button.SetTooltip", function() {
         if (step == 0)
         {
             UI::Window@ w = UI::CreateWindow();
@@ -1187,6 +1189,11 @@ void RegisterUi()
             w.StartCard();
             w.AddText("api card", 14);
             w.EndCard();
+            uCard = w.StartCard(true);
+            w.AddText("api clickable card", 14);
+            w.AddButton("api card button").SetTooltip("api tooltip");
+            w.EndCard();
+            @uCardWin = w;
             uView = w.StartView();
             w.AddText("api second view", 14);
             w.SetScrolling(uView, true);
@@ -1209,6 +1216,8 @@ void RegisterUi()
         if (line == "")
             return WAIT;
         array<string> c = {Is(id1 > 0, "Window.StartView answered " + id1), Is(line.findFirst("text[api second view]") >= 0, "Window.ShowView: the shown view's text is not on screen"),
+                           Is(uCard > 0 && !uCardWin.CardClicked(uCard) && !uCardWin.CardClicked(-1) && !uCardWin.CardClicked(9999), "Window.CardClicked of a card nobody clicked (card " + uCard + ")"),
+                           Is(line.findFirst("text[api clickable card]") >= 0, "Window.StartCard(true): its text is not on screen"),
                            Is(line.findFirst("text[api card]") >= 0 && line.findFirst("text[api side]") >= 0 && line.findFirst("text[api header]") >= 0,
                               "Window.StartHeader/Window.StartSidebar/Window.StartCard: their text is not on screen")};
         return All(c);

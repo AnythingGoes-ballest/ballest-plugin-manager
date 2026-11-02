@@ -95,6 +95,7 @@ void CallWithText(Obj widget, const char* setter, const std::string& s) {
 
 void SetText(Obj textWidget, const std::string& s) { CallWithText(textWidget, "SetText", s); }
 void SetHintText(Obj editableTextBox, const std::string& s) { CallWithText(editableTextBox, "SetHintText", s); }
+void SetToolTip(Obj widget, const std::string& s) { CallWithText(widget, "SetToolTipText", s); }
 
 std::string ReadText(Obj textWidget) {
     if (!textWidget) return "";

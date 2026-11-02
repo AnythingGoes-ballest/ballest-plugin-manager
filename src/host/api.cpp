@@ -492,7 +492,12 @@ ui::Widget* WinCheckBox(ui::Window* w, const std::string& label, float size) {
     return box;
 }
 void WinStartHeader(ui::Window* w) { ui::StartHeader(w); }
-void WinStartCard(ui::Window* w) { ui::StartCard(w); }
+int WinStartCard(ui::Window* w, bool clickable) { return ui::StartCard(w, clickable); }
+bool WinCardClicked(ui::Window* w, int card) { return ui::CardClicked(w, card); }
+void ButtonTooltip(ui::Widget* w, const std::string& text) {
+    w->tooltip = text;
+    w->window->layoutDirty = true;
+}
 void WinEndCard(ui::Window* w) { ui::EndCard(w); }
 void WinCardBackground(ui::Window* w, float r, float g, float b, float a) {
     w->cardBackground = {r, g, b, a};
@@ -845,7 +850,8 @@ void RegisterUi() {
     Method("Window", "bool IsTabOpen()", asFUNCTION(WinIsTabOpen));
     Method("Window", "void OpenTab()", asFUNCTION(WinOpenTab));
     Method("Window", "void StartHeader()", asFUNCTION(WinStartHeader));
-    Method("Window", "void StartCard()", asFUNCTION(WinStartCard));
+    Method("Window", "int StartCard(bool clickable = false)", asFUNCTION(WinStartCard));
+    Method("Window", "bool CardClicked(int card)", asFUNCTION(WinCardClicked));
     Method("Window", "void EndCard()", asFUNCTION(WinEndCard));
     Method("Window", "void SetCardBackground(float, float, float, float)", asFUNCTION(WinCardBackground));
     Method("Window", "void set_zOrder(int) property", asFUNCTION(WinSetZOrder));
@@ -877,6 +883,7 @@ void RegisterUi() {
     Method("Text", "void SetFill(bool)", asFUNCTION(SetTextFill));
     Method("Text", "void SetWrap(bool)", asFUNCTION(SetTextWrap));
     Method("Button", "bool Clicked()", asFUNCTION(Clicked));
+    Method("Button", "void SetTooltip(const string &in)", asFUNCTION(ButtonTooltip));
     Method("Button", "bool get_hovered() property", asFUNCTION(Hovered));
     Method("Button", "void SetBackground(float, float, float, float)", asFUNCTION(ButtonBackground));
     Method("Button", "void set_label(const string &in) property", asFUNCTION(SetWidgetText));

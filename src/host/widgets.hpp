@@ -39,6 +39,7 @@ void FillSlot(Obj slot);
 void SetVisibility(Obj widget, uint8_t visibility);
 void SetText(Obj textWidget, const std::string& s);                 // TextBlock or EditableTextBox
 void SetHintText(Obj editableTextBox, const std::string& s);
+void SetToolTip(Obj widget, const std::string& s);   // the text shown when the cursor rests on it
 // The text a TextBlock or EditableTextBox shows. Converting it leaves one small engine string unfreed (the host
 // has no engine allocator to free it with), so this is for occasional reads such as a submitted command.
 std::string ReadText(Obj textWidget);

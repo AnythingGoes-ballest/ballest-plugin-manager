@@ -508,6 +508,10 @@ void Build(Window& win) {
                 Obj cardSlot = eng::Call(parent, "AddChildToVerticalBox", box).ReturnObj();
                 if (!cardSlot) return;
                 cardSlots[static_cast<size_t>(card)] = cardSlot;
+                if (static_cast<size_t>(card) < win.cardBoxes.size()) {
+                    win.cardBoxes[static_cast<size_t>(card)] = eng::MakeWeak(box);
+                    win.cardShownHover[static_cast<size_t>(card)] = false;
+                }
                 if (rowsInView[viewSlot]++ > 0) eng::Call(cardSlot, "SetPadding", w::Margin{0, 8, 0, 0});
             }
             parent = cardColumn;
@@ -537,6 +541,7 @@ void Build(Window& win) {
         if (item.retired) continue;
         Obj widget = BuildWidget(tree, item);
         item.outer = eng::MakeWeak(widget);
+        if (!item.tooltip.empty()) w::SetToolTip(eng::Get(item.main), item.tooltip);
         item.normalVisibility = widget ? eng::Call(widget, "GetVisibility").ReturnAs<uint8_t>(0) : 0;
         item.shownVisible = true;
         if (!item.visible) {
@@ -888,15 +893,27 @@ void StartHeader(Window* win) {
     AddRow(win, -1);
 }
 
-void StartCard(Window* win) {
+int StartCard(Window* win, bool clickable) {
     win->addingToSidebar = false;
     win->openCard = win->cards++;
+    win->cardClickable.push_back(clickable);
+    win->cardBoxes.emplace_back();
+    win->cardPressed.push_back(false);
+    win->cardClickPending.push_back(false);
+    win->cardShownHover.push_back(false);
     const int view = win->rowView[static_cast<size_t>(win->addRow)];
     if (RowEmpty(win, win->addRow) && win->rowCard[static_cast<size_t>(win->addRow)] < 0)
         win->rowCard[static_cast<size_t>(win->addRow)] = win->openCard;    // the empty row just started becomes the card's
     else
         AddRow(win, view);
     win->layoutDirty = true;
+    return win->openCard;
+}
+
+bool CardClicked(Window* win, int card) {
+    if (card < 0 || static_cast<size_t>(card) >= win->cardClickPending.size() || !win->cardClickPending[static_cast<size_t>(card)]) return false;
+    win->cardClickPending[static_cast<size_t>(card)] = false;
+    return true;
 }
 
 void EndCard(Window* win) {
@@ -1067,6 +1084,31 @@ void Frame() {
                 if (item->kind == Kind::TextInput && (item->focused || item->focusRequested) && !typingWidget)
                     typingWidget = eng::Get(item->main);
             }
+        if (win.visible) {
+            // Clickable cards: pressed and let go on the card, never on one of its buttons (they take their own
+            // clicks); the card lightens under the cursor
+            const int mouse = input::PrimaryButton();
+            for (size_t c = 0; c < win.cardBoxes.size(); ++c) {
+                if (!win.cardClickable[c]) continue;
+                Obj box = eng::Get(win.cardBoxes[c]);
+                bool hovered = box && eng::Call(box, "IsHovered").ReturnBool();
+                if (hovered)
+                    for (const auto& item : win.items)
+                        if (!item->retired && item->hovered && item->row >= 0 && win.rowCard[static_cast<size_t>(item->row)] == static_cast<int>(c))
+                            hovered = false;
+                if (input::Pressed(mouse)) win.cardPressed[c] = hovered;
+                else if (!input::Down(mouse)) {
+                    if (win.cardPressed[c] && hovered) win.cardClickPending[c] = true;
+                    win.cardPressed[c] = false;
+                }
+                if (box && hovered != win.cardShownHover[c]) {
+                    Color tint = win.cardBackground;
+                    if (hovered) tint = {std::min(1.0f, tint.r * 1.6f + 0.012f), std::min(1.0f, tint.g * 1.6f + 0.012f), std::min(1.0f, tint.b * 1.6f + 0.014f), tint.a};
+                    eng::Call(box, "SetBrushColor", tint);
+                    win.cardShownHover[c] = hovered;
+                }
+            }
+        }
         if (win.visible && win.rowShown.size() == win.rowView.size()) {
             // A row whose widgets are all hidden takes no room, its gap above included (a collapsed box's slot
             // padding isn't counted); a row with nothing in it at all is left as it is.
@@ -1152,13 +1194,36 @@ bool SimulateClickAt(double x, double y, std::string* what) {
         if (!win->shownVisible) continue;
         for (auto& item : win->items) {
             if (item->retired || !(item->kind == Kind::Button || item->kind == Kind::IconButton || item->kind == Kind::CheckBox)) continue;
+            if (!item->inSidebar && item->row >= 0) {
+                const int view = win->rowView[static_cast<size_t>(item->row)];
+                if (view >= 0 && view != win->shownView) continue;     // a view not on screen
+            }
+            if (!item->visible) continue;
             const ux::Rect r = ux::Bounds(eng::Get(item->main));
             if (!r.ok || x < r.x || y < r.y || x > r.x + r.w || y > r.y + r.h || r.w * r.h >= bestArea) continue;
             best = item.get();
             bestArea = r.w * r.h;
         }
     }
-    if (!best) return false;
+    if (!best) {
+        // no button there: a clickable card of a view on screen
+        for (auto& win : gWindows) {
+            if (!win->shownVisible) continue;
+            for (size_t c = 0; c < win->cardBoxes.size(); ++c) {
+                if (!win->cardClickable[c]) continue;
+                bool shownView = false;
+                for (size_t r = 0; r < win->rowCard.size(); ++r)
+                    if (win->rowCard[r] == static_cast<int>(c) && !win->rowRetired[r]) shownView = win->rowView[r] < 0 || win->rowView[r] == win->shownView;
+                if (!shownView) continue;
+                const ux::Rect r = ux::Bounds(eng::Get(win->cardBoxes[c]));
+                if (!r.ok || x < r.x || y < r.y || x > r.x + r.w || y > r.y + r.h) continue;
+                if (what) *what = "card " + std::to_string(c);
+                win->cardClickPending[c] = true;
+                return true;
+            }
+        }
+        return false;
+    }
     if (what) *what = best->text.empty() ? "icon button" : best->text;
     if (best->kind != Kind::CheckBox) return best->clickPending = true;
     best->checked = !best->checked;

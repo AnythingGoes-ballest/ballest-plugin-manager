@@ -901,7 +901,8 @@ int installedView = window.StartView();     // the header ends here
 
 == UI::Window.StartCard
 Rows added after this share one rounded box, a card, until `EndCard()`. `NewRow()` inside a card adds another
-row to the same card.
+row to the same card. Returns the card's number. `StartCard(true)` (host 0.33.0) makes a clickable card: it lightens
+under the cursor, and a click anywhere on it but its own buttons shows in `CardClicked`.
 --
 // A card with a title row and a description row
 window.StartCard();
@@ -1139,6 +1140,24 @@ brighter and pressed a little darker. `0` (the default) keeps the plain button. 
 --
 playButton.SetSize(40, 40);
 playButton.SetCornerRadius(20);             // round
+
+== UI::Window.CardClicked
+Whether a clickable card (`StartCard(true)`) was clicked since you last asked: a click on the card itself, not on one
+of its buttons, which take their own clicks. Requires host 0.33.0.
+--
+int card = window.StartCard(true);
+window.AddText("Loop", 16);
+UI::Button@ more = window.AddButton("more");
+window.EndCard();
+// each frame
+if (window.CardClicked(card))
+    Place();
+
+== UI::Button.SetTooltip
+The text shown when the cursor rests on the button, such as an icon button's full name. Requires host 0.33.0.
+--
+UI::Button@ store = window.AddIconButton(Plugins::Folder() + "cart.png");
+store.SetTooltip("open the prefab store");
 
 == UI::Button.SetSize
 An icon button's size in pixels (the icon is scaled to its height). Text buttons are as large as their label.
