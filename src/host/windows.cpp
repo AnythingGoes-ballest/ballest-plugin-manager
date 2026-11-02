@@ -445,10 +445,12 @@ void Build(Window& win) {
         content = layer;
     }
     const bool movable = win.movable && !sized;
-    if (win.blocksClicks || movable) {
+    if (win.blocksClicks || movable || dock) {
         // Border > Overlay > [a button that draws nothing and fills the window, the content]. The button takes
         // every click that lands on the window between widgets, so nothing underneath (the game's menus, or the
         // game itself) receives it. The padding goes on the content so the button reaches the window's edges.
+        // A window docked in one of the game's panels always has it: the wheel over its texts and gaps then
+        // scrolls the panel (a button leaves the wheel to its scroll box) instead of reaching the game's camera.
         Obj overlay = w::Spawn("Overlay", tree), blocker = w::Spawn("Button", tree);
         if (!overlay || !blocker) return;
         w::Unfocusable(blocker);
