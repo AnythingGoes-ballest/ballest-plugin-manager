@@ -21,6 +21,7 @@
 #include "layout.hpp"
 #include "localrecords.hpp"
 #include "log.hpp"
+#include "steam.hpp"
 #include "tracks.hpp"
 #include "widgets.hpp"
 
@@ -203,6 +204,48 @@ Obj RaceUi() {
 
 namespace {
 
+// The workshop item the game itself is racing (2026-11-02): the game instance's leaderboard identity for the map
+// (CurrentPermanentUGCLeaderboardIdentity) and, in a daily, the challenge it looked up (LastDailyChallengeResult). The
+// daily launches its map under a bare level name (measured: the 2026-11-02 daily "Spillway" read as custom:local:Spillway,
+// so the upload guard took it for a never-published map of the player's own and refused every finish after the
+// first). Members by name in the game's own types.
+struct GameIdentity {
+    std::string linkedLevel;            // the identity's LinkedLevelName
+    long long ugcId = 0;                // its PublishedFileId
+    bool inDaily = false;               // bInDailyChallenge
+    std::string dailyLevel;             // the daily's LevelDisplayName
+    long long dailyId = 0;              // the daily's PublishedFileId (a string in the game's struct)
+};
+GameIdentity ReadGameIdentity(Obj instance) {
+    GameIdentity g;
+    if (!instance) return g;
+    Obj cls = eng::ClassOf(instance);
+    if (const eng::Prop p = eng::FindProp(cls, "CurrentPermanentUGCLeaderboardIdentity"))
+        if (Obj st = eng::StructOf(p)) {
+            const eng::Prop name = eng::FindProp(st, "LinkedLevelName"), id = eng::FindProp(st, "PublishedFileId");
+            if (name) g.linkedLevel = eng::ReadFString(instance + p.offset + name.offset);
+            if (id && id.size == 8) std::memcpy(&g.ugcId, instance + p.offset + id.offset, 8);
+        }
+    eng::ReadBool(instance, "bInDailyChallenge", &g.inDaily);
+    if (const eng::Prop p = eng::FindProp(cls, "LastDailyChallengeResult"))
+        if (Obj st = eng::StructOf(p)) {
+            const eng::Prop name = eng::FindProp(st, "LevelDisplayName"), id = eng::FindProp(st, "PublishedFileId");
+            if (name) g.dailyLevel = eng::ReadFString(instance + p.offset + name.offset);
+            if (id) g.dailyId = std::atoll(eng::ReadFString(instance + p.offset + id.offset).c_str());
+        }
+    return g;
+}
+
+// The workshop item behind a map read without its workshop folder: the game's own identity for it, only when that
+// identity names this map (a stale identity from the last workshop map must never give a map of the player's own a
+// leaderboard), else 0.
+long long GameWorkshopId(const GameIdentity& g, const std::string& file, const std::string& title) {
+    auto names = [&](const std::string& level) { return !level.empty() && (level == file || level == title); };
+    if (g.inDaily && g.dailyId > 0 && names(g.dailyLevel)) return g.dailyId;
+    if (g.ugcId > 0 && names(g.linkedLevel)) return g.ugcId;
+    return 0;
+}
+
 void ReadTrack() {
     Obj controller = game::PlayerController();
     if (!controller) return;
@@ -240,6 +283,30 @@ void ReadTrack() {
         }
         if (const size_t amp = file.find('&'); amp != std::string::npos) file = file.substr(amp + 1);
         if (const size_t dot = file.rfind('.'); dot != std::string::npos) file = file.substr(0, dot);
+        if (id == "local") {
+            // Not in a workshop folder: the game may still be racing a workshop item (a daily). Its own identity says
+            // which; the key and file are then the item's, as when it is raced from its workshop folder.
+            const GameIdentity g = ReadGameIdentity(instance);
+            const std::string launched = path;
+            if (const long long item = GameWorkshopId(g, file, t.name)) {
+                id = std::to_string(item);
+                std::string folder = steam::ItemFolder(static_cast<uint64_t>(item));
+                for (char& c : folder)
+                    if (c == '\\') c = '/';
+                WIN32_FIND_DATAW found;
+                HANDLE h = folder.empty() ? INVALID_HANDLE_VALUE
+                                          : FindFirstFileW(eng::Widen(folder + "/Map_LevelEditorMain&*.ballmap").c_str(), &found);
+                if (h != INVALID_HANDLE_VALUE) {
+                    const std::string name = eng::Narrow(found.cFileName, static_cast<int>(wcslen(found.cFileName)));
+                    FindClose(h);
+                    path = folder + "/" + name;
+                    file = name.substr(name.find('&') + 1);
+                    file = file.substr(0, file.rfind('.'));
+                }
+                if (gTrack.file != path)
+                    hostlog::Info("race: the game launched \"" + launched + "\" as workshop item " + id + " (its own identity)");
+            }
+        }
         t.key = file.empty() ? "" : "custom:" + id + ":" + file;
         t.file = path;
         // The picture the game keeps beside the map ("<track>_<author>.jpg", measured in workshop folders; a local map
@@ -622,7 +689,11 @@ void Frame() {
     // Complete only once the run raced last is the one the game took a finish for: a run after the finish isn't, nor
     // is it while its ball is gone for a moment (a fall's respawn takes the pawn away too, measured).
     if (runId >= 0) gLiveRunId = runId;
-    if (gComplete && gFinishesWatched && gLiveRunId != gFinishedRunId) gComplete = false;
+    // The run's own phase names the attempt that finished (measured on stasis 2026-11-02: Finished with the attempt
+    // raced last, the pawn gone); the finish-snapshot hook alone never sees the game's native call any more (it read
+    // -1 at every finish, so every finished run was kept as unfinished and Grind Stats counted no finishes).
+    if (gComplete && run.attempt == gLiveRunId) gFinishedRunId = gLiveRunId;
+    if (gComplete && gLiveRunId != gFinishedRunId) gComplete = false;
     // The touched run's mark: carried into the run that starts after a touch made before it, cleared when a later run
     // starts (not when this one ends: the upload comes after the end).
     if (gTaintedRun == -1 && runId >= 0) gTaintedRun = runId;
@@ -724,10 +795,33 @@ bool TaintedCommon(std::string* why) {
 bool PushedThisRun() { return gPushedGeneration == game::Generation() && gPushedRun != -2 && !gPushers.empty(); }
 }  // namespace
 
+namespace {
+// The map raced is a file in the player's own maps folder (what Tracks::OpenLocal launches). A track read as local
+// without such a file isn't one: the game launched a workshop item under a bare name (the 2026-11-02 daily).
+bool OwnLocalMapFile(const std::string& path) {
+    auto full = [](const std::string& p) {
+        wchar_t buf[MAX_PATH * 2];
+        const DWORD n = GetFullPathNameW(eng::Widen(p).c_str(), MAX_PATH * 2, buf, nullptr);
+        std::wstring w = n > 0 && n < MAX_PATH * 2 ? std::wstring(buf, n) : std::wstring();
+        for (wchar_t& c : w) c = c == L'/' ? L'\\' : static_cast<wchar_t>(towlower(c));
+        return w;
+    };
+    const std::string folder = tracks::LocalMapsFolder();
+    if (path.empty() || folder.empty()) return false;
+    std::wstring file = full(path), dir = full(folder);
+    if (dir.empty() || file.size() <= dir.size()) return false;
+    if (dir.back() != L'\\') dir += L'\\';
+    const DWORD attributes = GetFileAttributesW(eng::Widen(path).c_str());
+    return file.compare(0, dir.size(), dir) == 0 && attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
+}
+}  // namespace
+
 bool RunTainted(std::string* why) {
     // A map file of the player's own raced as a workshop map (Tracks::OpenLocal): it was never published, so it has
-    // no leaderboard of its own, and its score must not reach one under some other name.
-    if (gTrack.key.rfind("custom:local:", 0) == 0) {
+    // no leaderboard of its own, and its score must not reach one under some other name. Only a real file in the
+    // player's maps folder: the key alone said "local" for the 2026-11-02 daily too, and every finish after the first
+    // was refused.
+    if (gTrack.key.rfind("custom:local:", 0) == 0 && OwnLocalMapFile(gTrack.file)) {
         *why = "a local map, never published";
         return true;
     }
@@ -1140,7 +1234,15 @@ std::string DescribeRun() {
                   r.completed, r.nextGoal, r.faults, r.required, r.splits, r.scoreEligible ? 1 : 0, r.state ? 1 : 0,
                   controller ? eng::ObjName(eng::ClassOf(controller)).c_str() : "none",
                   pawn ? eng::ObjName(eng::ClassOf(pawn)).c_str() : "none", gOnTrack, gActive, gComplete, gRunId);
-    return buf;
+    Obj instance = controller ? eng::Call(gs, "GetGameInstance", controller).ReturnObj() : nullptr;
+    const GameIdentity g = ReadGameIdentity(instance);
+    const eng::Prop target = instance ? eng::FindProp(eng::ClassOf(instance), "TargetLevelName") : eng::Prop{};
+    std::string why;
+    const bool tainted = RunTainted(&why);
+    return std::string(buf) + " | upload guard " + (tainted ? "refuses (" + why + ")" : std::string("lets it through")) + " | finishes watched " + std::to_string(gFinishesWatched) + " live run " + std::to_string(gLiveRunId) +
+           " finished run " + std::to_string(gFinishedRunId) + " | track " + gTrack.key + " target \"" +
+           (target ? eng::ReadFString(instance + target.offset) : std::string()) + "\" identity \"" + g.linkedLevel + "\" " +
+           std::to_string(g.ugcId) + " daily " + std::to_string(g.inDaily) + " \"" + g.dailyLevel + "\" " + std::to_string(g.dailyId);
 }
 
 }  // namespace race
