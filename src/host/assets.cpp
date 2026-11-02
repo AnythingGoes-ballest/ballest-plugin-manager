@@ -28,14 +28,24 @@ namespace {
 //   - FPakPlatformFile::bSigned at this+0x30 (set in Initialize from the signing-keys delegate).
 //   - GetPakSigningKeysDelegate() returns the delegate at this RVA; its instance ptr (offset 0) being null means
 //     "not bound", so signature checks are skipped.
-constexpr uintptr_t kMountPakDelegateRva = 0xA405400;
-constexpr uintptr_t kHandleMountPakRva   = 0x169E8D0;   // FPakPlatformFile::HandleMountPakDelegate(const FString&, int32)
-constexpr uintptr_t kSigningKeysDelegRva = 0xA4052C0;
+//
+// Each game update moves these. The measured RVAs below are tried first; when their bytes don't match, the same
+// things are found again in the running game (FindAddresses) by the shapes that identify them, and used only when
+// exactly one candidate fits every check.
+//   2026-10-xx (CL 56702186): MountPak 0xA405400, HandleMountPak 0x169E8D0, signing 0xA4052C0, OpenLibrary 0x3308570
+//   2026-11-01 update:        MountPak 0xA706D80, HandleMountPak 0x16A2CB0, signing 0xA706C40, OpenLibrary 0x330F470
+constexpr uintptr_t kMountPakDelegateRva = 0xA706D80;
+constexpr uintptr_t kHandleMountPakRva   = 0x16A2CB0;   // FPakPlatformFile::HandleMountPakDelegate(const FString&, int32)
+// FCoreDelegates statics: the signing-keys delegate is declared 0x140 before MountPak, and MountPak is followed by
+// OnUnmountPak (+0x20), which FPakPlatformFile binds to itself too (measured in both builds above).
+constexpr uintptr_t kSigningBeforeMount  = 0x140;
+constexpr uintptr_t kUnmountAfterMount   = 0x20;
 constexpr int kPakFileSignedFieldOffset  = 0x30;
 // FShaderCodeLibrary::OpenLibrary(const FString& Name, const FString& Directory, bool bMonolithicOnly): a thin
 // wrapper (mov rax,rcx; mov rcx,[Impl]; test; je; movzx r9d,r8b; mov r8,rdx; mov rdx,rax; jmp Impl::OpenLibrary),
 // found by matching the exported UE 5.8.3 editor RenderCore code shape; unique match in the Shipping exe.
-constexpr uintptr_t kOpenShaderLibraryRva = 0x3308570;
+constexpr uintptr_t kOpenShaderLibraryRva = 0x330F470;
+static const uint8_t kHandlePrologue[] = {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48};  // HandleMountPakDelegate prologue
 
 struct FString { const wchar_t* Data; int32_t Num; int32_t Max; };  // UE FString layout
 // HandleMountPakDelegate(this, const FString& PakFilePath, int32 PakOrder) -> IPakFile* (null on failure).
@@ -43,32 +53,128 @@ struct FString { const wchar_t* Data; int32_t Num; int32_t Max; };  // UE FStrin
 using MountFn = void*(__fastcall*)(void* self, const FString* path, int32_t order);
 using OpenLibFn = bool(__fastcall*)(const FString* name, const FString* dir, bool monolithicOnly);
 
-void* PakPlatformFile() {
+// Reads that fail instead of faulting (heap pointers found while searching may be anything).
+bool Peek(uintptr_t at, void* out, size_t n) {
+    SIZE_T got = 0;
+    return ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(at), out, n, &got) && got == n;
+}
+
+struct Section { uintptr_t lo = 0, hi = 0; bool Has(uintptr_t a) const { return a >= lo && a < hi; } };
+Section SectionOf(const char* name) {
     const uintptr_t base = eng::Base();
-    auto* instance = *reinterpret_cast<void**>(base + kMountPakDelegateRva);  // FDelegateInstance*
-    if (!instance) return nullptr;
-    return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(instance) + 0x18);  // bound FPakPlatformFile*
+    auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+    const IMAGE_SECTION_HEADER* s = IMAGE_FIRST_SECTION(nt);
+    for (int i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++s)
+        if (std::strncmp(reinterpret_cast<const char*>(s->Name), name, 8) == 0)
+            return {base + s->VirtualAddress, base + s->VirtualAddress + s->Misc.VirtualSize};
+    return {};
+}
+
+std::string Hex(uintptr_t v) {
+    char buf[24];
+    std::snprintf(buf, sizeof buf, "0x%llx", static_cast<unsigned long long>(v));
+    return buf;
+}
+
+struct Addresses {
+    uintptr_t mountSlot = 0, handleMount = 0, signingSlot = 0, openLibrary = 0;
+    bool ok = false;
+};
+
+// A delegate slot bound by FPakPlatformFile: slot -> instance (heap) -> {+0x18 object, +0x20 method}.
+bool BoundInstance(uintptr_t slot, const Section& text, uintptr_t* object, uintptr_t* method) {
+    uintptr_t inst = 0;
+    if (!Peek(slot, &inst, 8) || !inst) return false;
+    uintptr_t pair[2];
+    if (!Peek(inst + 0x18, pair, sizeof pair) || !pair[0] || !text.Has(pair[1])) return false;
+    *object = pair[0];
+    *method = pair[1];
+    return true;
+}
+
+bool OpenLibraryShape(uintptr_t at) {
+    static const uint8_t kHead[] = {0x48, 0x8B, 0xC1, 0x48, 0x8B, 0x0D};  // mov rax,rcx; mov rcx,[rip+Impl]
+    static const uint8_t kTail[] = {0x48, 0x85, 0xC9, 0x74};              // test rcx,rcx; je
+    static const uint8_t kArgs[] = {0x45, 0x0F, 0xB6, 0xC8, 0x4C, 0x8B, 0xC2, 0x48, 0x8B, 0xD0, 0xE9};
+    const auto* p = reinterpret_cast<const uint8_t*>(at);
+    return std::memcmp(p, kHead, sizeof kHead) == 0 && std::memcmp(p + 10, kTail, sizeof kTail) == 0 &&
+           std::memcmp(p + 15, kArgs, sizeof kArgs) == 0;
+}
+
+bool MountSlotShape(uintptr_t slot, const Section& text, const Section& image, uintptr_t* handle) {
+    uintptr_t obj = 0, fn = 0, obj2 = 0, fn2 = 0, signing = 0;
+    if (!BoundInstance(slot, text, &obj, &fn) || image.Has(obj)) return false;
+    if (!BoundInstance(slot + kUnmountAfterMount, text, &obj2, &fn2) || obj2 != obj || fn2 == fn) return false;
+    if (!Peek(slot - kSigningBeforeMount, &signing, 8) || !signing) return false;
+    uint8_t prologue[sizeof kHandlePrologue], isSigned = 2;
+    if (!Peek(fn, prologue, sizeof prologue) || std::memcmp(prologue, kHandlePrologue, sizeof prologue) != 0) return false;
+    if (!Peek(obj + kPakFileSignedFieldOffset, &isSigned, 1) || isSigned > 1) return false;
+    *handle = fn;
+    return true;
+}
+
+const Addresses& FindAddresses() {
+    static Addresses a;
+    static bool done = false;
+    if (done) return a;
+    done = true;
+    const uintptr_t base = eng::Base();
+    const Section text = SectionOf(".text"), data = SectionOf(".data");
+    const Section image{base, data.hi};
+    if (!text.lo || !data.lo) { hostlog::Info("[assets] no .text/.data sections"); return a; }
+
+    uintptr_t handle = 0;
+    if (MountSlotShape(base + kMountPakDelegateRva, text, image, &handle) && handle == base + kHandleMountPakRva) {
+        a.mountSlot = base + kMountPakDelegateRva;
+    } else {
+        int found = 0;
+        for (uintptr_t s = data.lo + kSigningBeforeMount; s + kUnmountAfterMount + 8 <= data.hi; s += 8) {
+            uintptr_t h = 0;
+            if (MountSlotShape(s, text, image, &h)) { ++found; a.mountSlot = s; handle = h; }
+        }
+        if (found != 1) {
+            hostlog::Info("[assets] MountPak delegate not found in this build (" + std::to_string(found) + " candidates)");
+            return a;
+        }
+        hostlog::Info("[assets] MountPak delegate found again at rva " + Hex(a.mountSlot - base));
+    }
+    a.handleMount = handle;
+    a.signingSlot = a.mountSlot - kSigningBeforeMount;
+
+    if (OpenLibraryShape(base + kOpenShaderLibraryRva)) {
+        a.openLibrary = base + kOpenShaderLibraryRva;
+    } else {
+        int found = 0;
+        for (uintptr_t p = text.lo; p + 26 <= text.hi; ++p)
+            if (*reinterpret_cast<const uint8_t*>(p) == 0x48 && OpenLibraryShape(p)) { ++found; a.openLibrary = p; }
+        if (found != 1) {
+            hostlog::Info("[assets] OpenLibrary not found in this build (" + std::to_string(found) + " candidates)");
+            a.openLibrary = 0;
+            return a;
+        }
+        hostlog::Info("[assets] OpenLibrary found again at rva " + Hex(a.openLibrary - base));
+    }
+    a.ok = true;
+    return a;
 }
 
 }  // namespace
 
 bool MountContainer(const std::wstring& pakAbsolutePath, int32_t order) {
-    const uintptr_t base = eng::Base();
-    // The RVAs are measured on Ballest CL 56702186. Rather than trust a stored fingerprint, self-verify the code
-    // we are about to call matches what was measured: the Mount prologue bytes, and the MountPak delegate's bound
-    // function being HandleMountPakDelegate at its measured RVA. If either differs, this is another build.
-    static const uint8_t kHandlePrologue[] = {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48};  // HandleMountPakDelegate prologue
-    if (std::memcmp(reinterpret_cast<void*>(base + kHandleMountPakRva), kHandlePrologue, sizeof kHandlePrologue) != 0) {
-        hostlog::Info("[assets] refused: HandleMountPakDelegate prologue does not match the measured build");
+    // The addresses are measured per game build (see above); FindAddresses checks each by its shape before use,
+    // and refuses rather than calling something that doesn't fit.
+    const Addresses& at = FindAddresses();
+    if (!at.ok) {
+        hostlog::Info("[assets] refused: the pak mount code of this game build was not found");
         return false;
     }
-    auto* instance = *reinterpret_cast<void**>(base + kMountPakDelegateRva);
-    if (!instance || *reinterpret_cast<uintptr_t*>(reinterpret_cast<uint8_t*>(instance) + 0x20) != base + 0x169e8d0) {
-        hostlog::Info("[assets] refused: MountPak delegate is not the measured HandleMountPakDelegate");
+    uintptr_t obj = 0, fn = 0;
+    if (!BoundInstance(at.mountSlot, SectionOf(".text"), &obj, &fn) || fn != at.handleMount) {
+        hostlog::Info("[assets] refused: MountPak delegate is not HandleMountPakDelegate");
         return false;
     }
-    void* self = PakPlatformFile();
-    if (!self) { hostlog::Info("[assets] could not find FPakPlatformFile"); return false; }
+    void* self = reinterpret_cast<void*>(obj);   // the bound FPakPlatformFile
 
     {
         DWORD attr = GetFileAttributesW(pakAbsolutePath.c_str());
@@ -76,10 +182,10 @@ bool MountContainer(const std::wstring& pakAbsolutePath, int32_t order) {
         hostlog::Info("[assets] files: pak attr=" + std::to_string((int)attr) + " utoc attr=" +
                       std::to_string((int)GetFileAttributesW(utoc.c_str())) +
                       " bSigned=" + std::to_string(*(reinterpret_cast<uint8_t*>(self) + kPakFileSignedFieldOffset)) +
-                      " signDelegate=" + std::to_string(*reinterpret_cast<uintptr_t*>(base + kSigningKeysDelegRva) != 0));
+                      " signDelegate=" + std::to_string(*reinterpret_cast<uintptr_t*>(at.signingSlot) != 0));
     }
 
-    auto* delegateInst = reinterpret_cast<void**>(base + kSigningKeysDelegRva);  // signing-keys delegate storage
+    auto* delegateInst = reinterpret_cast<void**>(at.signingSlot);  // signing-keys delegate storage
     auto* signedByte = reinterpret_cast<uint8_t*>(self) + kPakFileSignedFieldOffset;
 
     // Get past the signature check for OUR mount only: make the signing-keys delegate look unbound (so
@@ -92,7 +198,7 @@ bool MountContainer(const std::wstring& pakAbsolutePath, int32_t order) {
     *delegateInst = nullptr;
     *signedByte = 0;
 
-    auto mount = reinterpret_cast<MountFn>(base + kHandleMountPakRva);
+    auto mount = reinterpret_cast<MountFn>(at.handleMount);
     FString fpath{ pakAbsolutePath.c_str(), static_cast<int32_t>(pakAbsolutePath.size() + 1),
                    static_cast<int32_t>(pakAbsolutePath.size() + 1) };
     // The host's per-frame vectored exception handler guards against a fault in here.
@@ -108,18 +214,17 @@ bool MountContainer(const std::wstring& pakAbsolutePath, int32_t order) {
 }
 
 bool OpenShaderLibrary(const std::wstring& name, const std::wstring& directory) {
-    const uintptr_t base = eng::Base();
-    static const uint8_t kWrapper[] = {0x48, 0x8B, 0xC1, 0x48, 0x8B, 0x0D};  // mov rax,rcx; mov rcx,[rip+Impl]
-    const uint8_t* at = reinterpret_cast<const uint8_t*>(base + kOpenShaderLibraryRva);
-    if (std::memcmp(at, kWrapper, sizeof kWrapper) != 0 || at[0x19] != 0xE9) {
-        hostlog::Info("[assets] refused: OpenLibrary wrapper bytes do not match the measured build");
+    const Addresses& found = FindAddresses();
+    if (!found.ok || !OpenLibraryShape(found.openLibrary)) {
+        hostlog::Info("[assets] refused: OpenLibrary of this game build was not found");
         return false;
     }
+    const uint8_t* at = reinterpret_cast<const uint8_t*>(found.openLibrary);
     const int32_t implDisp = *reinterpret_cast<const int32_t*>(at + 6);
     void* impl = *reinterpret_cast<void* const*>(at + 10 + implDisp);
     FString fname{ name.c_str(), static_cast<int32_t>(name.size() + 1), static_cast<int32_t>(name.size() + 1) };
     FString fdir{ directory.c_str(), static_cast<int32_t>(directory.size() + 1), static_cast<int32_t>(directory.size() + 1) };
-    const bool ok = reinterpret_cast<OpenLibFn>(base + kOpenShaderLibraryRva)(&fname, &fdir, false);
+    const bool ok = reinterpret_cast<OpenLibFn>(found.openLibrary)(&fname, &fdir, false);
     hostlog::Info("[assets] OpenLibrary(" + std::string(name.begin(), name.end()) + ", " +
                   std::string(directory.begin(), directory.end()) + ") Impl=" + (impl ? "set" : "null") +
                   " -> " + (ok ? "true" : "false"));

@@ -1097,7 +1097,8 @@ Obj GlowParent() {
     if (!noCopy) {
         if (Obj copy = cosmetics::LoadAsset(kGlowFadeMaterial)) return copy;
         noCopy = true;
-        hostlog::Warn("models: the game's camera fade copy of the light material did not load; lights on the ball won't fade");
+        // Expected since the game's 2026-11-01 update: it ships no camera fade copies any more (and the ball has no fade).
+        hostlog::Info("models: the game has no camera fade copy of the light material; lights use the plain one");
     }
     return cosmetics::LoadAsset(kGlowMaterial);
 }
