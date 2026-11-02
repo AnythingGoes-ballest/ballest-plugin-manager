@@ -109,6 +109,7 @@ struct Widget {
     float width = 200;                  // slider, dropdown, space, text area, text input and image width; 0 = fill
     float height = 0;                   // text area and image height; 0 = fill
     float textWidth = 0;                // text: a fixed width (0 = as wide as the text)
+    bool wrap = false;                  // text: wraps onto more lines at its fixed width
     uint8_t justify = 0;                // text: 0 left, 1 centre, 2 right (ETextJustify)
     bool fill = false;                  // text: takes the row's leftover width, pushing what follows to the right
     float gapBefore = -1;               // pixels between it and the widget before it in its row; -1 the default
@@ -193,6 +194,8 @@ struct Window {
     std::vector<std::unique_ptr<Widget>> items;
     eng::Weak host, border;
     std::vector<eng::Weak> viewBoxes;
+    std::vector<eng::Weak> rowBoxes;            // each row's box: collapsed, gap and all, while every widget in it is hidden
+    std::vector<int8_t> rowShown;               // as last applied: 1 shown, 0 collapsed, -1 not yet
     eng::Weak slot, dragSurface;                // the border's canvas slot, and the invisible button dragged
     int generation = -1;
     bool shownVisible = false;

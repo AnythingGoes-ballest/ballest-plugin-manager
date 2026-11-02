@@ -899,7 +899,7 @@ void RegisterUi()
         uButton.SetFont("");
         return All(c);
     });
-    Add("ui", "UI text", "Text.text,Text.SetColor,Text.size,Text.SetWidth,Text.SetAlign,Text.visible,Text.SetPosition,Rect.SetRect,Rect.SetColor,Rect.visible", function() {
+    Add("ui", "UI text", "Text.text,Text.SetColor,Text.size,Text.SetWidth,Text.SetWrap,Text.SetAlign,Text.visible,Text.SetPosition,Rect.SetRect,Rect.SetColor,Rect.visible", function() {
         if (win is null)
             return "no window (the widget test failed)";
         if (step == 0)
@@ -908,6 +908,7 @@ void RegisterUi()
             uText.SetColor(1, 0.5f, 0.2f, 1);
             uText.size = 20;
             uText.SetWidth(250);
+            uText.SetWrap(true);
             uText.SetAlign(1);
             uPlaced.SetPosition(20, 150);
             uRect.SetRect(20, 172, 80, 8);

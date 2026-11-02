@@ -147,6 +147,7 @@ Obj BuildWidget(Obj tree, Widget& item) {
             w::SetText(text, item.text);
             w::SetTextColor(text, item.color);
             if (item.justify) eng::Call(text, "SetJustification", item.justify);
+            if (item.wrap && item.textWidth > 0) eng::Call(text, "SetAutoWrapText", uint8_t{1});
             item.main = eng::MakeWeak(text);
             item.shownText = item.text;
             item.colorDirty = false;
@@ -363,6 +364,8 @@ void Forget(Window& win) {
     win.hudApplied = false;
     win.dragging = false;
     win.viewBoxes.clear();
+    win.rowBoxes.clear();
+    win.rowShown.clear();
     win.shownVisible = false;
     win.appliedView = -1;
     for (auto& item : win.items) {
@@ -523,6 +526,10 @@ void Build(Window& win) {
             }
         rows[r] = row;
     }
+    win.rowBoxes.assign(rows.size(), {});
+    win.rowShown.assign(rows.size(), -1);
+    for (size_t r = 0; r < rows.size(); ++r)
+        if (rows[r]) win.rowBoxes[r] = eng::MakeWeak(rows[r]);
     std::vector<int> placedInRow(rows.size(), 0);
     int placedInSidebar = 0;
     for (auto& itemPtr : win.items) {
@@ -1060,6 +1067,22 @@ void Frame() {
                 if (item->kind == Kind::TextInput && (item->focused || item->focusRequested) && !typingWidget)
                     typingWidget = eng::Get(item->main);
             }
+        if (win.visible && win.rowShown.size() == win.rowView.size()) {
+            // A row whose widgets are all hidden takes no room, its gap above included (a collapsed box's slot
+            // padding isn't counted); a row with nothing in it at all is left as it is.
+            std::vector<int8_t> any(win.rowView.size(), -1);
+            for (const auto& item : win.items)
+                if (!item->retired && !item->inSidebar && !item->placed && item->row >= 0 && static_cast<size_t>(item->row) < any.size())
+                    any[static_cast<size_t>(item->row)] = item->visible || any[static_cast<size_t>(item->row)] == 1 ? 1 : 0;
+            for (size_t r = 0; r < any.size(); ++r) {
+                const int8_t shown = any[r] == 0 ? 0 : 1;
+                if (shown == win.rowShown[r]) continue;
+                // a row is built visible: only one that was collapsed here is set back
+                if (Obj row = eng::Get(win.rowBoxes[r]); row && (shown == 0 || win.rowShown[r] == 0))
+                    w::SetVisibility(row, shown ? w::kSelfHitTestInvisible : w::kCollapsed);
+                win.rowShown[r] = shown;
+            }
+        }
     }
     game::SetTypingWidget(typingWidget);
     gSimulatedSlider = -1;

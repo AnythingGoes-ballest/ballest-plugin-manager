@@ -413,6 +413,10 @@ void SetTextWidth(ui::Widget* w, float width) {
     w->textWidth = width;
     w->window->layoutDirty = true;
 }
+void SetTextWrap(ui::Widget* w, bool wrap) {
+    w->wrap = wrap;
+    w->window->layoutDirty = true;
+}
 void SetTextFill(ui::Widget* w, bool fill) {
     w->fill = fill;
     w->window->layoutDirty = true;
@@ -870,6 +874,7 @@ void RegisterUi() {
     Method("Text", "void SetWidth(float)", asFUNCTION(SetTextWidth));
     Method("Text", "void SetAlign(int)", asFUNCTION(SetTextAlign));
     Method("Text", "void SetFill(bool)", asFUNCTION(SetTextFill));
+    Method("Text", "void SetWrap(bool)", asFUNCTION(SetTextWrap));
     Method("Button", "bool Clicked()", asFUNCTION(Clicked));
     Method("Button", "bool get_hovered() property", asFUNCTION(Hovered));
     Method("Button", "void SetBackground(float, float, float, float)", asFUNCTION(ButtonBackground));

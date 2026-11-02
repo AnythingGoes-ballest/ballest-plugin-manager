@@ -1042,6 +1042,14 @@ own width.
 UI::Text@ label = window.AddText("Retries", 12);
 label.SetWidth(110);
 
+== UI::Text.SetWrap
+`true` wraps the text onto as many lines as it needs at its width (`SetWidth`), so a long line stays inside its card;
+without a width it does nothing. Requires host 0.33.0.
+--
+UI::Text@ about = window.AddText(description, 14);
+about.SetWidth(300);
+about.SetWrap(true);
+
 == UI::Text.SetAlign
 Where the text sits in its width (`SetWidth`): 0 left, 1 centre, 2 right.
 --
