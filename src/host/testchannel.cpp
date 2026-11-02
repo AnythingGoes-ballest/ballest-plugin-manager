@@ -1489,6 +1489,30 @@ void Run(const std::string& cmd) {
              const prefabs::Reply r = prefabs::RunLine(c.size() > 7 ? c.substr(7) : "");
              Report(c + (r.ran ? " -> " : " -> failed: ") + r.text + " | folder " + prefabs::Folder());
          }},
+        {"prefabplace", [](const Args& a, const std::string& c) {  // prefabplace <name> [raw|dx]: Prefabs::Spawn + Editor::MoveSelection by dx (raw: the bare console line), timed
+             const double t0 = game::Seconds();
+             const int o0 = eng::NumObjects();
+             std::vector<int> made;
+             prefabs::Reply r;
+             if (Arg(a, 2) == "raw") {
+                 r = prefabs::RunLine("ballest.editor.spawnprefab " + Arg(a, 1));
+                 made = editor::Selection();
+             } else {
+                 r = prefabs::Spawn(Arg(a, 1), &made);
+             }
+             const double t1 = game::Seconds();
+             const int o1 = eng::NumObjects();
+             char line[256];
+             std::snprintf(line, sizeof line, " | %zu pieces, spawn %.0f ms, objects %d -> %d", made.size(), (t1 - t0) * 1000, o0, o1);
+             std::string out = c + " -> " + r.text + line;
+             if (Arg(a, 2) != "raw" && !made.empty()) {
+                 const bool moved = editor::MoveSelection({std::atof(Arg(a, 2).c_str()), 0, 0});
+                 std::snprintf(line, sizeof line, "; move %s %.0f ms, objects -> %d, selected %zu", moved ? "ok" : "failed",
+                               (game::Seconds() - t1) * 1000, eng::NumObjects(), editor::Selection().size());
+                 out += line;
+             }
+             Report(out);
+         }},
         {"spin", [](const Args& a, const std::string& c) {         // spin <x> <y> <z>: the ball's spin (degrees a second)
              eng::Obj pawn = eng::Call(game::PlayerController(), "K2_GetPawn").ReturnObj();
              eng::Obj sphere = pawn ? eng::ReadObj(pawn, "Sphere") : nullptr;

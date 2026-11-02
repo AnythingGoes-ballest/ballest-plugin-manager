@@ -64,6 +64,11 @@ bool SetOutline(int id, bool on);
 
 // Selects exactly these pieces (the editor's own selection, with its pivot and highlighting).
 void Select(const std::vector<int>& ids);
+// While held (calls nest), the UI's refreshes on the editor's change broadcasts are queued and each distinct one runs
+// once when the last hold ends: a paste or selection of many pieces otherwise rebuilds the Details panel per piece.
+void HoldRefreshes(bool on);
+// Moves the selection and its pivot (the gizmo) by an offset, in one call. False with nothing selected.
+bool MoveSelection(const Vec3& by);
 // Copies the selection and pastes it in place; the copies are left selected (by the paste, measured) and returned.
 std::vector<int> DuplicateSelection();
 // Turns pieces about `center` by the given degrees around the world X, Y and Z axes (X first, then Y, then Z).

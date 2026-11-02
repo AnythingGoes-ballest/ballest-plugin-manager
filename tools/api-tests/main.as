@@ -2747,7 +2747,7 @@ void RegisterEditor()
     // Two pieces saved as a prefab through the game's own saveprefab (asked before replacing it), copied with Write,
     // the copy placed with spawnprefab (in front of the camera, its pieces selected), that placement undone, and both
     // files deleted. The map is never saved.
-    Add("editor", "Prefabs save, read, write, place and delete", "Prefabs::Folder,Prefabs::ValidName,Prefabs::List,Prefabs::Read,Prefabs::Write,Prefabs::Save,Prefabs::Spawn,Prefabs::Delete", function() {
+    Add("editor", "Prefabs save, read, write, place and delete", "Prefabs::Folder,Prefabs::ValidName,Prefabs::List,Prefabs::Read,Prefabs::Write,Prefabs::Save,Prefabs::Spawn,Prefabs::Delete,Editor::MoveSelection", function() {
         if (step == 0)
         {
             array<int>@ pieces = Editor::Pieces();
@@ -2780,6 +2780,13 @@ void RegisterEditor()
             array<int>@ sel = Editor::Selection();
             if (made.length() != 2 || sel.length() != 2)
                 return "Prefabs::Spawn made " + made.length() + ", selected " + sel.length() + ": " + spawned;
+            double ax, ay, az, bx, by, bz;
+            Editor::GetLocation(made[1], ax, ay, az);
+            bool moved = Editor::MoveSelection(100, 0, 50);
+            Editor::GetLocation(made[1], bx, by, bz);
+            if (!moved || Math::abs(bx - ax - 100) > 0.5 || Math::abs(by - ay) > 0.5 || Math::abs(bz - az - 50) > 0.5
+                || Editor::Selection().length() != 2)
+                return "Editor::MoveSelection " + moved + ": moved by " + (bx - ax) + "," + (by - ay) + "," + (bz - az);
             Editor::Undo();
             t0 = Host::Time();
             step = 1;

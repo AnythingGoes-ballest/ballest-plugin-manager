@@ -9,6 +9,7 @@
 #include "files.hpp"
 #include "game.hpp"
 #include "json.hpp"
+#include "log.hpp"
 
 namespace prefabs {
 namespace {
@@ -151,7 +152,18 @@ Reply Spawn(const std::string& name, std::vector<int>* made) {
     if (!ValidName(name)) return {false, "not a prefab name (1 to 64 letters, digits, _ and -)"};
     if (!editor::Open()) return {false, "not in the track editor"};
     const std::vector<int> before = editor::Pieces();
+    // the game's spawn grabs the new pieces one at a time and the UI rebuilds for the whole selection after each (a
+    // 102-piece prefab: ~1M objects); held, it rebuilds once. Ended before the new pieces are listed: the editor pawn's
+    // held refresh is what adds them to the handler's AllActors.
+    const double t0 = game::Seconds();
+    editor::HoldRefreshes(true);
     Reply r = RunLine("ballest.editor.spawnprefab " + name);
+    const double t1 = game::Seconds();
+    editor::HoldRefreshes(false);
+    char took[128];
+    std::snprintf(took, sizeof took, "prefabs: spawned %s: the game's spawn %.0f ms, the UI's refresh %.0f ms", name.c_str(),
+                  (t1 - t0) * 1000, (game::Seconds() - t1) * 1000);
+    hostlog::Info(took);
     if (r.ran && made)
         for (int id : editor::Pieces())
             if (std::find(before.begin(), before.end(), id) == before.end()) made->push_back(id);

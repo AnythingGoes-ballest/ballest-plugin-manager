@@ -747,6 +747,9 @@ Vec3 ViewForward() {
 
 void Select(const std::vector<int>& ids) {
     if (!Handler()) return;
+    // each grab refreshes the UI for the whole selection: held, so it runs once (a 102-piece prefab re-selected one
+    // grab at a time built ~1M widget objects; the game crashed at its UObject limit on the next click, 2026-10-30)
+    HoldRefreshes(true);
     eng::Call(Handler(), "Deselect");
     bool append = false;
     for (int id : ids)
@@ -754,6 +757,38 @@ void Select(const std::vector<int>& ids) {
             eng::Call(Handler(), "GrabWithNotifications", a, static_cast<uint8_t>(append), uint8_t{0});
             append = true;
         }
+    HoldRefreshes(false);
+}
+
+bool MoveSelection(const Vec3& by) {
+    Obj handler = Handler();
+    if (!handler || Selection().empty()) return false;
+    // the selection and its pivot (the gizmo) moved together in one call, as typing a location in the Details panel
+    // does: re-grabbing every piece to move the pivot cost ~350 ms for 102 pieces
+    eng::Params get(eng::FunctionOn(handler, "GetSelectionTransform"));
+    if (!eng::Invoke(handler, get) || !get.ReturnBool()) return false;
+    const uint8_t* t = get.Get("OutTransform");
+    const int at = eng::NestedOffset(eng::StructOf(eng::FindProp(get.Fn(), "OutTransform")), {"Translation"});
+    if (!t || at < 0) return false;
+    TransformBytes moved;
+    std::memcpy(moved.bytes, t, sizeof moved.bytes);
+    Vec3 pivot;
+    std::memcpy(&pivot, moved.bytes + at, sizeof pivot);
+    pivot = {pivot.x + by.x, pivot.y + by.y, pivot.z + by.z};
+    std::memcpy(moved.bytes + at, &pivot, sizeof pivot);
+    HoldRefreshes(true);
+    eng::Params set(eng::FunctionOn(handler, "SetSelectionAtTransform"));
+    const bool ok = set.Set("Transform", moved.bytes, sizeof moved.bytes) && set.Set("bMoveSelectionToCenter", uint8_t{0}) &&
+                    eng::Invoke(handler, set);
+    HoldRefreshes(false);
+    return ok;
+}
+
+void HoldRefreshes(bool on) {
+    if (on)
+        BeginSpawnBatch();
+    else
+        EndSpawnBatch();
 }
 
 std::vector<int> DuplicateSelection() {
@@ -940,6 +975,7 @@ void EndSpawnBatch() {
     gDeferred.clear();
     const int calls = gDeferredCalls;
     gDeferredCalls = 0;
+    std::vector<std::pair<double, std::string>> slow;
     for (const auto& d : queued) {
         Obj widget = eng::Get(d.widget);
         if (!widget) continue;
@@ -947,8 +983,13 @@ void EndSpawnBatch() {
         for (const auto& param : eng::ParamsOf(d.function))
             if (param.offset + param.size <= static_cast<int32_t>(d.params.size()))
                 p.Set(param.name.c_str(), d.params.data() + param.offset, static_cast<size_t>(param.size));
+        const double t = game::Seconds();
         eng::Invoke(widget, p);
+        slow.push_back({(game::Seconds() - t) * 1000, eng::PathOf(d.function)});
     }
+    std::sort(slow.begin(), slow.end(), [](const auto& x, const auto& y) { return x.first > y.first; });
+    for (size_t i = 0; i < slow.size() && i < 6 && slow[i].first >= 10; ++i)
+        hostlog::Info("editor: held refresh " + std::to_string(static_cast<int>(slow[i].first)) + " ms: " + slow[i].second);
     if (calls > 0)
         hostlog::Info("editor: SpawnPieces' " + std::to_string(calls) + " UI refreshes ran as " + std::to_string(queued.size()));
 }

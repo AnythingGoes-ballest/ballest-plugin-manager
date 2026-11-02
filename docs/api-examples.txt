@@ -1873,6 +1873,14 @@ for (uint i = 0; i < ids.length(); i++)
 Editor::RotatePieces(ids, cx, cy, cz, 0, 0, 90);
 Editor::Select(ids);
 
+== Editor::MoveSelection
+Moves the selected pieces, and the editor's pivot (the gizmo) with them, by an offset in centimetres: one call however
+many are selected, where moving each piece and selecting them again would rebuild the details panel per piece. False
+with nothing selected.
+--
+// Lift the selection by a metre
+Editor::MoveSelection(0, 0, 100);
+
 == Editor::SetTabCycling
 While on, Tab and Shift+Tab move between the nine transform boxes in the details panel (location, rotation, scale;
 X, Y, Z).

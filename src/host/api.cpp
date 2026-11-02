@@ -614,6 +614,10 @@ void EditorSelect(const CScriptArray* ids) {
     plugins::GameWork work;
     editor::Select(IdVector(ids));
 }
+bool EditorMoveSelection(double x, double y, double z) {
+    plugins::GameWork work;
+    return editor::MoveSelection({x, y, z});
+}
 void EditorRotatePieces(const CScriptArray* ids, double cx, double cy, double cz, double dx, double dy, double dz) {
     plugins::GameWork work;
     editor::RotatePieces(IdVector(ids), {cx, cy, cz}, dx, dy, dz);
@@ -1096,6 +1100,7 @@ void RegisterEditor() {
     Global("bool ScreenPosition(int, float &out, float &out)", asFUNCTION(EditorScreenPosition));
     Global("bool SetOutline(int, bool)", asFUNCTION(EditorSetOutline));
     Global("void Select(const array<int>@)", asFUNCTION(EditorSelect));
+    Global("bool MoveSelection(double, double, double)", asFUNCTION(EditorMoveSelection));
     Global("array<int>@ DuplicateSelection()", asFUNCTION(EditorDuplicate));
     Global("bool GetScale(int, double &out, double &out, double &out)", asFUNCTION(EditorScale));
     Global("bool Undo()", asFUNCTION(EditorUndo));
