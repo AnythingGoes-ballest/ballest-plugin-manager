@@ -3049,7 +3049,7 @@ void RegisterLocalMapsNetSources()
                            Is(asked || Steam::WebTicket() == "", "Steam::WebTicket not empty after a refused request")};
         return All(c);
     });
-    Add("core", "Net: declared domains only", "Net::Get,Net::Post,Net::Refusal,Net::Domains,Net::Done,Net::Status,Net::Body,Net::Error,Net::Forget,Plugins::NetDomains", function() {
+    Add("core", "Net: declared domains only", "Net::Get,Net::Post,Net::Send,Net::SaveBody,Net::Refusal,Net::Domains,Net::Done,Net::Status,Net::Body,Net::Error,Net::Forget,Plugins::NetDomains", function() {
         if (step == 0)
         {
             // info.toml also declares 127.0.0.1, localhost, printer.local and intranet: left out when the plugin loaded
@@ -3065,6 +3065,12 @@ void RegisterLocalMapsNetSources()
                                Is(Net::Get("https://sub.example.com/") == 0, "Net::Get to a subdomain"),
                                Is(Net::Post("https://example.org/", "{}") == 0, "Net::Post to an undeclared host"),
                                Is(Net::Get("https://example.com/", "bad token\r\nX: y") == 0, "Net::Get with a bearer that isn't a token"),
+                               Is(Net::Send("TRACE", "https://example.com/") == 0, "Net::Send with a method it doesn't send"),
+                               Is(Net::Send("GET", "https://example.com/", "{}") == 0 && Net::Send("DELETE", "https://example.com/", "{}") == 0, "Net::Send of a GET or DELETE with a body"),
+                               Is(Net::Send("POST", "https://example.com/", "x", "text/html") == 0, "Net::Send as text/html"),
+                               Is(Net::Send("POST", "https://example.com/", "x", "multipart/form-data; boundary=a b") == 0, "Net::Send with a boundary that isn't one"),
+                               Is(Net::Send("PATCH", "https://example.org/", "{}") == 0, "Net::Send to an undeclared host"),
+                               Is(Net::SaveBody(999999, "x.png") == "", "Net::SaveBody of an unknown id"),
                                Is(!Net::Done(999999) && Net::Status(999999) == 0 && Net::Body(999999) == "" && Net::Error(999999) == "no such request", "Net:: on an unknown id")};
             string r = All(c);
             if (r != PASS)
@@ -3079,9 +3085,13 @@ void RegisterLocalMapsNetSources()
             return Elapsed() > 15 ? "Net::Done still false after 15 s" : WAIT;
         int status = Net::Status(id1);
         string body = Net::Body(id1), error = Net::Error(id1);
+        string saved = Net::SaveBody(id1, "example.txt");
+        bool badNames = Net::SaveBody(id1, "..\\x.txt") == "" && Net::SaveBody(id1, "x.exe") == "" && Net::SaveBody(id1, ".x.txt") == "";
         Net::Forget(id1);
         array<string> c = {Is(status == 200, "Net::Status " + status + " (" + error + ")"),
                            Is(body.findFirst("Example Domain") >= 0, "Net::Body without the page's text"),
+                           Is(saved.findFirst("\\cache\\api-tests\\example.txt") >= 0, "Net::SaveBody wrote '" + saved + "'"),
+                           Is(badNames, "Net::SaveBody took a path, an .exe or a hidden name"),
                            Is(Net::Error(id1) == "no such request", "Net::Forget kept the request")};
         return All(c);
     }, 25);

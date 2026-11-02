@@ -21,8 +21,8 @@
 namespace pluginnet {
 namespace {
 
-constexpr size_t kMaxBody = 1024 * 1024, kMaxResponse = 2 * 1024 * 1024, kMaxUrl = 2048, kMaxBearer = 4096;
-constexpr int kMaxInFlight = 4, kMaxPerMinute = 30;
+constexpr size_t kMaxBody = 4 * 1024 * 1024, kMaxResponse = 2 * 1024 * 1024, kMaxUrl = 2048, kMaxBearer = 4096;
+constexpr int kMaxInFlight = 4, kMaxPerMinute = 30, kMaxCacheFiles = 2000;
 constexpr ULONGLONG kKeepDoneMs = 5 * 60 * 1000;    // a result nobody asked for again is dropped after this
 
 struct Result {
@@ -118,17 +118,40 @@ void DropStale() {
 
 }  // namespace
 
+// The Content-Type a body is sent with: JSON by default, or a multipart form (a site's upload form) with a plain
+// boundary; "" for anything else, which is refused.
+std::string ContentTypeOf(const std::string& asked) {
+    if (asked.empty() || asked == "application/json") return "application/json";
+    const std::string form = "multipart/form-data; boundary=";
+    if (asked.rfind(form, 0) != 0) return "";
+    const std::string boundary = asked.substr(form.size());
+    if (boundary.empty() || boundary.size() > 70) return "";
+    for (char c : boundary)
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' || c == '.')) return "";
+    return asked;
+}
+
+std::string Utf8(const std::wstring& w) {
+    const int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
+    std::string out(static_cast<size_t>(n > 0 ? n : 0), '\0');
+    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), out.data(), n, nullptr, nullptr);
+    return out;
+}
+
 int Start(int owner, const std::string& pluginId, const std::vector<std::string>& domains, const std::string& method, const std::string& url,
-          const std::string& body, const std::string& bearer, int timeoutMs) {
+          const std::string& body, const std::string& contentType, const std::string& bearer, int timeoutMs) {
     if (owner < 0) return Refuse(pluginId, "not called from a plugin");
-    if (method != "GET" && method != "POST") return Refuse(pluginId, "only GET and POST");
+    if (method != "GET" && method != "POST" && method != "PUT" && method != "PATCH" && method != "DELETE")
+        return Refuse(pluginId, "only GET, POST, PUT, PATCH and DELETE");
+    const std::string type = ContentTypeOf(contentType);
+    if (type.empty()) return Refuse(pluginId, "a body is sent as application/json or multipart/form-data; boundary=<letters, digits, -_.>");
     const std::string host = HostOf(url);
     if (host.empty()) return Refuse(pluginId, "not a plain https:// URL on port 443: " + url.substr(0, 120));
     const bool declared = std::any_of(domains.begin(), domains.end(), [&](const std::string& d) { return Lower(d) == host; });
     if (!declared) return Refuse(pluginId, host + " is not in this plugin's [net] domains (info.toml)");
     if (std::string why; !DomainAllowed(host, &why)) return Refuse(pluginId, "not a public host: " + why);
-    if (body.size() > kMaxBody) return Refuse(pluginId, "body over 1 MB");
-    if (method == "GET" && !body.empty()) return Refuse(pluginId, "a GET has no body");
+    if (body.size() > kMaxBody) return Refuse(pluginId, "body over 4 MB");
+    if ((method == "GET" || method == "DELETE") && !body.empty()) return Refuse(pluginId, "a " + method + " has no body");
     if (!bearer.empty() && !BearerOk(bearer)) return Refuse(pluginId, "the bearer token has characters a token can't have");
     std::lock_guard<std::mutex> hold(gLock);
     DropStale();
@@ -156,7 +179,7 @@ int Start(int owner, const std::string& pluginId, const std::vector<std::string>
     request.timeoutMs = std::clamp(timeoutMs, 1000, 30000);
     request.maxResponse = kMaxResponse;
     request.headers = "X-Ballest-Plugin: " + pluginId + "\r\n";
-    if (method == "POST") request.headers += "Content-Type: application/json\r\n";
+    if (method == "POST" || method == "PUT" || method == "PATCH") request.headers += "Content-Type: " + type + "\r\n";
     if (!bearer.empty()) request.headers += "Authorization: Bearer " + bearer + "\r\n";
 #ifdef HOST_HAS_SANDBOX
     if (sandbox::On()) {
@@ -210,6 +233,53 @@ std::string Error(int owner, int id) {
     std::lock_guard<std::mutex> hold(gLock);
     if (!r) return "no such request";
     return r->done ? r->error : std::string();
+}
+
+std::string SaveBody(int owner, const std::string& pluginId, int id, const std::string& name) {
+    auto r = Find(owner, id);
+    std::string body;
+    {
+        std::lock_guard<std::mutex> hold(gLock);
+        if (!r || !r->done || r->status < 200 || r->status > 299) return "";
+        body = r->body;
+    }
+    // a plain file name with one of a few extensions: never a path, a hidden file or something that runs
+    const size_t dot = name.rfind('.');
+    const std::string ext = dot == std::string::npos ? "" : Lower(name.substr(dot));
+    const bool plain = !name.empty() && name.size() <= 100 && name[0] != '.' && std::all_of(name.begin(), name.end(), [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' || c == '.';
+    });
+    if (!plain || (ext != ".png" && ext != ".jpg" && ext != ".json" && ext != ".txt")) {
+        hostlog::Write("warn", pluginId, "Net::SaveBody: refused the file name '" + name.substr(0, 100) + "' (letters, digits, -_. and .png .jpg .json .txt)");
+        return "";
+    }
+    std::wstring dir = hostlog::DataDir() + L"\\cache";
+    CreateDirectoryW(dir.c_str(), nullptr);
+    dir += L"\\" + std::wstring(pluginId.begin(), pluginId.end());
+    CreateDirectoryW(dir.c_str(), nullptr);
+    const std::wstring file = dir + L"\\" + std::wstring(name.begin(), name.end());
+    // a cache, not storage: a new name is refused once the plugin keeps kMaxCacheFiles files here
+    if (GetFileAttributesW(file.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        int count = 0;
+        WIN32_FIND_DATAW found;
+        HANDLE find = FindFirstFileW((dir + L"\\*").c_str(), &found);
+        if (find != INVALID_HANDLE_VALUE) {
+            do
+                if (!(found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) ++count;
+            while (FindNextFileW(find, &found));
+            FindClose(find);
+        }
+        if (count >= kMaxCacheFiles) {
+            hostlog::Write("warn", pluginId, "Net::SaveBody: the plugin's cache already holds " + std::to_string(count) + " files");
+            return "";
+        }
+    }
+    HANDLE h = CreateFileW(file.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return "";
+    DWORD wrote = 0;
+    const bool ok = WriteFile(h, body.data(), static_cast<DWORD>(body.size()), &wrote, nullptr) && wrote == body.size();
+    CloseHandle(h);
+    return ok ? Utf8(file) : "";
 }
 
 void Forget(int owner, int id) {

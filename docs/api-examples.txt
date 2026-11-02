@@ -3347,9 +3347,24 @@ names are left out when the plugin loads (with a warning) and refused. `bearer` 
 int request = Net::Get("https://example.workers.dev/top?track=a&n=10");
 
 == Net::Post
-Starts an HTTPS POST of a JSON body (up to 1 MB, sent as `application/json`); otherwise as `Net::Get`. Requires host 0.26.0.
+Starts an HTTPS POST of a JSON body (up to 4 MB from host 0.33.0, 1 MB before; sent as `application/json`); otherwise as `Net::Get`. Requires host 0.26.0.
 --
 int request = Net::Post("https://example.workers.dev/submit", "{\"timeMs\":41805}", token);
+
+== Net::Send
+Starts an HTTPS request with any of GET, POST, PUT, PATCH and DELETE (a GET or DELETE has no body). The body is sent
+as `application/json`, or as a form when `contentType` is `multipart/form-data; boundary=<letters, digits, -_.>`
+(you write the form's parts yourself); no other type is sent. Otherwise as `Net::Get`. Requires host 0.33.0.
+--
+int request = Net::Send("PATCH", "https://example.workers.dev/items/7", "{\"name\":\"Loop\"}", "", token);
+
+== Net::SaveBody
+Writes a finished request's body (a 2xx answer only) to a file in your plugin's cache,
+`PluginManager\cache\<plugin id>\<name>`, and returns its full path, ready for `Window::AddImage`; `""` if refused.
+`name` is a plain file name (letters, digits, `-`, `_`, `.`) ending in `.png`, `.jpg`, `.json` or `.txt`, written
+over if it is there; a plugin keeps at most 2,000 files there. Requires host 0.33.0.
+--
+string picture = Net::SaveBody(request, "wrongwaysign.png");
 
 == Net::Done
 Whether a request has finished (with a response, or failed). Requires host 0.26.0.
@@ -3380,7 +3395,7 @@ Drops a request's result (finished ones are dropped by themselves after 5 minute
 Net::Forget(request);
 
 == Net::Refusal
-Why the last `Net::Get` or `Net::Post` returned 0. Requires host 0.26.0.
+Why the last `Net::Get`, `Net::Post` or `Net::Send` returned 0. Requires host 0.26.0.
 --
 if (Net::Get(url) == 0)
     Log::Warn(Net::Refusal());

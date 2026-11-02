@@ -2190,13 +2190,15 @@ bool LeaderboardWatchRowReplay(int row, const std::string& steamId, const std::s
 int LeaderboardExtraRowGhostClicked() { return leaderboard::ExtraRowGhostClicked(); }
 bool LeaderboardSourceShown() { return leaderboard::SourceShown(); }
 
-int NetStart(const std::string& method, const std::string& url, const std::string& body, const std::string& bearer, int timeoutMs) {
-    return pluginnet::Start(plugins::Current(), plugins::CurrentId(), plugins::CurrentNetDomains(), method, url, body, bearer, timeoutMs);
+int NetSend(const std::string& method, const std::string& url, const std::string& body, const std::string& contentType, const std::string& bearer,
+            int timeoutMs) {
+    return pluginnet::Start(plugins::Current(), plugins::CurrentId(), plugins::CurrentNetDomains(), method, url, body, contentType, bearer, timeoutMs);
 }
-int NetGet(const std::string& url, const std::string& bearer, int timeoutMs) { return NetStart("GET", url, "", bearer, timeoutMs); }
+int NetGet(const std::string& url, const std::string& bearer, int timeoutMs) { return NetSend("GET", url, "", "", bearer, timeoutMs); }
 int NetPost(const std::string& url, const std::string& json, const std::string& bearer, int timeoutMs) {
-    return NetStart("POST", url, json, bearer, timeoutMs);
+    return NetSend("POST", url, json, "", bearer, timeoutMs);
 }
+std::string NetSaveBody(int id, const std::string& name) { return pluginnet::SaveBody(plugins::Current(), plugins::CurrentId(), id, name); }
 bool NetDone(int id) { return pluginnet::Done(plugins::Current(), id); }
 int NetStatus(int id) { return pluginnet::Status(plugins::Current(), id); }
 std::string NetBody(int id) { return pluginnet::Body(plugins::Current(), id); }
@@ -2397,6 +2399,10 @@ void RegisterSources() {
     e->SetDefaultNamespace("Net");
     Global("int Get(const string &in url, const string &in bearer = \"\", int timeoutMs = 10000)", asFUNCTION(NetGet));
     Global("int Post(const string &in url, const string &in json, const string &in bearer = \"\", int timeoutMs = 10000)", asFUNCTION(NetPost));
+    Global("int Send(const string &in method, const string &in url, const string &in body = \"\", const string &in contentType = \"\", "
+           "const string &in bearer = \"\", int timeoutMs = 10000)",
+           asFUNCTION(NetSend));
+    Global("string SaveBody(int id, const string &in name)", asFUNCTION(NetSaveBody));
     Global("bool Done(int id)", asFUNCTION(NetDone));
     Global("int Status(int id)", asFUNCTION(NetStatus));
     Global("string Body(int id)", asFUNCTION(NetBody));
