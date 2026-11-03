@@ -111,18 +111,18 @@
       "description": "Track editor extras: drag to select, rotate modes in the toolbar (center, mirrored), whole-unit placement, placement distance, rotated copies, Tab between transform boxes, last run's path.",
       "author": "AnythingGoes",
       "repo": "AnythingGoes-ballest/ballest-create-extensions",
-      "version": "0.8.0",
-      "commit": "f361ec7cdc728a81fff447d7ce9cec29a1567d5f",
+      "version": "0.8.1",
+      "commit": "93b0fdc8e36f8b8cb647e605629fd975e4721ce0",
       "min_host": "0.23.7",
       "icon": "icon.png",
       "dependencies": [],
-      "category": "enhancements",
-      "priority": 40,
       "files": {
-        "info.toml": "69b4ad6be3471c699715fdaf699826c28fb4ea5dac3f28ef0dcfe424019f17a1",
-        "main.as": "b3ea312145f550209cf4db05247cf19019c098ff013d3a31d62226cabb650609",
+        "info.toml": "07ed7b9a734dc164e00f6779ce2a8c80ff63981118e0585da8ba6f2cc49f8466",
+        "main.as": "262a114f703ebf8455ebd1e0d4227a96d45ecb66a08ea7938fa8b7dcb9bc49fc",
         "icon.png": "673495590b04fbc8b8a75af30e0eed74dc9b34ef11584f3e66fea362e53b74fe"
-      }
+      },
+      "category": "enhancements",
+      "priority": 40
     },
     {
       "id": "dominus-ball",
