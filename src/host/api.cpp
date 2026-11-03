@@ -494,6 +494,9 @@ ui::Widget* WinCheckBox(ui::Window* w, const std::string& label, float size) {
 void WinStartHeader(ui::Window* w) { ui::StartHeader(w); }
 int WinStartCard(ui::Window* w, bool clickable) { return ui::StartCard(w, clickable); }
 bool WinCardClicked(ui::Window* w, int card) { return ui::CardClicked(w, card); }
+void WinSetCardStyle(ui::Window* w, int card, float r, float g, float b, float a, float padX, float padY) {
+    ui::SetCardStyle(w, card, {r, g, b, a}, padX, padY);
+}
 void ButtonTooltip(ui::Widget* w, const std::string& text) {
     w->tooltip = text;
     w->window->layoutDirty = true;
@@ -852,6 +855,7 @@ void RegisterUi() {
     Method("Window", "void StartHeader()", asFUNCTION(WinStartHeader));
     Method("Window", "int StartCard(bool clickable = false)", asFUNCTION(WinStartCard));
     Method("Window", "bool CardClicked(int card)", asFUNCTION(WinCardClicked));
+    Method("Window", "void SetCardStyle(int card, float r, float g, float b, float a, float padX = -1, float padY = -1)", asFUNCTION(WinSetCardStyle));
     Method("Window", "void EndCard()", asFUNCTION(WinEndCard));
     Method("Window", "void SetCardBackground(float, float, float, float)", asFUNCTION(WinCardBackground));
     Method("Window", "void set_zOrder(int) property", asFUNCTION(WinSetZOrder));

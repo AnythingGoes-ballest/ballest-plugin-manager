@@ -1153,6 +1153,16 @@ window.EndCard();
 if (window.CardClicked(card))
     Place();
 
+== UI::Window.SetCardStyle
+One card's own colour (alpha 0 for none: a row you can click that doesn't look like a card) and padding inside it
+(`-1` keeps the default 14 x 10). A see-through clickable card shows a faint box under the cursor. Requires host
+0.33.0.
+--
+int title = window.StartCard(true);
+window.SetCardStyle(title, 0, 0, 0, 0, 0, 2);
+window.AddText("local only", 19);
+window.EndCard();
+
 == UI::Button.SetTooltip
 The text shown when the cursor rests on the button, such as an icon button's full name. Requires host 0.33.0.
 --

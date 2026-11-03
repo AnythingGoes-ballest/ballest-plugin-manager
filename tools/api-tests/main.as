@@ -1173,7 +1173,7 @@ void RegisterUi()
                            Is(uArea.visible && uImage.visible, "TextArea.visible/Image.visible false")};
         return All(c);
     });
-    Add("ui", "UI views, cards, sidebar and scrolling", "Window.StartView,Window.ShowView,Window.ClearView,Window.SetScrolling,Window.StartSidebar,Window.StartMain,Window.StartHeader,Window.StartCard,Window.EndCard,Window.SetCardBackground,Window.CardClicked,Button.SetTooltip", function() {
+    Add("ui", "UI views, cards, sidebar and scrolling", "Window.StartView,Window.ShowView,Window.ClearView,Window.SetScrolling,Window.StartSidebar,Window.StartMain,Window.StartHeader,Window.StartCard,Window.EndCard,Window.SetCardBackground,Window.CardClicked,Window.SetCardStyle,Button.SetTooltip", function() {
         if (step == 0)
         {
             UI::Window@ w = UI::CreateWindow();
@@ -1190,6 +1190,7 @@ void RegisterUi()
             w.AddText("api card", 14);
             w.EndCard();
             uCard = w.StartCard(true);
+            w.SetCardStyle(uCard, 0, 0, 0, 0, 0, 2);
             w.AddText("api clickable card", 14);
             w.AddButton("api card button").SetTooltip("api tooltip");
             w.EndCard();

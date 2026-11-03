@@ -43,6 +43,11 @@ constexpr Color kInputBackground{0.08f, 0.08f, 0.1f, 1};
 
 // A PNG or JPG file as a texture. Loaded once per file while the texture lives (textures nothing shows any more are
 // collected by the engine and loaded again when needed).
+// A card's colour: its own (SetCardStyle) or the window's card colour.
+Color CardColorOf(const Window& win, size_t card) {
+    return card < win.cardColor.size() && win.cardColor[card].a >= 0 ? win.cardColor[card] : win.cardBackground;
+}
+
 Obj LoadTexture(const std::string& path) {
     static std::map<std::string, eng::Weak> textures;
     if (Obj cached = eng::Get(textures[path])) return cached;
@@ -504,8 +509,11 @@ void Build(Window& win) {
                 cardColumn = w::Spawn("VerticalBox", tree);
                 if (!box || !cardColumn) return;
                 w::RoundCorners(box, 10);
-                eng::Call(box, "SetBrushColor", win.cardBackground);
-                eng::Call(box, "SetPadding", w::Margin{14, 10, 14, 10});
+                const size_t ci = static_cast<size_t>(card);
+                eng::Call(box, "SetBrushColor", CardColorOf(win, ci));
+                const bool padded = ci < win.cardPadX.size() && win.cardPadX[ci] >= 0;
+                eng::Call(box, "SetPadding", padded ? w::Margin{win.cardPadX[ci], win.cardPadY[ci], win.cardPadX[ci], win.cardPadY[ci]}
+                                                    : w::Margin{14, 10, 14, 10});
                 w::AddChild(box, cardColumn);
                 Obj cardSlot = eng::Call(parent, "AddChildToVerticalBox", box).ReturnObj();
                 if (!cardSlot) return;
@@ -903,6 +911,9 @@ int StartCard(Window* win, bool clickable) {
     win->cardPressed.push_back(false);
     win->cardClickPending.push_back(false);
     win->cardShownHover.push_back(false);
+    win->cardColor.push_back({0, 0, 0, -1});
+    win->cardPadX.push_back(-1);
+    win->cardPadY.push_back(-1);
     const int view = win->rowView[static_cast<size_t>(win->addRow)];
     if (RowEmpty(win, win->addRow) && win->rowCard[static_cast<size_t>(win->addRow)] < 0)
         win->rowCard[static_cast<size_t>(win->addRow)] = win->openCard;    // the empty row just started becomes the card's
@@ -910,6 +921,14 @@ int StartCard(Window* win, bool clickable) {
         AddRow(win, view);
     win->layoutDirty = true;
     return win->openCard;
+}
+
+void SetCardStyle(Window* win, int card, Color color, float padX, float padY) {
+    if (card < 0 || static_cast<size_t>(card) >= win->cardColor.size()) return;
+    win->cardColor[static_cast<size_t>(card)] = color;
+    win->cardPadX[static_cast<size_t>(card)] = padX;
+    win->cardPadY[static_cast<size_t>(card)] = padY;
+    win->layoutDirty = true;
 }
 
 bool CardClicked(Window* win, int card) {
@@ -1114,8 +1133,9 @@ void Frame() {
                 }
                 if (input::Down(mouse)) hovered = win.cardShownHover[c];     // held: the highlight stays as it was
                 if (box && hovered != win.cardShownHover[c]) {
-                    Color tint = win.cardBackground;
-                    if (hovered) tint = {std::min(1.0f, tint.r * 1.6f + 0.012f), std::min(1.0f, tint.g * 1.6f + 0.012f), std::min(1.0f, tint.b * 1.6f + 0.014f), tint.a};
+                    Color tint = CardColorOf(win, c);
+                    if (hovered && tint.a < 0.05f) tint = {1, 1, 1, 0.05f};     // a see-through card: a faint light box
+                    else if (hovered) tint = {std::min(1.0f, tint.r * 1.6f + 0.012f), std::min(1.0f, tint.g * 1.6f + 0.012f), std::min(1.0f, tint.b * 1.6f + 0.014f), tint.a};
                     eng::Call(box, "SetBrushColor", tint);
                     win.cardShownHover[c] = hovered;
                 }

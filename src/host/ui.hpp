@@ -189,6 +189,8 @@ struct Window {
     std::vector<bool> cardClickable;
     std::vector<eng::Weak> cardBoxes;
     std::vector<bool> cardPressed, cardClickPending, cardShownHover;
+    std::vector<Color> cardColor;               // SetCardStyle: this card's own colour (alpha < 0: the window's)
+    std::vector<float> cardPadX, cardPadY;      // and padding (-1: the default 14 x 10)
     Color cardBackground{0.12f, 0.13f, 0.16f, 1};
     int addRow = 0;                             // the row new widgets go into
     int views = 1;
@@ -223,6 +225,7 @@ void StartHeader(Window* w);            // rows added after this sit above the v
                                         // until StartView
 int StartCard(Window* w, bool clickable = false);   // rows added after this share one rounded box, until EndCard
 bool CardClicked(Window* w, int card);  // a clickable card clicked (not on one of its buttons) since last asked
+void SetCardStyle(Window* w, int card, Color color, float padX, float padY);
 void EndCard(Window* w);
 void SetMovable(Window* w, bool movable, const std::string& pluginId);
 void ResetPositions(const std::string& pluginId);   // movable windows of a plugin back where the plugin put them
