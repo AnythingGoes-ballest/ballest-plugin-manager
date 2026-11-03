@@ -9,7 +9,7 @@
 namespace hostlog {
 namespace {
 std::mutex gLock;
-FILE* gFile = nullptr;
+HANDLE gFile = INVALID_HANDLE_VALUE;
 constexpr size_t kLinesKept = 1000;
 std::deque<std::string> gRecent;
 size_t gDropped = 0;             // lines no longer in gRecent
@@ -23,14 +23,22 @@ std::wstring DataDir() {
     return dir;
 }
 
+// The log is written through kernel32 (CreateFileW, WriteFile), not the C runtime, and never under gLock while a
+// file call runs. A sandboxed copy hooks the runtime's file imports before the log opens, and a hook that refuses a
+// path logs the refusal, here, through gLock. Under Wine the runtime holds one lock over every open, the hook ran
+// inside it, and with the log opened by the runtime under gLock that was a deadlock of the whole process's file I/O
+// (measured 2026-11-03, Proton Experimental: the game thread's first fopen never returned). The host's own imports
+// are never hooked, so this path can't call back into the sandbox.
 void Open() {
-    std::lock_guard<std::mutex> g(gLock);
     std::wstring dir = DataDir();
     // Create each level; CreateDirectory fails harmlessly when a level exists.
     for (size_t i = 3; i <= dir.size(); ++i) {
         if (i == dir.size() || dir[i] == L'\\') CreateDirectoryW(dir.substr(0, i).c_str(), nullptr);
     }
-    gFile = _wfopen((dir + L"\\host.log").c_str(), L"w");
+    const HANDLE file = CreateFileW((dir + L"\\host.log").c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                    CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    std::lock_guard<std::mutex> g(gLock);
+    gFile = file;
 }
 
 void Write(const char* level, const std::string& source, const std::string& message) {
@@ -46,9 +54,10 @@ void Write(const char* level, const std::string& source, const std::string& mess
         gRecent.pop_front();
         ++gDropped;
     }
-    if (!gFile) return;
-    std::fprintf(gFile, "%s\n", line.c_str());
-    std::fflush(gFile);
+    if (gFile == INVALID_HANDLE_VALUE) return;
+    const std::string out = line + "\n";
+    DWORD written = 0;
+    WriteFile(gFile, out.data(), static_cast<DWORD>(out.size()), &written, nullptr);
 }
 
 size_t LineCount() {

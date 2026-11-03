@@ -183,6 +183,34 @@ Needs [llvm-mingw](https://github.com/mstorsjo/llvm-mingw/releases) (the x86_64 
 `install` uses the default Steam path; set `BALLEST_GAME_DIR` to the game's `Binaries\Win64` folder if yours is
 elsewhere. It replaces only the bundled plugins: ones installed from the registry, and `plugins\DISABLED`, stay.
 
+### Under Proton (Linux)
+
+Measured 2026-11-03 with Proton Experimental 11.0 and host 0.33.2:
+
+- Wine loads its own `version.dll` unless told to prefer the game folder's: `WINEDLLOVERRIDES="version=n,b" %command%`
+  in the game's Steam launch options, or `"version"="native,builtin"` under `[Software\\Wine\\DllOverrides]` in the
+  prefix's `user.reg`. With that, the host, the footer button, the plugins, the test channel's file commands and
+  `dumptypes` work in the player's game as on Windows.
+- A test copy runs headless in a prefix of its own: a copy of the game folder with `version.dll` and `plugins\`
+  (the Python tools are Windows only), a copy of the game's prefix as `WINEPREFIX`, and
+  `GAMEID=umu-3339810 umu-run <copy>\Ballest.exe -RenderOffscreen -d3d11 -nosound -userdir=C:\slot\UserDir`
+  (a bare `GAMEID` leaves `SteamAppId` at 0 and the launcher asks Steam to start the real game instead). The prefix
+  has its own wineserver, so the launcher's single-instance lock needs no patching, and `render` works with no
+  window at all. The copy has to sit under the home folder: the runtime container doesn't see `/tmp`.
+- Wine sets `%LOCALAPPDATA%` from the profile, so a copy can't be given one of its own as `tools/test_instance.py`
+  does: the host's folder is the one under the prefix's `AppData\Local`, which is also what the sandbox takes for the
+  player's. The sandbox exempts its own folder for that reason (`FindOwnDataDir`), and the log is written through
+  kernel32 rather than the C runtime: Wine's runtime holds one lock over every open, and the sandbox's hook refusing
+  the log's own open used to deadlock the game's first `fopen` behind it.
+- Still open: the sandbox stays **incomplete** under Proton, so the test channel refuses commands that change the
+  game. The game asks Steam for older interface versions than its `steam_api64.dll`'s accessors give
+  (`SteamFriends017` against `SteamAPI_SteamFriends_v018`, `STEAMUSERSTATS_INTERFACE_VERSION012` against v013,
+  `STEAMUGC_INTERFACE_VERSION020` against v021). On Windows the methods those versions share have the same
+  addresses in `steamclient64.dll`, which is how the blocks find them in the game's own interfaces; Proton's
+  `lsteamclient` has a separate thunk per version, so nothing matches and the three interfaces report their
+  methods missing. The versions that agree (`SteamUser023`, `STEAMREMOTESTORAGE_INTERFACE_VERSION016`, ...) are
+  blocked as on Windows.
+
 ## Testing and debugging
 
 ```bash

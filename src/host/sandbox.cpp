@@ -253,9 +253,21 @@ void FindOwnUserDir() {
     gOwnUserDir = dir;
 }
 
+// The host's own folder (host.log, the test channel, storage, caches, renders): the copy's, not records. On Windows
+// the tools give a copy a %LOCALAPPDATA% of its own, so this folder is already outside the player's Saved folder;
+// under Wine the variable can't be moved (Wine sets it from the profile), the copy's prefix is the only "player",
+// and without this the host would refuse its own files (measured 2026-11-03, Proton Experimental).
+std::wstring gOwnDataDir;
+
+void FindOwnDataDir() {
+    gOwnDataDir = LongForm(hostlog::DataDir() + L"\\x");
+    gOwnDataDir = gOwnDataDir.substr(0, gOwnDataDir.size() - 2);
+}
+
 bool UnderRecords(LPCWSTR path) {
     if (!path) return false;
     const std::wstring p = LongForm(path);
+    if (!gOwnDataDir.empty() && p.rfind(gOwnDataDir + L"\\", 0) == 0) return false;
     if (!gOwnUserDir.empty() && p.rfind(gOwnUserDir + L"\\", 0) == 0) return false;
     // Anything in the player's own Saved folder (saves, ghosts, maps and playlists, which Steam Cloud syncs, config),
     // except the launcher's readiness files the copy writes there whatever -userdir says (measured; the tools read them)
@@ -955,6 +967,7 @@ void InstallEarly() {
     gCreateFileSlot = FindImport("KERNEL32.dll", "CreateFileW");
     BlockNetworkIn(L"game", GetModuleHandleW(nullptr));
     const bool lookups = gGetAddrInfoSlot && *gGetAddrInfoSlot == reinterpret_cast<void*>(&BlockedGetAddrInfo) && gNetComplete;
+    FindOwnDataDir();
     FindOwnUserDir();
     BlockFilesIn(L"game", GetModuleHandleW(nullptr));
     for (const wchar_t* runtime : {L"ucrtbase.dll", L"msvcp140.dll", L"vcruntime140.dll"}) BlockFilesIn(runtime, GetModuleHandleW(runtime));
