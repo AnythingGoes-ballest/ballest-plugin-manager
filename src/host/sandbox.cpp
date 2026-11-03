@@ -636,13 +636,24 @@ int SlotOffset(const uint8_t* code, std::string* bytes) {
         std::snprintf(hex, sizeof hex, "%02x", code[i]);
         *bytes += hex;
     }
-    for (int i = 0; i + 3 <= 32; ++i) {
-        if (!(code[i] == 0x48 && code[i + 1] == 0x8B && code[i + 2] == 0x01)) continue;     // mov rax,[rcx]
-        for (int j = i + 3; j < i + 40; ++j) {
-            // A wrapper ends at ret / int3 padding: past it is the next function (measured 2026-10-03: FileWrite, the
-            // first method, is jmp [rax] with no displacement; the scan used to run on into the next wrapper and took
-            // FileDelete's slot, so FileWrite was never blocked)
-            if (code[j] == 0xC3 || code[j] == 0xCC) break;
+    // The wrapper loads the table first, after a stack frame at most: mov rax,[rcx] (48 8B 01), or mov r10,[rcx]
+    // (4C 8B 11: measured 2026-11-03, SetLobbyGameServer's wrapper is mov r10,[rcx]; jmp [r10+0E8h]). Never past
+    // this wrapper's end: the next mov rax,[rcx] in the bytes is the NEXT wrapper's (until then, SetLobbyGameServer
+    // was read as its neighbour's slot 5, AddRequestLobbyListStringFilter, and that was blocked in its place).
+    int i = 0;
+    bool viaRax = false, viaR10 = false;
+    for (; i + 3 <= 32 && code[i] != 0xC3 && code[i] != 0xCC; ++i) {
+        viaRax = code[i] == 0x48 && code[i + 1] == 0x8B && code[i + 2] == 0x01;
+        viaR10 = code[i] == 0x4C && code[i + 1] == 0x8B && code[i + 2] == 0x11;
+        if (viaRax || viaR10) break;
+    }
+    if (!viaRax && !viaR10) return -1;
+    for (int j = i + 3; j < i + 40; ++j) {
+        // A wrapper ends at ret / int3 padding: past it is the next function (measured 2026-10-03: FileWrite, the
+        // first method, is jmp [rax] with no displacement; the scan used to run on into the next wrapper and took
+        // FileDelete's slot, so FileWrite was never blocked)
+        if (code[j] == 0xC3 || code[j] == 0xCC) break;
+        if (viaRax) {
             if (code[j] == 0x4C && code[j + 1] == 0x8B && code[j + 2] == 0x10) return 0;     // mov r10,[rax]
             // mov r10,[rax+disp] (4C 8B 50 disp8 / 4C 8B 90 disp32), then jmp r10 (measured: PublishVideo's wrapper)
             if (code[j] == 0x4C && code[j + 1] == 0x8B && (code[j + 2] == 0x50 || code[j + 2] == 0x90)) {
@@ -651,19 +662,23 @@ int SlotOffset(const uint8_t* code, std::string* bytes) {
                 std::memcpy(&disp, code + j + 3, sizeof disp);
                 return disp;
             }
-            int k = j;
-            if (code[k] == 0x48) ++k;
-            if (code[k] != 0xFF) continue;
-            const uint8_t modrm = code[k + 1];
-            if (modrm == 0x20 || modrm == 0x10) return 0;                                    // jmp/call [rax]
-            if (modrm == 0x60 || modrm == 0x50) return code[k + 2];
-            if (modrm == 0xA0 || modrm == 0x90) {
-                int32_t disp = 0;
-                std::memcpy(&disp, code + k + 2, sizeof disp);
-                return disp;
-            }
         }
-        break;
+        // jmp/call [rax+disp]: (48) FF /4 or /2 with rax as the base; [r10+disp]: 41/49 FF with r10 (REX.B)
+        int k = j;
+        if (code[k] == 0x48 || code[k] == 0x41 || code[k] == 0x49) ++k;
+        if (code[k] != 0xFF) continue;
+        const bool r10 = k > j && (code[j] == 0x41 || code[j] == 0x49);
+        if (r10 != viaR10) continue;
+        const uint8_t modrm = static_cast<uint8_t>(code[k + 1] & 0xF8);                  // the base's low bits dropped
+        const uint8_t base = static_cast<uint8_t>(code[k + 1] & 0x07);
+        if (base != (viaR10 ? 0x02 : 0x00)) continue;                                      // r10 is 010, rax 000
+        if (modrm == 0x20 || modrm == 0x10) return 0;                                      // jmp/call [reg]
+        if (modrm == 0x60 || modrm == 0x50) return code[k + 2];
+        if (modrm == 0xA0 || modrm == 0x90) {
+            int32_t disp = 0;
+            std::memcpy(&disp, code + k + 2, sizeof disp);
+            return disp;
+        }
     }
     return -1;
 }
