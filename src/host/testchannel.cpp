@@ -1489,6 +1489,11 @@ void Run(const std::string& cmd) {
              const prefabs::Reply r = prefabs::RunLine(c.size() > 7 ? c.substr(7) : "");
              Report(c + (r.ran ? " -> " : " -> failed: ") + r.text + " | folder " + prefabs::Folder());
          }},
+        {"editorundo", [](const Args&, const std::string& c) {    // editorundo: the editor's Undo (as Ctrl+Z), then its piece count
+             const bool ok = editor::Undo();
+             Report(c + (ok ? " -> ok, " : " -> failed, ") + std::to_string(editor::Pieces().size()) + " pieces");
+         }},
+        {"piececount", [](const Args&, const std::string& c) { Report(c + " -> " + std::to_string(editor::Pieces().size())); }},
         {"prefabplace", [](const Args& a, const std::string& c) {  // prefabplace <name> [raw|dx]: Prefabs::Spawn + Editor::MoveSelection by dx (raw: the bare console line), timed
              const double t0 = game::Seconds();
              const int o0 = eng::NumObjects();

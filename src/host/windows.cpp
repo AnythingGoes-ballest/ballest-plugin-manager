@@ -1089,20 +1089,30 @@ void Frame() {
         if (win.visible) {
             // Clickable cards: pressed and let go on the card, never on one of its buttons (they take their own
             // clicks); the card lightens under the cursor
+            // (a press is taken by whatever is under it, the window's click catcher included, which then holds the
+            // mouse: so the card's hover from before the press says where it began, and the pointer inside the card
+            // when it is let go where it ended)
             const int mouse = input::PrimaryButton();
+            double mx = 0, my = 0;
+            const bool haveMouse = ux::Mouse(&mx, &my);
             for (size_t c = 0; c < win.cardBoxes.size(); ++c) {
                 if (!win.cardClickable[c]) continue;
                 Obj box = eng::Get(win.cardBoxes[c]);
                 bool hovered = box && eng::Call(box, "IsHovered").ReturnBool();
-                if (hovered)
-                    for (const auto& item : win.items)
-                        if (!item->retired && item->hovered && item->row >= 0 && win.rowCard[static_cast<size_t>(item->row)] == static_cast<int>(c))
-                            hovered = false;
-                if (input::Pressed(mouse)) win.cardPressed[c] = hovered;
+                bool onButton = false;
+                for (const auto& item : win.items)
+                    if (!item->retired && item->hovered && item->row >= 0 && win.rowCard[static_cast<size_t>(item->row)] == static_cast<int>(c))
+                        onButton = true;
+                hovered = hovered && !onButton;
+                if (input::Pressed(mouse)) win.cardPressed[c] = win.cardShownHover[c] && !onButton;
                 else if (!input::Down(mouse)) {
-                    if (win.cardPressed[c] && hovered) win.cardClickPending[c] = true;
+                    if (win.cardPressed[c] && haveMouse) {
+                        const ux::Rect r = ux::Bounds(box);
+                        if (r.ok && mx >= r.x && my >= r.y && mx <= r.x + r.w && my <= r.y + r.h) win.cardClickPending[c] = true;
+                    }
                     win.cardPressed[c] = false;
                 }
+                if (input::Down(mouse)) hovered = win.cardShownHover[c];     // held: the highlight stays as it was
                 if (box && hovered != win.cardShownHover[c]) {
                     Color tint = win.cardBackground;
                     if (hovered) tint = {std::min(1.0f, tint.r * 1.6f + 0.012f), std::min(1.0f, tint.g * 1.6f + 0.012f), std::min(1.0f, tint.b * 1.6f + 0.014f), tint.a};
