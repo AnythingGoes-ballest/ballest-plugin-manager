@@ -202,14 +202,14 @@ Measured 2026-11-03 with Proton Experimental 11.0 and host 0.33.2:
   player's. The sandbox exempts its own folder for that reason (`FindOwnDataDir`), and the log is written through
   kernel32 rather than the C runtime: Wine's runtime holds one lock over every open, and the sandbox's hook refusing
   the log's own open used to deadlock the game's first `fopen` behind it.
-- Still open: the sandbox stays **incomplete** under Proton, so the test channel refuses commands that change the
-  game. The game asks Steam for older interface versions than its `steam_api64.dll`'s accessors give
-  (`SteamFriends017` against `SteamAPI_SteamFriends_v018`, `STEAMUSERSTATS_INTERFACE_VERSION012` against v013,
+- The game asks Steam for older interface versions than its `steam_api64.dll`'s accessors give (`SteamFriends017`
+  against `SteamAPI_SteamFriends_v018`, `STEAMUSERSTATS_INTERFACE_VERSION012` against v013,
   `STEAMUGC_INTERFACE_VERSION020` against v021). On Windows the methods those versions share have the same
-  addresses in `steamclient64.dll`, which is how the blocks find them in the game's own interfaces; Proton's
-  `lsteamclient` has a separate thunk per version, so nothing matches and the three interfaces report their
-  methods missing. The versions that agree (`SteamUser023`, `STEAMREMOTESTORAGE_INTERFACE_VERSION016`, ...) are
-  blocked as on Windows.
+  addresses in `steamclient64.dll`, which is how the blocks (and the upload guard) find them in the game's own
+  interfaces; Proton's `lsteamclient.dll` has a thunk per version, so nothing matches. It ships with its symbol
+  table, though, and names each thunk `win<Interface>_<version>_<Method>`, so under Wine the host reads that table
+  once (`ReadThunks`) and finds a method by name when the address isn't there (`ThunkOf`). The log says how many
+  were found that way per interface. Should Proton ever strip the DLL, those methods report missing as before.
 
 ## Testing and debugging
 
