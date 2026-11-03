@@ -151,7 +151,9 @@ The local copy serves them from disk through its `release_base`, which the host 
 | `src/host/nativeghost.*` | The game's own replay ghosts (BallestGhostWorldSubsystem) fed with replays a plugin hands over: a ghost session for a local map, rivals, selection, the game's replay mode |
 | `src/host/splitref.*` | A plugin's split reference in the race timer's delta box for one track |
 | `src/host/localrecords.*` | The game's own records of the player's never-published maps: read, cleared through the game's profile save, kept out of its records for a plugin that keeps them elsewhere |
-| `src/host/pluginnet.*` | `Net::` for plugins: HTTPS to the hosts a plugin declares in its info.toml only, with size, time and rate limits |
+| `src/host/pluginnet.*` | `Net::` for plugins: HTTPS to the hosts a plugin declares in its info.toml only (GET, POST, PUT, PATCH, DELETE; JSON or a multipart form), with size, time and rate limits, and a finished download saved to the plugin's cache folder |
+| `src/host/prefabs.*` | `Prefabs::` for plugins: the game's prefab files (its Saved\SaveGames\Prefabs) read, written, saved from the selection, placed and deleted through the game's own prefab commands |
+| `src/host/screen.*` | `Screen::Capture`: a picture of the game's view without any UI (the game's own screenshot), cut to a 480 x 300 thumbnail in the plugin's cache folder |
 | `src/host/menubutton.cpp` | Plugin entries in the main menu's own list (`UI::AddMenuButton`) |
 | `src/host/campaigns.*` | Custom campaigns: the "custom campaigns" tab in the play page's sidebar (a clone of the game's own tab widget), the campaign list and each campaign's screen in the play page's body, and the menu's back button and Escape stepping from a campaign back to the list |
 | `src/host/draw.*` | Shapes plugins draw in the world (tubes, balls, glow and glass), models made solid on the player's own never-published maps, and the camera a plugin takes |
@@ -266,7 +268,9 @@ the saved map, `--keep` leaves the game open.
   mapping's modifiers and triggers; `gamekeys` lists them; menus read Enter and the arrows through focus instead, so
   tap their buttons; on a headless slot `post <vk>` is a gamekey and `clickat` a tap), `racerun` (host 0.32.1+: the
   game's own run state, BallestRaceRunState through BallestCourseModeLibrary.GetParticipantRaceRun: phase, attempt,
-  faults, checkpoint splits, score eligibility, the race clock, and what the host makes of it) and
+  faults, checkpoint splits, score eligibility, the race clock, and what the host makes of it), `prefabplace <name>
+  [dx]` (host 0.33.0+: a prefab placed as the Prefabs plugin places it, timed), `editorundo` / `piececount` (host
+  0.33.0+: the editor's undo, as Ctrl+Z, and the map's piece count) and
   `-c "cmd; cmd"` (any test commands, run together). From Python, `from agent import Slot` keeps the pipe open: a
   command is about one frame (33 ms at the headless 30 fps), `state` about 8 ms, `render` about 0.1 s (measured
   2026-10-24; through the file channel one command took about 6 s). `sandbox.py run` and `shot` use the pipe
