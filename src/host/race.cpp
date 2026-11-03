@@ -218,11 +218,10 @@ void ReadTrack() {
         t.author = author == "playername" ? "" : author;
     }
     if (t.name.empty()) t.name = TextProperty(controller, "NameOfMap");
-    double rowTime = 0, controllerTime = 0;
+    double rowTime = 0;
     if (Obj goals = eng::ReadObj(ui, "WBP_IngameGoalsGroup"))
         rowTime = ParseTime(w::ReadText(eng::ReadObj(eng::ReadObj(goals, "WBP_AuthorGoal"), "UserGoal_Numeric")));
-    eng::ReadBytes(controller, "AuthorTime", &controllerTime, sizeof controllerTime);
-    // The controller's AuthorTime is a default (17.243, measured on the game's own tracks too): only the row counts.
+    // only the goals row counts (the controller's AuthorTime was a default, 17.243, and the 2026-11-02 update removed it)
     t.authorTime = rowTime;
     if (t.custom) {
         Obj instance = eng::Call(Library("GameplayStatics"), "GetGameInstance", controller).ReturnObj();
@@ -257,7 +256,7 @@ void ReadTrack() {
     gTrackDone = gActive && !t.key.empty() && !t.name.empty() && t.authorTime > 0;
     if (changed || gTrackDone) {
         char buf[160];
-        std::snprintf(buf, sizeof buf, "%.3f (medal row %.3f, controller %.3f)%s", t.authorTime, rowTime, controllerTime, gTrackDone ? "" : ", still reading");
+        std::snprintf(buf, sizeof buf, "%.3f (medal row %.3f)%s", t.authorTime, rowTime, gTrackDone ? "" : ", still reading");
         hostlog::Info("race: track " + t.key + " \"" + t.name + "\" by \"" + t.author + "\", author time " + buf);
     }
 }
