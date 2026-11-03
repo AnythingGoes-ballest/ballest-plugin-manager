@@ -213,7 +213,9 @@ void ReadTrack() {
     Obj ui = RaceUi();
     if (Obj header = eng::ReadObj(ui, "WBP_Header")) {
         const std::string title = w::ReadText(eng::ReadObj(header, "Title"));
-        const std::string author = w::ReadText(eng::ReadObj(header, "authorText"));
+        // "AuthorText" since the game's 2026-11-02 update, "authorText" before
+        Obj authorBox = eng::FindProp(eng::ClassOf(header), "AuthorText") ? eng::ReadObj(header, "AuthorText") : eng::ReadObj(header, "authorText");
+        const std::string author = w::ReadText(authorBox);
         if (!title.empty()) t.name = title;
         t.author = author == "playername" ? "" : author;
     }

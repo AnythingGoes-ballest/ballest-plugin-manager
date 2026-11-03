@@ -1853,7 +1853,7 @@ void RegisterTrack()
         string wantKey = workshop ? "custom:" + level.substr(9) + ":" : "map:" + level;
         array<string> c = {Is(Race::OnTrack(), "Race::OnTrack false"),
                            Is(workshop ? Race::TrackKey().findFirst(wantKey) == 0 : Race::TrackKey() == wantKey, "Race::TrackKey '" + Race::TrackKey() + "', want " + wantKey),
-                           Is(Race::TrackName() != "", "Race::TrackName empty"), Is(Race::TrackAuthor().length() < 200, "Race::TrackAuthor '" + Race::TrackAuthor() + "'"),
+                           Is(Race::TrackName() != "", "Race::TrackName empty"), Is(Race::TrackAuthor().length() < 200 && (!Race::IsCustomTrack() || Race::TrackAuthor() != ""), "Race::TrackAuthor '" + Race::TrackAuthor() + "' (a workshop map has its author)"),
                            Is(Race::IsCustomTrack() == workshop, "Race::IsCustomTrack " + Race::IsCustomTrack() + " on " + (workshop ? "a workshop" : "an official") + " track"),
                            Is(!Race::IsActive(), "Race::IsActive before the race"),
                            Is(!Race::IsComplete(), "Race::IsComplete before the race"), Is(Host::MapNumber() > 0, "Host::MapNumber " + Host::MapNumber())};
