@@ -13,6 +13,7 @@
 #include <cctype>
 #include <cwctype>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "log.hpp"
@@ -253,9 +254,21 @@ void FindOwnUserDir() {
     gOwnUserDir = dir;
 }
 
+// The host's own folder (host.log, the test channel, storage, caches, renders): the copy's, not records. On Windows
+// the tools give a copy a %LOCALAPPDATA% of its own, so this folder is already outside the player's Saved folder;
+// under Wine the variable can't be moved (Wine sets it from the profile), the copy's prefix is the only "player",
+// and without this the host would refuse its own files (measured 2026-11-03, Proton Experimental).
+std::wstring gOwnDataDir;
+
+void FindOwnDataDir() {
+    gOwnDataDir = LongForm(hostlog::DataDir() + L"\\x");
+    gOwnDataDir = gOwnDataDir.substr(0, gOwnDataDir.size() - 2);
+}
+
 bool UnderRecords(LPCWSTR path) {
     if (!path) return false;
     const std::wstring p = LongForm(path);
+    if (!gOwnDataDir.empty() && p.rfind(gOwnDataDir + L"\\", 0) == 0) return false;
     if (!gOwnUserDir.empty() && p.rfind(gOwnUserDir + L"\\", 0) == 0) return false;
     // Anything in the player's own Saved folder (saves, ghosts, maps and playlists, which Steam Cloud syncs, config),
     // except the launcher's readiness files the copy writes there whatever -userdir says (measured; the tools read them)
@@ -624,13 +637,24 @@ int SlotOffset(const uint8_t* code, std::string* bytes) {
         std::snprintf(hex, sizeof hex, "%02x", code[i]);
         *bytes += hex;
     }
-    for (int i = 0; i + 3 <= 32; ++i) {
-        if (!(code[i] == 0x48 && code[i + 1] == 0x8B && code[i + 2] == 0x01)) continue;     // mov rax,[rcx]
-        for (int j = i + 3; j < i + 40; ++j) {
-            // A wrapper ends at ret / int3 padding: past it is the next function (measured 2026-10-03: FileWrite, the
-            // first method, is jmp [rax] with no displacement; the scan used to run on into the next wrapper and took
-            // FileDelete's slot, so FileWrite was never blocked)
-            if (code[j] == 0xC3 || code[j] == 0xCC) break;
+    // The wrapper loads the table first, after a stack frame at most: mov rax,[rcx] (48 8B 01), or mov r10,[rcx]
+    // (4C 8B 11: measured 2026-11-03, SetLobbyGameServer's wrapper is mov r10,[rcx]; jmp [r10+0E8h]). Never past
+    // this wrapper's end: the next mov rax,[rcx] in the bytes is the NEXT wrapper's (until then, SetLobbyGameServer
+    // was read as its neighbour's slot 5, AddRequestLobbyListStringFilter, and that was blocked in its place).
+    int i = 0;
+    bool viaRax = false, viaR10 = false;
+    for (; i + 3 <= 32 && code[i] != 0xC3 && code[i] != 0xCC; ++i) {
+        viaRax = code[i] == 0x48 && code[i + 1] == 0x8B && code[i + 2] == 0x01;
+        viaR10 = code[i] == 0x4C && code[i + 1] == 0x8B && code[i + 2] == 0x11;
+        if (viaRax || viaR10) break;
+    }
+    if (!viaRax && !viaR10) return -1;
+    for (int j = i + 3; j < i + 40; ++j) {
+        // A wrapper ends at ret / int3 padding: past it is the next function (measured 2026-10-03: FileWrite, the
+        // first method, is jmp [rax] with no displacement; the scan used to run on into the next wrapper and took
+        // FileDelete's slot, so FileWrite was never blocked)
+        if (code[j] == 0xC3 || code[j] == 0xCC) break;
+        if (viaRax) {
             if (code[j] == 0x4C && code[j + 1] == 0x8B && code[j + 2] == 0x10) return 0;     // mov r10,[rax]
             // mov r10,[rax+disp] (4C 8B 50 disp8 / 4C 8B 90 disp32), then jmp r10 (measured: PublishVideo's wrapper)
             if (code[j] == 0x4C && code[j + 1] == 0x8B && (code[j + 2] == 0x50 || code[j + 2] == 0x90)) {
@@ -639,19 +663,23 @@ int SlotOffset(const uint8_t* code, std::string* bytes) {
                 std::memcpy(&disp, code + j + 3, sizeof disp);
                 return disp;
             }
-            int k = j;
-            if (code[k] == 0x48) ++k;
-            if (code[k] != 0xFF) continue;
-            const uint8_t modrm = code[k + 1];
-            if (modrm == 0x20 || modrm == 0x10) return 0;                                    // jmp/call [rax]
-            if (modrm == 0x60 || modrm == 0x50) return code[k + 2];
-            if (modrm == 0xA0 || modrm == 0x90) {
-                int32_t disp = 0;
-                std::memcpy(&disp, code + k + 2, sizeof disp);
-                return disp;
-            }
         }
-        break;
+        // jmp/call [rax+disp]: (48) FF /4 or /2 with rax as the base; [r10+disp]: 41/49 FF with r10 (REX.B)
+        int k = j;
+        if (code[k] == 0x48 || code[k] == 0x41 || code[k] == 0x49) ++k;
+        if (code[k] != 0xFF) continue;
+        const bool r10 = k > j && (code[j] == 0x41 || code[j] == 0x49);
+        if (r10 != viaR10) continue;
+        const uint8_t modrm = static_cast<uint8_t>(code[k + 1] & 0xF8);                  // the base's low bits dropped
+        const uint8_t base = static_cast<uint8_t>(code[k + 1] & 0x07);
+        if (base != (viaR10 ? 0x02 : 0x00)) continue;                                      // r10 is 010, rax 000
+        if (modrm == 0x20 || modrm == 0x10) return 0;                                      // jmp/call [reg]
+        if (modrm == 0x60 || modrm == 0x50) return code[k + 2];
+        if (modrm == 0xA0 || modrm == 0x90) {
+            int32_t disp = 0;
+            std::memcpy(&disp, code + k + 2, sizeof disp);
+            return disp;
+        }
     }
     return -1;
 }
@@ -743,25 +771,132 @@ void* BlockedGameServerInterface(int32_t, const char* version) {
 
 bool InstallSteamLocked();
 
+// --- Proton: the game's interfaces by lsteamclient's thunk names ---------------------------------------------------
+
+// Whether this is Wine (Proton): its ntdll exports wine_get_version, Windows' never does.
+bool UnderWine() {
+    static const bool wine = GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version") != nullptr;
+    return wine;
+}
+
+// Under Proton, Steam's interfaces come from lsteamclient.dll, which has a thunk of its own for every interface
+// version and method, named win<Interface>_<version>_<Method> (winISteamUserStats_STEAMUSERSTATS_INTERFACE_VERSION012
+// _UploadLeaderboardScore), and ships with its COFF symbol table. So a method's address in the flat accessor's
+// interface (v013) is never in the game's older one (v012), where steamclient64.dll on Windows serves both versions
+// with the same function (measured 2026-11-03: the game asks for SteamFriends017, STEAMUSERSTATS_INTERFACE_VERSION012
+// and STEAMUGC_INTERFACE_VERSION020 against v018, v013 and v021 accessors, and none of their methods matched). The
+// symbol table isn't mapped, so it's read from the file once: the thunk's address in memory by name, and the name by
+// address. Symbol values are section-relative. Empty on Windows, or should Proton ever strip the DLL; then nothing
+// changes.
+struct Thunks {
+    std::unordered_map<std::string, void*> byName;
+    std::unordered_map<void*, std::string> byAddress;
+};
+Thunks ReadThunks() {
+    Thunks thunks;
+    HMODULE module = GetModuleHandleW(L"lsteamclient.dll");
+    wchar_t path[MAX_PATH];
+    if (!module || !GetModuleFileNameW(module, path, MAX_PATH)) return thunks;
+    HANDLE f = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return thunks;
+    std::vector<uint8_t> file;
+    LARGE_INTEGER size;
+    if (GetFileSizeEx(f, &size) && size.QuadPart > 0 && size.QuadPart < (64 << 20)) {
+        file.resize(static_cast<size_t>(size.QuadPart));
+        DWORD got = 0;
+        if (!ReadFile(f, file.data(), static_cast<DWORD>(file.size()), &got, nullptr) || got != file.size()) file.clear();
+    }
+    CloseHandle(f);
+    auto at = [&](size_t offset, size_t bytes) -> const uint8_t* {
+        return offset <= file.size() && bytes <= file.size() - offset ? file.data() + offset : nullptr;
+    };
+    auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(at(0, sizeof(IMAGE_DOS_HEADER)));
+    if (!dos || dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew < 0) return thunks;
+    const size_t ntAt = static_cast<size_t>(dos->e_lfanew);
+    auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(at(ntAt, sizeof(IMAGE_NT_HEADERS64)));
+    if (!nt || nt->Signature != IMAGE_NT_SIGNATURE) return thunks;
+    const IMAGE_FILE_HEADER& coff = nt->FileHeader;
+    const size_t sectionCount = coff.NumberOfSections, symbolCount = coff.NumberOfSymbols;
+    auto* sections = reinterpret_cast<const IMAGE_SECTION_HEADER*>(
+        at(ntAt + offsetof(IMAGE_NT_HEADERS64, OptionalHeader) + coff.SizeOfOptionalHeader, sizeof(IMAGE_SECTION_HEADER) * sectionCount));
+    const size_t symbolsAt = coff.PointerToSymbolTable, stringsAt = symbolsAt + sizeof(IMAGE_SYMBOL) * symbolCount;
+    auto* symbols = reinterpret_cast<const IMAGE_SYMBOL*>(at(symbolsAt, sizeof(IMAGE_SYMBOL) * symbolCount));
+    if (!sections || !symbols || !symbolCount || !at(stringsAt, 4)) return thunks;
+    for (size_t i = 0; i < symbolCount; i += 1 + symbols[i].NumberOfAuxSymbols) {
+        const IMAGE_SYMBOL& s = symbols[i];
+        if (s.SectionNumber <= 0 || static_cast<size_t>(s.SectionNumber) > sectionCount || (s.Type >> 4) != IMAGE_SYM_DTYPE_FUNCTION) continue;
+        std::string name;
+        if (s.N.Name.Short) {
+            name.assign(reinterpret_cast<const char*>(s.N.ShortName), strnlen(reinterpret_cast<const char*>(s.N.ShortName), 8));
+        } else if (const uint8_t* p = at(stringsAt + s.N.Name.Long, 1)) {
+            name.assign(reinterpret_cast<const char*>(p), strnlen(reinterpret_cast<const char*>(p), file.size() - (stringsAt + s.N.Name.Long)));
+        }
+        if (name.rfind("winISteam", 0) != 0) continue;
+        void* address = reinterpret_cast<uint8_t*>(module) + sections[s.SectionNumber - 1].VirtualAddress + s.Value;
+        thunks.byName[name] = address;
+        thunks.byAddress[address] = name;
+    }
+    return thunks;
+}
+
+// The thunk lsteamclient gives the game's interface `version` for a flat method ("SteamAPI_ISteamFriends_SetRichPresence"),
+// or null: not Wine, no lsteamclient yet, no such symbol. By the flat method's name first; the methods C++ overloads
+// (SetStat, which the flat API calls SetStatInt32 and SetStatFloat) are SetStat and SetStat_2 in lsteamclient, so
+// those are found from `original`, the method's thunk in the flat accessor's interface: its name with the game's
+// version in place of the accessor's. Under the interface lock (the callers are).
+void* ThunkOf(const std::string& version, const char* flatMethod, void* original) {
+    if (!UnderWine()) return nullptr;
+    static Thunks thunks;
+    static bool read = false;
+    if (!read || (thunks.byName.empty() && GetModuleHandleW(L"lsteamclient.dll"))) {
+        thunks = ReadThunks();
+        read = true;
+        if (!thunks.byName.empty()) hostlog::Info("Proton: " + std::to_string(thunks.byName.size()) + " interface thunks named by lsteamclient.dll");
+    }
+    const std::string method = flatMethod + 9;                      // ISteamFriends_SetRichPresence
+    const size_t cut = method.find('_');
+    if (cut == std::string::npos) return nullptr;
+    const std::string prefix = "win" + method.substr(0, cut) + "_";  // winISteamFriends_
+    auto named = thunks.byName.find(prefix + version + "_" + method.substr(cut + 1));
+    if (named != thunks.byName.end()) return named->second;
+    const auto known = thunks.byAddress.find(original);
+    if (known == thunks.byAddress.end() || known->second.rfind(prefix, 0) != 0) return nullptr;
+    // winISteamUserStats_STEAMUSERSTATS_INTERFACE_VERSION013_SetStat_2: the version ends with its digits
+    const std::string rest = known->second.substr(prefix.size());
+    size_t digits = rest.find_first_of("0123456789");
+    if (digits == std::string::npos) return nullptr;
+    while (digits < rest.size() && std::isdigit(static_cast<unsigned char>(rest[digits]))) ++digits;
+    if (digits >= rest.size() || rest[digits] != '_') return nullptr;
+    named = thunks.byName.find(prefix + version + rest.substr(digits));
+    return named == thunks.byName.end() ? nullptr : named->second;
+}
+
 // The blocks of one game interface, once the flat accessors' tables have been read (gSteamDone). Under the lock.
+// A method is found by the address it has in the flat accessor's interface, or (Proton) by its thunk's name.
 void BlockGameInterface(GameInterface& gi) {
     if (gi.done || !gSteamDone) return;
     gi.done = true;
     void** table = *reinterpret_cast<void***>(gi.object);
+    int byName = 0;
     for (auto& b : gSteam) {
         if (gi.version.rfind(FamilyOf(b.accessor), 0) != 0) continue;
         if (!b.original) {
             ++gi.missing;
             continue;
         }
+        // With a thunk named for it, that is the method (the address is the accessor version's, which under Proton
+        // is another function; the same one only when the versions agree); otherwise the address.
+        void* thunk = ThunkOf(gi.version, b.method, b.original);
+        void* wanted = thunk ? thunk : b.original;
         int found = -1, matches = 0;
         for (int i = 0; i < 400 && Readable(table + i) && Executable(table[i]); ++i)
-            if (table[i] == b.original || table[i] == b.stub) {     // the stub: the same table as the flat object's
+            if (table[i] == wanted || table[i] == b.stub) {         // the stub: the same table as the flat object's
                 found = i;
                 ++matches;
             }
         if (matches == 1 && (table[found] == b.stub || Patch(table + found, b.stub, nullptr))) {
             ++gi.blocked;
+            if (thunk && thunk != b.original) ++byName;
         } else {
             ++gi.missing;
             char detail[160];
@@ -787,6 +922,7 @@ void BlockGameInterface(GameInterface& gi) {
         }
     }
     hostlog::Info("sandbox: the game's " + gi.version + ": " + std::to_string(gi.blocked) + " blocked" +
+                  (byName ? " (" + std::to_string(byName) + " by lsteamclient's thunk names)" : "") +
                   (gi.missing ? ", " + std::to_string(gi.missing) + " NOT FOUND" : ""));
 }
 
@@ -829,10 +965,12 @@ void GuardGameInterface(GameInterface& gi) {
     if (gi.done || !gGuardReady || gi.version.rfind("STEAMUSERSTATS_INTERFACE_VERSION", 0) != 0) return;
     gi.done = true;
     void** table = *reinterpret_cast<void***>(gi.object);
-    auto place = [&](void* flat, void* guard, void** real) {
+    // By the method's address in the flat accessor's interface, or (Proton) by its thunk's name, as BlockGameInterface.
+    auto place = [&](void* flat, void* thunk, void* guard, void** real) {
+        void* wanted = thunk ? thunk : flat;
         int found = -1, matches = 0;
         for (int i = 0; i < 400 && Readable(table + i) && Executable(table[i]); ++i)
-            if (table[i] == flat || table[i] == guard) {
+            if (table[i] == wanted || table[i] == guard) {
                 found = i;
                 ++matches;
             }
@@ -843,8 +981,10 @@ void GuardGameInterface(GameInterface& gi) {
         if (!*real) *real = original;
         return true;
     };
-    const bool upload = place(gUploadFlat, reinterpret_cast<void*>(&GuardedUpload), reinterpret_cast<void**>(&gUploadReal));
-    const bool attach = place(gAttachFlat, reinterpret_cast<void*>(&GuardedAttach), reinterpret_cast<void**>(&gAttachReal));
+    const bool upload = place(gUploadFlat, ThunkOf(gi.version, "SteamAPI_ISteamUserStats_UploadLeaderboardScore", gUploadFlat),
+                              reinterpret_cast<void*>(&GuardedUpload), reinterpret_cast<void**>(&gUploadReal));
+    const bool attach = place(gAttachFlat, ThunkOf(gi.version, "SteamAPI_ISteamUserStats_AttachLeaderboardUGC", gAttachFlat),
+                              reinterpret_cast<void*>(&GuardedAttach), reinterpret_cast<void**>(&gAttachReal));
     gi.blocked = (upload ? 1 : 0) + (attach ? 1 : 0);
     gi.missing = 2 - gi.blocked;
     if (gi.missing) hostlog::Error("upload guard: NOT in the game's " + gi.version + " (Steam changed?); runs the host touched could reach leaderboards");
@@ -955,6 +1095,7 @@ void InstallEarly() {
     gCreateFileSlot = FindImport("KERNEL32.dll", "CreateFileW");
     BlockNetworkIn(L"game", GetModuleHandleW(nullptr));
     const bool lookups = gGetAddrInfoSlot && *gGetAddrInfoSlot == reinterpret_cast<void*>(&BlockedGetAddrInfo) && gNetComplete;
+    FindOwnDataDir();
     FindOwnUserDir();
     BlockFilesIn(L"game", GetModuleHandleW(nullptr));
     for (const wchar_t* runtime : {L"ucrtbase.dll", L"msvcp140.dll", L"vcruntime140.dll"}) BlockFilesIn(runtime, GetModuleHandleW(runtime));
