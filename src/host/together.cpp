@@ -53,15 +53,22 @@ Obj GameInstance() {
 // How long the session's own work takes, part by part: the longest single call of each (in "together status", as
 // slow=...), so a hitch while editing together can be put down to a part (or shown not to be ours).
 std::map<std::string, double> gSlowest;
+double gFrameOurs = 0;                  // this frame's session work, in ms (outermost parts only)
+int gTimedDepth = 0;
 struct Timed {
     const char* name;
     LARGE_INTEGER start;
-    explicit Timed(const char* n) : name(n) { QueryPerformanceCounter(&start); }
+    explicit Timed(const char* n) : name(n) {
+        ++gTimedDepth;
+        QueryPerformanceCounter(&start);
+    }
     ~Timed() {
+        --gTimedDepth;
         LARGE_INTEGER end, freq;
         QueryPerformanceCounter(&end);
         QueryPerformanceFrequency(&freq);
         const double ms = 1000.0 * static_cast<double>(end.QuadPart - start.QuadPart) / static_cast<double>(freq.QuadPart);
+        if (gTimedDepth == 0) gFrameOurs += ms;
         double& worst = gSlowest[name];
         if (ms > worst) worst = ms;
     }
@@ -1556,7 +1563,28 @@ void CheckListenDriver() {
 
 }  // namespace
 
+// A frame of the editor that took long while editing together is logged (at most every 5 s), with how much of it was
+// the session's own work last frame: so a freeze in a player's game can be put down to us or to the game.
+void WatchFrames() {
+    static LARGE_INTEGER last{};
+    static ULONGLONG toldAt = 0;
+    LARGE_INTEGER now, freq;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&freq);
+    const double ms = last.QuadPart ? 1000.0 * static_cast<double>(now.QuadPart - last.QuadPart) / static_cast<double>(freq.QuadPart) : 0;
+    last = now;
+    const bool session = IsServer() || IsClient();
+    if (session && editor::Open() && ms > 250 && GetTickCount64() - toldAt > 5000) {
+        toldAt = GetTickCount64();
+        char buf[160];
+        std::snprintf(buf, sizeof buf, "together: a frame took %.0f ms (the session's own work in it: %.0f ms)", ms, gFrameOurs);
+        hostlog::Info(buf);
+    }
+    gFrameOurs = 0;
+}
+
 void Frame() {
+    WatchFrames();
     { Timed t_("HookOpenLevel"); HookOpenLevel(); }
     { Timed t_("HookClientTravel"); HookClientTravel(); }
     { Timed t_("UseFallbackDriverInSandbox"); UseFallbackDriverInSandbox(); }

@@ -612,6 +612,8 @@ void WakePieces(const PieceSnapshot* before) {
         ++gWoken;
     }
 }
+bool gRefreshBreakdown = false;           // test: each held refresh logged (EndSpawnBatch)
+void SetRefreshBreakdown(bool on) { gRefreshBreakdown = on; }
 std::string WakeStatus() { return "woken=" + std::to_string(gWoken) + "/" + std::to_string(gWakeSteps) + "steps"; }
 bool Redo() { return Handler() && eng::Call(Handler(), "Redo").Invoked(); }
 
@@ -930,6 +932,17 @@ Vec3 ViewForward() {
 
 void Select(const std::vector<int>& ids) {
     if (!Handler()) return;
+    // already exactly those: nothing to do (on a big map the game's Deselect and grab cost ~200 ms; a placed piece was
+    // selected by the game and then again by a plugin re-selecting it)
+    {
+        std::vector<int> now = Selection(), wanted;
+        for (int id : ids)
+            if (Resolve(id)) wanted.push_back(id);
+        std::sort(now.begin(), now.end());
+        std::sort(wanted.begin(), wanted.end());
+        wanted.erase(std::unique(wanted.begin(), wanted.end()), wanted.end());
+        if (!wanted.empty() && now == wanted) return;
+    }
     // each grab refreshes the UI for the whole selection: held, so it runs once (a 102-piece prefab re-selected one
     // grab at a time built ~1M widget objects; the game crashed at its UObject limit on the next click, 2026-10-30)
     HoldRefreshes(true);
@@ -1147,6 +1160,7 @@ void WatchWidgetHandlers(const char* delegate) {
 const char* const kHeldDelegates[] = {"OnChangeDelegate", "OnHistoryChangedDelegate", "OnHistoryChangedMinMaxDelegate",
                                       "OnValidateableDelegate", "OnAllocatedBudgetChangedDelegate"};
 
+
 void BeginSpawnBatch() {
     if (Handler())
         for (const char* delegate : kHeldDelegates) WatchWidgetHandlers(delegate);
@@ -1171,6 +1185,16 @@ void EndSpawnBatch() {
         const double t = game::Seconds();
         eng::Invoke(widget, p);
         slow.push_back({(game::Seconds() - t) * 1000, eng::PathOf(d.function)});
+    }
+    if (gRefreshBreakdown) {                // test: each held refresh's function, how often, and its time
+        std::map<std::string, std::pair<int, double>> by;
+        for (const auto& [ms, name] : slow) {
+            auto& e = by[name];
+            ++e.first;
+            e.second += ms;
+        }
+        for (const auto& [name, e] : by)
+            hostlog::Info("editor: refresh " + name + " x" + std::to_string(e.first) + " " + std::to_string(static_cast<int>(e.second)) + " ms");
     }
     std::sort(slow.begin(), slow.end(), [](const auto& x, const auto& y) { return x.first > y.first; });
     for (size_t i = 0; i < slow.size() && i < 6 && slow[i].first >= 10; ++i)

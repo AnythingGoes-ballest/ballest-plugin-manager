@@ -1893,6 +1893,21 @@ void Run(const std::string& cmd) {
                  const auto made = editor::SpawnPieces({sp}, false);
                  return Report(c + " -> " + std::to_string(made.size()) + " made" + (made.empty() ? "" : " id " + std::to_string(made[0])));
              }
+             else if (what == "spawngrid") { // spawngrid <class path> <count> <spacing>: a big test map, as one paste
+                 const int count = std::clamp(std::atoi(Arg(a, 3).c_str()), 1, 50000);
+                 const double spacing = std::max(100.0, std::atof(Arg(a, 4).c_str()));
+                 const int side = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(count))));
+                 std::vector<editor::Spawn> list;
+                 for (int k = 0; k < count; ++k) {
+                     editor::Spawn sp;
+                     sp.classPath = Arg(a, 2);
+                     sp.location = {(k % side) * spacing, (k / side) * spacing, 500.0};
+                     list.push_back(sp);
+                 }
+                 const ULONGLONG t0 = GetTickCount64();
+                 const auto made = editor::SpawnPieces(list, false);
+                 return Report(c + " -> " + std::to_string(made.size()) + " made in " + std::to_string(GetTickCount64() - t0) + " ms");
+             }
              else if (what == "worldrpc") {  // worldrpc <time of day>: this player's handler's Server_SetWorldTimeOfDay
                  eng::Obj h = editor::OwnHandler();
                  const float tod = std::strtof(Arg(a, 2).c_str(), nullptr);
@@ -1900,6 +1915,7 @@ void Run(const std::string& cmd) {
                  const bool sent = h && p.SetArg(0, &tod, sizeof tod) && eng::Invoke(h, p);
                  return Report(c + (sent ? " -> sent" : " -> failed"));
              }
+             else if (what == "refreshes") { editor::SetRefreshBreakdown(Arg(a, 2) != "0"); return Report(c + " -> ok"); }
              else if (what == "slowreset") { together::ResetSlow(); return Report(c + " -> reset"); }
              else if (what == "uictx") {     // uictx <context>: the editor widget's Try Switch UIContext
                  const auto list = Instances("W_MapEditor_C", "Transient");
@@ -1911,9 +1927,12 @@ void Run(const std::string& cmd) {
                  return Report(c + (sent ? " -> called, success " + std::to_string(ok ? *ok : 255) : " -> failed"));
              }
              else if (what == "nudge") {     // nudge <piece id> dx dy dz: selects it and moves the selection (the gizmo's path)
+                 const ULONGLONG t0 = GetTickCount64();
                  editor::Select({std::atoi(Arg(a, 2).c_str())});
+                 const ULONGLONG t1 = GetTickCount64();
                  const bool moved = editor::MoveSelection({std::atof(Arg(a, 3).c_str()), std::atof(Arg(a, 4).c_str()), std::atof(Arg(a, 5).c_str())});
-                 return Report(c + (moved ? " -> moved" : " -> failed"));
+                 const ULONGLONG t2 = GetTickCount64();
+                 return Report(c + (moved ? " -> moved" : " -> failed") + " (select " + std::to_string(t1 - t0) + " ms, move " + std::to_string(t2 - t1) + " ms)");
              }
              else if (what == "delete") {    // delete <piece id>: selects it and deletes the selection (the Delete key's path)
                  editor::Select({std::atoi(Arg(a, 2).c_str())});

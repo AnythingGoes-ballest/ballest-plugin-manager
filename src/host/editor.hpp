@@ -74,6 +74,7 @@ PieceSnapshot SnapshotPieces();
 void SetAfterHistoryStep(std::function<void(const PieceSnapshot&)> after);
 void WakePieces(const PieceSnapshot* before = nullptr);   // replication woken: the changed pieces' (or every piece's)
 std::string WakeStatus();
+void SetRefreshBreakdown(bool on);          // test: log each held UI refresh (function, count, time)
 bool Networked();          // undo and redo steps the editor has run, however they were started (counted from 0)
 bool Redo();
 Vec3 ViewForward();
