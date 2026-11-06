@@ -467,7 +467,7 @@ void RegisterCore()
     // addresses, a test copy only loopback ones; only saved maps open), arming the next editor as a listen server, and a
     // lobby round trip (made, its data, found by its code, left). NewMap isn't called: it would leave the menu for the
     // editor (the create together sessions are tested end to end in two slots).
-    Add("core", "Together outside a session", "Together::Backend,Together::NetMode,Together::IsHosting,Together::IsJoined,Together::Players,Together::OwnAddress,Together::Join,Together::Leave,Together::SavedMaps,Together::OpenMap,Together::NewMap,Together::HostNextEditor,Together::HostNextArmed,Together::InviteDialog,Together::TakeInvite,Together::OwnName,Together::CreateLobby,Together::LobbyState,Together::LobbyId,Together::IsLobbyOwner,Together::SetLobbyData,Together::LobbyData,Together::SetLobbyType,Together::SetLobbyJoinable,Together::LobbyMaxPlayers,Together::LobbyMembers,Together::FindLobbies,Together::Searching,Together::FoundCount,Together::FoundId,Together::FoundData,Together::FoundPlayers,Together::FoundMaxPlayers,Together::FoundIsFriend,Together::JoinLobby,Together::LeaveLobby,Together::LobbyMemberIds,Together::LobbyOwnerId,Together::OwnId,Together::SetSessionCode,Together::SetJoinCode,Together::TakeNotice", function() {
+    Add("core", "Together outside a session", "Together::Backend,Together::NetMode,Together::IsHosting,Together::IsJoined,Together::Players,Together::OwnAddress,Together::Join,Together::Leave,Together::SavedMaps,Together::OpenMap,Together::NewMap,Together::HostNextEditor,Together::HostNextArmed,Together::InviteDialog,Together::TakeInvite,Together::OwnName,Together::CreateLobby,Together::LobbyState,Together::LobbyId,Together::IsLobbyOwner,Together::SetLobbyData,Together::LobbyData,Together::SetLobbyType,Together::SetLobbyJoinable,Together::LobbyMaxPlayers,Together::LobbyMembers,Together::FindLobbies,Together::Searching,Together::FoundCount,Together::FoundId,Together::FoundData,Together::FoundPlayers,Together::FoundMaxPlayers,Together::FoundIsFriend,Together::JoinLobby,Together::LeaveLobby,Together::LobbyMemberIds,Together::LobbyOwnerId,Together::OwnId,Together::SetSessionCode,Together::SetJoinCode,Together::TakeNotice,Together::NewSessionCode,Together::CodeAccepted,Host::SetClipboard", function() {
         if (step == 0)
         {
             string backend = Together::Backend();
@@ -513,6 +513,7 @@ void RegisterCore()
                 return "Together::CreateLobby: " + Together::LobbyState();
             }
             Together::SetLobbyData("ch", "APITST");
+            Together::SetLobbyData("ct", "1");      // what lists and code searches look for (a session's plugin tags it)
             array<string> c = {Is(Together::IsLobbyOwner(), "Together::IsLobbyOwner"), Is(Together::LobbyId() != "", "Together::LobbyId empty"),
                                Is(Together::LobbyData("ch") == "APITST", "Together::SetLobbyData / LobbyData"),
                                Is(Together::LobbyOwnerId() == Together::OwnId() && Together::LobbyMemberIds().length() == 1 &&
