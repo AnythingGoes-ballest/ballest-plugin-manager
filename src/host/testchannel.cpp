@@ -1900,6 +1900,15 @@ void Run(const std::string& cmd) {
                  const bool sent = h && p.SetArg(0, &tod, sizeof tod) && eng::Invoke(h, p);
                  return Report(c + (sent ? " -> sent" : " -> failed"));
              }
+             else if (what == "uictx") {     // uictx <context>: the editor widget's Try Switch UIContext
+                 const auto list = Instances("W_MapEditor_C", "Transient");
+                 if (list.empty()) return Report(c + " -> no editor widget");
+                 const uint8_t ctx = static_cast<uint8_t>(std::atoi(Arg(a, 2).c_str()));
+                 eng::Params p(eng::FunctionOn(list.front(), "Try Switch UIContext"));
+                 const bool sent = p.SetArg(0, &ctx, 1) && eng::Invoke(list.front(), p);
+                 const uint8_t* ok = p.Get("bSuccess");
+                 return Report(c + (sent ? " -> called, success " + std::to_string(ok ? *ok : 255) : " -> failed"));
+             }
              else if (what == "nudge") {     // nudge <piece id> dx dy dz: selects it and moves the selection (the gizmo's path)
                  editor::Select({std::atoi(Arg(a, 2).c_str())});
                  const bool moved = editor::MoveSelection({std::atof(Arg(a, 3).c_str()), std::atof(Arg(a, 4).c_str()), std::atof(Arg(a, 5).c_str())});

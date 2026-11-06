@@ -445,6 +445,48 @@ void KeepHostMapName() {
     }
 }
 
+// Since the 2026-11-06 game build the editor's input and UI follow the controller's game context, which the game sets
+// to the editor's (1) only in a game that opened the editor itself: a joiner's stays on the menus' (2), so its editor
+// camera, keys and clicks do nothing; and its editor screen (W_MapEditor_C) starts on the pause menu's context. Once a joiner's editor is set up, its context
+// is set to the editor's until it has stayed there a second (after that it's the game's again: pausing changes it).
+constexpr uint8_t kEditorContext = 1, kEditingUi = 0;
+ULONGLONG gEditingSince = 0;
+bool gEditingKept = false;
+int gContextSets = 0;
+void KeepClientEditing(Obj controller) {
+    if (gEditingKept || !controller) return;
+    eng::Params now = eng::Call(controller, "GetCurrentContext");
+    const uint8_t* ctx = now.Get("OutContext");
+    if (!now.Invoked() || !ctx) return;
+    // the editor's own screen has a context of its own (0 editing): a joiner's starts on the pause menu's
+    Obj ui = LiveInstance("W_MapEditor_C");
+    uint8_t uiCtx = 0;
+    if (!ui || !eng::ReadBytes(ui, "CurrentContext", &uiCtx, 1)) return;
+    if (*ctx == kEditorContext && uiCtx != kEditingUi) {
+        eng::Params sw(eng::FunctionOn(ui, "Try Switch UIContext"));
+        if (sw.SetArg(0, &kEditingUi, 1) && eng::Invoke(ui, sw)) ++gContextSets;
+        hostlog::Info("together: joiner's editor screen context " + std::to_string(uiCtx) + " set to editing");
+        gEditingSince = 0;
+        return;
+    }
+    if (*ctx == kEditorContext) {
+        if (!gEditingSince) gEditingSince = GetTickCount64();
+        else if (GetTickCount64() - gEditingSince > 1000) {
+            gEditingKept = true;
+            hostlog::Info("together: joiner's editor context kept (" + std::to_string(gContextSets) + " set)");
+        }
+        return;
+    }
+    gEditingSince = 0;
+    eng::Params p(eng::FunctionOn(controller, "TrySetNewContext"));
+    if (p.SetArg(0, &kEditorContext, 1) && eng::Invoke(controller, p)) {
+        ++gContextSets;
+        const uint8_t* ok = p.Get("bSuccess");
+        if (gContextSets <= 3)
+            hostlog::Info("together: joiner's game context " + std::to_string(*ctx) + " set to the editor's" + (ok && *ok ? "" : " (refused)"));
+    }
+}
+
 void SetUpClientEditor() {
     if (GetTickCount64() - gLastClientCheck < 250) return;
     gLastClientCheck = GetTickCount64();
@@ -461,6 +503,7 @@ void SetUpClientEditor() {
     HideClientSaving();                 // a test run's ball pawn has no handler: hidden all the same
     if (!pawn || !eng::FindProp(eng::ClassOf(pawn), "SKGMLEHandler")) return;
     if (eng::Get(gSetUpPawn) == pawn) {
+        KeepClientEditing(controller);
         if (recache)
             if (Obj handler = eng::ReadObj(pawn, "SKGMLEHandler")) RecacheClientPieces(handler);
         return;
@@ -468,6 +511,9 @@ void SetUpClientEditor() {
     Obj handler = eng::ReadObj(pawn, "SKGMLEHandler");
     if (!handler) return;
     gSetUpPawn = eng::MakeWeak(pawn);
+    gEditingKept = false;
+    gEditingSince = 0;
+    gContextSets = 0;
     eng::WriteBytes(pawn, "SKGLevelEditorHandler", &handler, sizeof handler);
     const bool init = eng::Call(handler, "Init").Invoked();
     const bool hud = eng::Call(pawn, "HandleHUD").Invoked();
@@ -1648,7 +1694,7 @@ int ConnectedClients() {
 std::string Status() {
     return "net=" + NetMode() + " armed=" + (gArmed ? "1" : "0") + " port=" + std::to_string(ListenPort()) +
            " clients=" + std::to_string(ConnectedClients()) + " hook=" + (gOpenOriginal ? "1" : gHookFailed ? "failed" : "0") +
-           " lastTravel=" + gLastTravel + " driver=" + gDriverNote + gSteamOnlyNote + " client=" + gClientNote + " recached=" + std::to_string(gRecached) + " savingHidden=" + std::to_string(gHiddenSaving) + " nameRestores=" + std::to_string(gNameRestores) + " stepsSent=" + std::to_string(gSentSteps) + " stepsRun=" + std::to_string(gRanSteps) + " ownHistories=" + std::to_string(gOwnHistories) + " wrapped=" + std::to_string(gWrapped) + " kicked=" + std::to_string(gKicked) + " claims=" + std::to_string(gClaims.size()) + " proved=" + std::to_string(gProved.size()) + " refusedWrites=" + std::to_string(gRefusedWrites.load());
+           " lastTravel=" + gLastTravel + " driver=" + gDriverNote + gSteamOnlyNote + " client=" + gClientNote + " contextSets=" + std::to_string(gContextSets) + (gEditingKept ? " editing" : "") + " recached=" + std::to_string(gRecached) + " savingHidden=" + std::to_string(gHiddenSaving) + " nameRestores=" + std::to_string(gNameRestores) + " stepsSent=" + std::to_string(gSentSteps) + " stepsRun=" + std::to_string(gRanSteps) + " ownHistories=" + std::to_string(gOwnHistories) + " wrapped=" + std::to_string(gWrapped) + " kicked=" + std::to_string(gKicked) + " claims=" + std::to_string(gClaims.size()) + " proved=" + std::to_string(gProved.size()) + " refusedWrites=" + std::to_string(gRefusedWrites.load());
 }
 
 }  // namespace together
