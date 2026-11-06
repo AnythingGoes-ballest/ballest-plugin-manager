@@ -42,6 +42,7 @@ void SetSessionCode(const std::string& code);
 std::string NewSessionCode();           // 8 random letters and digits (the system's random source), "" if none
 bool JoinPending();                     // a Join has started and not yet arrived (Leave calls it off)
 void SetJoinCode(const std::string& code);
+bool CodeAccepted();                    // the lobby's host showed it knows the code this joiner gave (SetJoinCode)
 // The last thing the host refused or ended for the player ("only the host can save this map", "the host left..."),
 // given once; "" if none.
 std::string TakeNotice();

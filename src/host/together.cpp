@@ -495,17 +495,6 @@ int PlayerIdOf(Obj state) {
     int32_t id = -1;
     return state && eng::ReadBytes(state, "PlayerId", &id, sizeof id) ? id : -1;
 }
-Obj HandlerOfPlayer(int playerId) {
-    Obj controller = game::PlayerController();
-    Obj gameState = controller ? eng::Call(eng::FindCdo("GameplayStatics"), "GetGameState", controller).ReturnObj() : nullptr;
-    if (!gameState) return nullptr;
-    for (Obj ps : eng::ReadObjArray(gameState, "PlayerArray")) {
-        if (PlayerIdOf(ps) != playerId) continue;
-        Obj pawn = eng::ReadObj(ps, "PawnPrivate");
-        return pawn && eng::FindProp(eng::ClassOf(pawn), "SKGMLEHandler") ? eng::ReadObj(pawn, "SKGMLEHandler") : nullptr;
-    }
-    return nullptr;
-}
 
 // On the host: a history of its own for every other player's handler (made once per handler; the handler's property
 // keeps it alive).
@@ -569,9 +558,11 @@ namespace {
 // handler's own). So while one of a joiner's Server_ functions runs on the host, the world's history is that joiner's
 // own (their handler's HistoryManagerOverride), and the host's again right after: each step lands in its player's
 // history, which that player's Undo / Redo (the handler's, it reads the override) then steps through.
-constexpr int kMaxWrapped = 48;
+constexpr int kMaxWrapped = 64;
 NativeFunction gServerOriginal[kMaxWrapped] = {};
+std::string gServerName[kMaxWrapped];
 int gWrapped = 0;
+bool gWrapOverflow = false;             // more Server_ functions than wrappers: some would skip the gate (hosting refused)
 bool gWrapTried = false;
 eng::Weak gWorldHistoryOwner;           // the SKGMLEGizmoWorldSubsystem
 Obj WorldHistorySubsystem() {
@@ -587,18 +578,58 @@ Obj WorldHistorySubsystem() {
 }
 int gInPlayerCall = 0;                  // a joiner's Server_ call (or step) is running: the world history is theirs
 eng::Weak gHostHistory;                 // the world's own history (the host's), seen outside any such call
-std::set<int32_t> gAdmittedHandlers;    // the handlers (object slots) of players the host has let in
+std::set<std::pair<int32_t, Obj>> gAdmittedHandlers;    // the handlers (object slot and object) of players let in
 bool gGateRan = false;                   // GateConnections has decided at least once
+bool RunPlayerStep(Obj handler, bool redo);
+// A joiner's undo or redo comes as their handler's Server_ApplyHistoryProperties with no properties and their own pawn
+// (undo) or player state (redo) as its actor: on the game's own connection, so it reaches the host in order with their
+// changes, and the connection says who sent it. The original would apply nothing; the step runs instead.
+int StepMarker(int i, Obj context, uint8_t* frame) {
+    if (gServerName[i] != "Server_ApplyHistoryProperties" || !frame) return 0;
+    uint8_t* locals = nullptr;
+    std::memcpy(&locals, frame + layout::kFFrameParametersOffset, sizeof locals);
+    Obj fn = eng::FindFunction(eng::ClassOf(context), gServerName[i]);
+    const eng::Prop actorProp = fn ? eng::FindProp(fn, "Actor") : eng::Prop{};
+    if (!locals || !actorProp || actorProp.size != 8) return 0;
+    Obj actor = nullptr;
+    std::memcpy(&actor, locals + actorProp.offset, sizeof actor);
+    for (const char* list : {"FloatProperties", "IntProperties", "BoolProperties", "TextProperties", "NameProperties", "StringProperties"}) {
+        const eng::Prop p = eng::FindProp(fn, list);
+        int32_t num = 0;
+        if (p) std::memcpy(&num, locals + p.offset + 8, sizeof num);
+        if (num != 0) return 0;
+    }
+    Obj pawn = eng::Call(context, "GetOwner").ReturnObj();
+    if (!actor || !pawn) return 0;
+    if (actor == pawn) return 1;
+    return actor == eng::ReadObj(pawn, "PlayerState") ? 2 : 0;
+}
 void RunAsPlayer(int i, Obj context, uint8_t* frame, void* result) {
+    const bool joiner = context && IsServer() && context != editor::OwnHandler();
     // on the host, a joiner's change runs only once that joiner is let in (these calls come from the network: no
     // bytecode to step when one is skipped)
-    if (context && IsServer() && context != editor::OwnHandler() && gGateRan && !gAdmittedHandlers.count(eng::MakeWeak(context).index)) {
+    if (joiner && (!gGateRan || !gAdmittedHandlers.count({eng::MakeWeak(context).index, context}))) {
         static ULONGLONG said = 0;
         if (GetTickCount64() - said > 2000) {
             said = GetTickCount64();
             hostlog::Warn("together: a change from a player who isn't let in was refused");
         }
         return;
+    }
+    // the world's lighting is the host's (its world settings): a joiner's is refused
+    if (joiner && gServerName[i].rfind("Server_SetWorld", 0) == 0) {
+        static ULONGLONG said = 0;
+        if (GetTickCount64() - said > 2000) {
+            said = GetTickCount64();
+            hostlog::Warn("together: a joiner's " + gServerName[i] + " was refused (the world settings are the host's)");
+        }
+        return;
+    }
+    if (joiner) {
+        if (const int step = StepMarker(i, context, frame)) {
+            if (RunPlayerStep(context, step == 2)) ++gRanSteps;
+            return;
+        }
     }
     Obj own = context && IsServer() && eng::FindProp(eng::ClassOf(context), "HistoryManagerOverride")
                   ? eng::ReadObj(context, "HistoryManagerOverride") : nullptr;
@@ -646,18 +677,24 @@ void WrapServerFunctions(Obj handler) {
     Obj cls = eng::ClassOf(handler);
     for (Obj c = cls; c; c = eng::SuperOf(c)) {
         for (const std::string& name : eng::FunctionNames(c)) {
-            if (name.rfind("Server_", 0) != 0 || gWrapped >= kMaxWrapped) continue;
+            if (name.rfind("Server_", 0) != 0) continue;
+            if (gWrapped >= kMaxWrapped) {
+                gWrapOverflow = true;
+                continue;
+            }
             Obj fn = eng::FindFunction(c, name);
             NativeFunction entry = nullptr;
             if (fn) std::memcpy(&entry, fn + layout::kUFunctionNativeFunctionOffset, sizeof entry);
             if (!entry || !eng::InImage(reinterpret_cast<void*>(entry))) continue;
             gServerOriginal[gWrapped] = entry;
+            gServerName[gWrapped] = name;
             const NativeFunction hooked = kServerWrappers[static_cast<size_t>(gWrapped)];
             std::memcpy(fn + layout::kUFunctionNativeFunctionOffset, &hooked, sizeof hooked);
             ++gWrapped;
         }
     }
     hostlog::Info("together: " + std::to_string(gWrapped) + " of the editor's server functions record into each player's own history");
+    if (gWrapOverflow) hostlog::Warn("together: the editor has more server functions than can be gated: sessions are closed");
 }
 
 // A joiner's undo or redo, run on the host against that joiner's own history. The handler's Undo / Redo need the
@@ -711,16 +748,32 @@ std::map<std::string, std::string> gExpectedProof;
 std::string gSessionCode, gJoinCode;    // the host's code (code-only sessions) and the one this joiner typed
 int gKicked = 0;
 
+// PBKDF2-HMAC-SHA256 of the code, salted with the lobby and the member (and what it's for): a proof read in the lobby's
+// chat can't be reused by anyone else or in another lobby, and trying the 32^8 codes against it costs years. Made once
+// per member and kept (a flood of proofs costs nothing).
+constexpr ULONG kProofRounds = 60000;
 std::string Proof(const std::string& code, const std::string& member) {
-    uint64_t h = 1469598103934665603ull;
-    for (int round = 0; round < 4096; ++round)      // a little slow on purpose: guessing codes from a proof costs
-        for (char c : code + "|" + member + "|" + std::to_string(round)) {
-            h ^= static_cast<uint8_t>(c);
-            h *= 1099511628211ull;
-        }
-    char buf[17];
-    std::snprintf(buf, sizeof buf, "%016llx", static_cast<unsigned long long>(h));
-    return buf;
+    static std::map<std::string, std::string> made;
+    const std::string salt = "create-together|" + lobby::Id() + "|" + member;
+    const std::string key = code + "\n" + salt;
+    if (auto it = made.find(key); it != made.end()) return it->second;
+    static BCRYPT_ALG_HANDLE alg = nullptr;
+    if (!alg && BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, BCRYPT_ALG_HANDLE_HMAC_FLAG) != 0) alg = nullptr;
+    uint8_t out[16] = {};
+    if (!alg || code.empty() ||
+        BCryptDeriveKeyPBKDF2(alg, reinterpret_cast<PUCHAR>(const_cast<char*>(code.data())), static_cast<ULONG>(code.size()),
+                              reinterpret_cast<PUCHAR>(const_cast<char*>(salt.data())), static_cast<ULONG>(salt.size()), kProofRounds,
+                              out, sizeof out, 0) != 0)
+        return "";
+    std::string hex;
+    char b[3];
+    for (uint8_t x : out) {
+        std::snprintf(b, sizeof b, "%02x", x);
+        hex += b;
+    }
+    if (made.size() > 64) made.clear();
+    made[key] = hex;
+    return hex;
 }
 
 std::string SteamIdOf(Obj state) {
@@ -742,10 +795,11 @@ std::string MemberOf(Obj state, int playerId) {
     return it == gClaims.end() ? "" : it->second;
 }
 
-void Kick(Obj state, const std::string& why) {
+void Kick(Obj state, const std::string& why, const std::string& member) {
     const int id = PlayerIdOf(state);
     if (GetTickCount64() - gLastKick[id] < kKickEveryMs) return;
     gLastKick[id] = GetTickCount64();
+    if (!member.empty()) lobby::Send("kick " + member + " " + why);     // the player's own plugin says why
     Obj controller = eng::ReadObj(state, "Owner");
     hostlog::Warn("together: player " + std::to_string(id) + " removed from the session: " + why);
     if (!controller) return;
@@ -768,7 +822,7 @@ bool Admitted(const std::string& member) {
         case lobby::kPublic: return true;
         case lobby::kFriends:
         case lobby::kInviteOnly: return lobby::IsFriend(member);
-        case lobby::kCode: return gProved.count(member) > 0;
+        case lobby::kCode: return gProved.count(member) > 0 || (!sandbox::On() && lobby::IsFriend(member));   // the host's invites too
         default: return false;
     }
 }
@@ -781,6 +835,7 @@ constexpr ULONGLONG kBanMs = 60000, kLobbyLagMs = 4000, kMissingMs = 5000, kNoMe
 void GateConnections() {
     if (GetTickCount64() - gLastGate < 250) return;
     gLastGate = GetTickCount64();
+    gGateRan = true;                              // from now on, only those it let in may change anything
     Obj controller = game::PlayerController();
     Obj gameState = controller ? eng::Call(eng::FindCdo("GameplayStatics"), "GetGameState", controller).ReturnObj() : nullptr;
     Obj own = LocalPlayerState();
@@ -799,57 +854,71 @@ void GateConnections() {
     }
     const int most = std::max(1, lobby::MaxMembers());
     std::map<int, ULONGLONG> seen;
-    std::set<int32_t> admitted;
-    std::map<std::string, int> holders;           // member -> how many connected players claim to be them
+    std::set<std::pair<int32_t, Obj>> admitted;
     int kept = 1;                                 // the host
-    gGateRan = true;
+    // who each connected player is: in a player's game their PlayerState's Steam id (Steam authenticates it; nothing a
+    // lobby member says can change it); in a test copy (one Steam account) the member who said hello for that PlayerId
+    struct Seen {
+        Obj ps;
+        int id;
+        std::string member;
+    };
+    std::vector<Seen> players;
+    std::map<std::string, int> newest;            // member -> the PlayerId that came last (a rejoin replaces the old one)
     for (Obj ps : eng::ReadObjArray(gameState, "PlayerArray")) {
         if (ps == own) continue;
         const int id = PlayerIdOf(ps);
         seen[id] = gFirstSeen.count(id) ? gFirstSeen[id] : now;
+        const std::string member = id < 0 ? "" : MemberOf(ps, id);
+        players.push_back({ps, id, member});
+        if (!member.empty() && (!newest.count(member) || seen[id] > seen[newest[member]] ||
+                                (seen[id] == seen[newest[member]] && id > newest[member])))
+            newest[member] = id;
+    }
+    for (const Seen& p : players) {
+        Obj ps = p.ps;
+        const int id = p.id;
+        const std::string& member = p.member;
         const ULONGLONG age = now - seen[id];
         if (closed) {
-            Kick(ps, "the session is closed");
+            Kick(ps, "the session is closed", member);
             continue;
         }
-        // who they say they are: their PlayerState's Steam id (a test copy: their hello), and in a player's game
-        // also who said hello for this PlayerId over the lobby (Steam vouches for a lobby message's sender)
-        const std::string member = MemberOf(ps, id);
-        auto claim = gClaims.find(id);
-        const std::string claimed = claim == gClaims.end() ? "" : claim->second;
         bool inLobby = false;
         for (const auto& m : members) inLobby = inLobby || (!member.empty() && m.id == member);
-        if (!member.empty()) ++holders[member];
         if (!inLobby) gMissingSince.emplace(id, now);
         else gMissingSince.erase(id);
         const bool missingLong = !inLobby && now - gMissingSince[id] > kMissingMs;
         const ULONGLONG grace = sandbox::On() ? kTestAdmitMs : kAdmitMs;
         std::string why;
+        bool ban = false;                         // only a refusal keeps them out for a while (not a rejoin or a leave)
         if (id < 0) why = "no player id";
         else if (!member.empty() && gBanned.count(member) && now - gBanned[member] < kBanMs) why = "sent home a moment ago";
-        else if (!member.empty() && holders[member] > 1) why = "someone else is already in as them";
-        else if (!sandbox::On() && !claimed.empty() && claimed != member) why = "they aren't who they say they are";
+        else if (!member.empty() && newest[member] != id) why = "they joined again";
         else if (!member.empty() && !inLobby && (age > kLobbyLagMs || missingLong)) why = "not in the session's lobby";
-        else if (member.empty() || (!sandbox::On() && claimed.empty()) || !Admitted(member)) {
-            if (age > grace)
-                why = member.empty() || (!sandbox::On() && claimed.empty()) ? "didn't say who they are"
-                                                                              : std::string("not let in (") + (lobby::Type() == lobby::kCode ? "no code" : "not the host's friend") + ")";
-            else
+        else if (member.empty() || !Admitted(member)) {
+            if (age > grace) {
+                why = member.empty() ? "didn't say who they are"
+                                     : std::string("not let in (") + (lobby::Type() == lobby::kCode ? "no code" : "not the host's friend") + ")";
+                ban = !member.empty();
+            } else {
                 continue;                         // not decided yet: they can't change anything meanwhile
+            }
         } else if (kept + 1 > most) {
             why = "the session is full";
         }
         if (!why.empty()) {
-            if (!member.empty()) gBanned[member] = now;
-            Kick(ps, why);
+            if (ban) gBanned[member] = now;
+            Kick(ps, why, member);
             continue;
         }
         ++kept;
         Obj pawn = eng::ReadObj(ps, "PawnPrivate");
         if (Obj handler = pawn && eng::FindProp(eng::ClassOf(pawn), "SKGMLEHandler") ? eng::ReadObj(pawn, "SKGMLEHandler") : nullptr)
-            admitted.insert(eng::MakeWeak(handler).index);
+            admitted.insert({eng::MakeWeak(handler).index, handler});
     }
     gFirstSeen.swap(seen);
+    for (auto it = gClaims.begin(); it != gClaims.end();) it = gFirstSeen.count(it->first) || gClaims.size() < 32 ? std::next(it) : gClaims.erase(it);
     gAdmittedHandlers.swap(admitted);
     for (auto it = gMissingSince.begin(); it != gMissingSince.end();) it = gFirstSeen.count(it->first) ? std::next(it) : gMissingSince.erase(it);
 }
@@ -901,10 +970,15 @@ void ShareHostWorld() {
         }
     }
 }
+std::string gLastApplied;
+ULONGLONG gLastAppliedAt = 0;
 void ApplyHostWorld(const std::vector<lobby::Message>& messages) {
     const std::string owner = lobby::OwnerId();
     for (const auto& m : messages) {
         if (m.from != owner || m.text.rfind("world ", 0) != 0) continue;
+        if (m.text == gLastApplied && GetTickCount64() - gLastAppliedAt < 20000) continue;     // nothing changed
+        gLastApplied = m.text;
+        gLastAppliedAt = GetTickCount64();
         float tod = 0, bri = 0;
         double pitch = 0, yaw = 0, roll = 0;
         if (std::sscanf(m.text.c_str() + 6, "%f %f %lf %lf %lf", &tod, &bri, &pitch, &yaw, &roll) != 5) continue;
@@ -919,29 +993,53 @@ void ApplyHostWorld(const std::vector<lobby::Message>& messages) {
         Obj lightCls = eng::FindClass("SKGMapEditorDirectionalLight"), skyCls = eng::FindClass("SkyLightComponent"),
             sphereCls = eng::FindClass("BP_Sky_Sphere_Stylized_C");
         const float settings[2] = {tod, bri};
+        std::vector<Obj> spheres;
         eng::ForEachObject([&](Obj o) {
-            if (eng::IsDefaultObject(o) || eng::PathOf(o).find("/Engine/Transient") == 0) return true;
-            if (lightCls && eng::IsA(o, lightCls)) {
+            const bool light = lightCls && eng::IsA(o, lightCls), sky = !light && skyCls && eng::IsA(o, skyCls),
+                       sphere = !light && !sky && sphereCls && eng::IsA(o, sphereCls);
+            if (!(light || sky || sphere) || eng::IsDefaultObject(o) || eng::PathOf(o).find("/Engine/Transient") == 0) return true;
+            if (light) {
                 eng::WriteBytes(o, "DirectionalLightSettings", settings, sizeof settings);
                 eng::Call(o, "OnRep_DirectionalLightData");
                 const struct { double p, y, r; } rot{pitch, yaw, roll};
                 eng::Call(o, "K2_SetActorRotation", rot, uint8_t{0});
-            } else if (skyCls && eng::IsA(o, skyCls)) {
+            } else if (sky) {
                 auto it = skies.find(eng::PathOf(o));
                 if (it != skies.end()) eng::Call(o, "SetIntensity", it->second);
-            } else if (sphereCls && eng::IsA(o, sphereCls)) {
-                eng::Params p(eng::FunctionOn(o, "EstablishEditorParams"));
-                if (p.SetArg(0, settings, sizeof settings)) eng::Invoke(o, p);
+            } else {
+                spheres.push_back(o);           // after the light has turned (the sphere reads it)
             }
             return true;
         });
+        for (Obj o : spheres) {
+            eng::Params sp(eng::FunctionOn(o, "EstablishEditorParams"));
+            if (sp.SetArg(0, settings, sizeof settings)) eng::Invoke(o, sp);
+        }
     }
 }
 
-// A joiner's undo and redo: held a moment before they go (the change they undo travels on the game's own connection,
-// the step on the lobby's: the change has to get there first).
-std::vector<std::pair<ULONGLONG, std::string>> gStepQueue;
-constexpr ULONGLONG kStepDelayMs = 300;
+
+// What the host says to this joiner over the lobby: that it knows the code too ("ok <me> <proof>"), or why it sent this
+// player home ("kick <me> <why>").
+bool gCodeAccepted = false;
+void FromHost(const std::vector<lobby::Message>& messages) {
+    const std::string owner = lobby::OwnerId(), me = lobby::OwnId();
+    if (owner.empty()) return;
+    for (const auto& m : messages) {
+        if (m.from != owner) continue;
+        if (m.text.rfind("ok " + me + " ", 0) == 0 && !gJoinCode.empty()) {
+            const std::string expected = Proof(gJoinCode, me + "|host");
+            if (!expected.empty() && m.text.substr(4 + me.size()) == expected) gCodeAccepted = true;
+        } else if (m.text.rfind("kick " + me + " ", 0) == 0) {
+            const std::string why = m.text.substr(6 + me.size(), 200);
+            static ULONGLONG said = 0;
+            if (GetTickCount64() - said > 5000) {
+                said = GetTickCount64();
+                Notice("the host removed you from the session: " + why);
+            }
+        }
+    }
+}
 
 void ShareHistory() {
     const bool inLobby = lobby::State() == "in lobby";
@@ -949,11 +1047,14 @@ void ShareHistory() {
     if (redirect != gRedirecting) {
         gRedirecting = redirect;
         editor::SetHistoryRedirect(redirect ? std::function<bool(bool)>([](bool redo) {
-            const int id = PlayerIdOf(LocalPlayerState());
-            if (id >= 0 && lobby::State() == "in lobby")
-                gStepQueue.push_back({GetTickCount64() + kStepDelayMs, std::string(redo ? "redo " : "undo ") + std::to_string(id)});
-            else
-                Notice("undo and redo need the session's lobby");
+            // the step marker (StepMarker): Server_ApplyHistoryProperties with no properties, the own pawn (undo) or
+            // player state (redo) as its actor, on the same connection as this player's changes
+            Obj handler = editor::OwnHandler();
+            Obj pawn = handler ? eng::Call(handler, "GetOwner").ReturnObj() : nullptr;
+            Obj actor = pawn && redo ? eng::ReadObj(pawn, "PlayerState") : pawn;
+            eng::Params call(handler ? eng::FunctionOn(handler, "Server_ApplyHistoryProperties") : nullptr);
+            if (actor && call.Set("Actor", &actor, sizeof actor) && eng::Invoke(handler, call)) ++gSentSteps;
+            else Notice("undo and redo couldn't reach the host");
             return true;
         })
                                             : std::function<bool(bool)>());
@@ -976,25 +1077,19 @@ void ShareHistory() {
         KeepHostHistory();
         GateConnections();
     }
-    if (!inLobby) {
-        gStepQueue.clear();
-        return;
-    }
-    if (IsClient())
-        while (!gStepQueue.empty() && GetTickCount64() >= gStepQueue.front().first) {
-            if (lobby::Send(gStepQueue.front().second)) ++gSentSteps;
-            gStepQueue.erase(gStepQueue.begin());
-        }
+    if (!inLobby) return;
     // a joiner tells the host who it is: the code's proof as soon as it is in the lobby (before it connects), and
     // "hello <PlayerId>" once connected; again every few seconds (a message can be lost)
     if (!lobby::IsOwner() && GetTickCount64() - gLastHello > kHelloEveryMs) {
         const int id = IsClient() ? PlayerIdOf(LocalPlayerState()) : -1;
         bool sent = false;
-        if (id >= 0) sent = lobby::Send("hello " + std::to_string(id));
-        if (!gJoinCode.empty()) sent = lobby::Send("join " + Proof(gJoinCode, lobby::OwnId())) || sent;
+        if (id >= 0 && sandbox::On()) sent = lobby::Send("hello " + std::to_string(id));      // a test copy's identity
+        const std::string proof = gJoinCode.empty() || gCodeAccepted ? "" : Proof(gJoinCode, lobby::OwnId());
+        if (!proof.empty()) sent = lobby::Send("join " + proof) || sent;
         if (sent) gLastHello = GetTickCount64();
     }
     const std::vector<lobby::Message> messages = lobby::Receive();
+    if (!lobby::IsOwner()) FromHost(messages);
     if (IsClient()) ApplyHostWorld(messages);
     if (!IsServer() || !lobby::IsOwner() || messages.empty()) return;
     const std::string own = lobby::OwnId();
@@ -1005,29 +1100,23 @@ void ShareHistory() {
         for (const auto& x : members) member = member || x.id == m.from;
         if (!member) continue;
         if (m.text.rfind("hello ", 0) == 0) {
+            if (!sandbox::On()) continue;                       // a player's game knows who each player is from Steam
             const int id = std::atoi(m.text.c_str() + 6);
             if (!gClaims.count(id)) gClaims[id] = m.from;       // the first claim stands (a later one can't take it over)
             continue;
         }
         if (m.text.rfind("join ", 0) == 0) {
-            if (gSessionCode.empty() || gProved.count(m.from)) continue;
-            auto& expected = gExpectedProof[m.from];           // made once per member: a flood costs nothing
-            if (expected.empty()) expected = Proof(gSessionCode, m.from);
-            if (m.text.substr(5) == expected) gProved.insert(m.from);
+            if (gSessionCode.empty()) continue;
+            if (!gProved.count(m.from)) {
+                auto& expected = gExpectedProof[m.from];       // made once per member: a flood costs nothing
+                if (expected.empty()) expected = Proof(gSessionCode, m.from);
+                if (expected.empty() || m.text.substr(5) != expected) continue;
+                gProved.insert(m.from);
+            }
+            // the host's own answer: proof that this session knows the code too (a look-alike lobby can't make it)
+            lobby::Send("ok " + m.from + " " + Proof(gSessionCode, m.from + "|host"));
             continue;
         }
-        const bool undo = m.text.rfind("undo ", 0) == 0, redo = m.text.rfind("redo ", 0) == 0;
-        if (!undo && !redo) continue;
-        // the step is the sender's own: the player it names must be the member who sent it
-        const int playerId = std::atoi(m.text.c_str() + 5);
-        Obj handler = HandlerOfPlayer(playerId);
-        Obj state = nullptr;
-        Obj controller = game::PlayerController();
-        Obj gameState = controller ? eng::Call(eng::FindCdo("GameplayStatics"), "GetGameState", controller).ReturnObj() : nullptr;
-        if (gameState)
-            for (Obj ps : eng::ReadObjArray(gameState, "PlayerArray")) state = PlayerIdOf(ps) == playerId ? ps : state;
-        if (!handler || !state || handler == editor::OwnHandler() || MemberOf(state, playerId) != m.from) continue;
-        if (RunPlayerStep(handler, redo)) ++gRanSteps;
     }
 }
 
@@ -1052,8 +1141,13 @@ void KeepLobbyWithSession() {
     } else if (!lobby::IsOwner()) {
         gWasHosting = false;
     }
-    if (IsClient() && lobby::State() == "in lobby") {
+    static std::string joinedLobby;
+    if (lobby::State() == "in lobby" && !lobby::IsOwner()) {
         const std::string owner = lobby::OwnerId();
+        if (lobby::Id() != joinedLobby) {
+            joinedLobby = lobby::Id();
+            gJoinedOwner.clear();
+        }
         if (owner.empty() || owner == "0") {
             // not known this moment: decided later
         } else if (gJoinedOwner.empty()) {
@@ -1061,11 +1155,13 @@ void KeepLobbyWithSession() {
         } else if (owner != gJoinedOwner) {
             Notice("the host left: the session is over");
             gJoinedOwner.clear();
+            joinedLobby.clear();
             lobby::Leave();
-            Leave();
+            if (IsClient() || gJoinPending) Leave();
         }
-    } else if (!IsClient()) {
+    } else {
         gJoinedOwner.clear();
+        joinedLobby.clear();
     }
 }
 
@@ -1100,11 +1196,11 @@ void HookClientTravel() {
 // difficulty and tags, loading a whole map in chunks, starting a test run, the save/publish export) run on the host for
 // any player. Only the host's own are kept: a joiner's would rename, retag or replace the host's map, or start a test run
 // in the shared editor. They come from the network, so a refused one has no bytecode to step.
-constexpr int kEditorCalls = 12;
+constexpr int kEditorCalls = 13;
 const char* const kEditorCallNames[kEditorCalls] = {"ServerLevelNames", "ServerLevelDescription", "ServerLevelDifficulty", "ServerLevelTags",
                                                     "ServerBeginLoad", "ServerLoadChunk", "ServerPlayHere", "ServerPlayFromStart",
                                                     "ServerRequestExport", "ServerExportAcknowledged", "ServerCancelEditorTransfer",
-                                                    "ServerReturnToAuthoring"};
+                                                    "ServerReturnToAuthoring", "ServerAuthoringCamera"};
 NativeFunction gEditorCallOriginal[kEditorCalls] = {};
 bool gEditorCallsTried = false;
 int gEditorCallsRefused = 0;
@@ -1250,7 +1346,19 @@ void GuardMapWrites() {
             hostlog::Warn("together: the game's CreateFileW import wasn't found: a joiner's save isn't refused");
         }
     }
-    const bool refuse = client && gNextCreateFile && gMapsFolder[0];
+    static int clientWorld = -1;            // the world this game was a client in
+    if (client) clientWorld = game::Generation();
+    const bool stillThatWorld = clientWorld >= 0 && game::Generation() == clientWorld;
+    if (!client && stillThatWorld && editor::Open()) {
+        static int sentHome = -1;
+        if (sentHome != clientWorld) {
+            sentHome = clientWorld;
+            hostlog::Info("together: the connection to the host is gone: back to the menu");
+            Leave();
+        }
+    }
+    if (!client && !stillThatWorld) clientWorld = -1;
+    const bool refuse = (client || stillThatWorld) && gNextCreateFile && gMapsFolder[0];
     static long lastRefused = 0;
     if (gRefusedWrites.load() != lastRefused) {
         lastRefused = gRefusedWrites.load();
@@ -1308,6 +1416,7 @@ void Frame() {
     KeepLobbyWithSession();
     GuardMapWrites();
     editor::SetNetworked(IsServer() || IsClient());
+    if (IsClient()) gJoinPending = false;   // joined: a later failure isn't this join's
     editor::SetJoiner(IsClient());
     static bool hooksSet = false;
     if (!hooksSet) {
@@ -1324,6 +1433,10 @@ void Frame() {
 }
 
 void ListenNextEditor(bool on) {
+    if (on && gWrapOverflow) {
+        Notice("this game's editor can't be shared safely (more server functions than the host can check)");
+        on = false;
+    }
     if (on && !(SteamOnlyInPlayersGame() && RelayOnly())) {
         Notice("this game can't host sessions safely (Steam networking isn't available)");
         on = false;
@@ -1507,7 +1620,11 @@ void SetSessionCode(const std::string& code) {
     gExpectedProof.clear();
     gProved.clear();
 }
-void SetJoinCode(const std::string& code) { gJoinCode = code; }
+void SetJoinCode(const std::string& code) {
+    gJoinCode = code;
+    gCodeAccepted = false;
+}
+bool CodeAccepted() { return gCodeAccepted; }
 std::string TakeNotice() {
     std::string n;
     n.swap(gNotice);

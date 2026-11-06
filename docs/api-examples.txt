@@ -118,6 +118,13 @@ and logged.
 if (sourceButton.Clicked())
     Host::OpenUrl("https://github.com/AnythingGoes-ballest/ballest-grind-timer-plugin");
 
+== Host::SetClipboard
+Puts a short line of text (at most 200 characters, no line breaks) on the player's clipboard, so they can paste it
+elsewhere: a session code to send a friend, say. False if refused or the clipboard was busy. Every copy is logged.
+--
+if (copyButton.Clicked() && Host::SetClipboard(code))
+    copyButton.label = "copied";
+
 @@ Plugins
 The plugins currently loaded, in load order. Index `i` runs from `0` to `Count() - 1`. Installing, removing and
 updating the host are only allowed for the plugin manager. For any other plugin the call does nothing and a warning
@@ -3937,6 +3944,16 @@ sessions; "" if the random source failed.
 --
 string code = Together::NewSessionCode();
 Together::SetSessionCode(code);
+
+== Together::CodeAccepted
+After `SetJoinCode` and joining a code-only session's lobby: true once that lobby's host has shown it knows the same
+code (it answers the joiner's proof with one of its own). A look-alike lobby can't, so connect only once this is true.
+--
+Together::SetJoinCode(code);
+Together::JoinLobby(id);
+// ... each frame, once in the lobby:
+if (Together::CodeAccepted())
+    Together::Join(Together::LobbyData("addr"));
 
 == Together::TakeNotice
 What the host refused or ended for the player since the last call ("only the host can save this map", "the host left:

@@ -211,6 +211,27 @@ void OpenUrl(const std::string& url) {
     hostlog::Write("info", plugins::CurrentId(), "opened " + url);
 }
 
+// Puts a short line of text on the Windows clipboard (a code to share, say). Short and one line only, and logged: a
+// plugin can't swap something long (an address, a command) into what the player pastes elsewhere unnoticed.
+bool SetClipboard(const std::string& text) {
+    if (text.empty() || text.size() > 200 || text.find_first_of("\r\n") != std::string::npos) return false;
+    const std::wstring w = eng::Widen(text);
+    if (!OpenClipboard(nullptr)) return false;
+    bool ok = false;
+    if (EmptyClipboard()) {
+        HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, (w.size() + 1) * sizeof(wchar_t));
+        if (void* to = mem ? GlobalLock(mem) : nullptr) {
+            std::memcpy(to, w.c_str(), (w.size() + 1) * sizeof(wchar_t));
+            GlobalUnlock(mem);
+            ok = SetClipboardData(CF_UNICODETEXT, mem) != nullptr;
+        }
+        if (!ok && mem) GlobalFree(mem);
+    }
+    CloseClipboard();
+    hostlog::Write("info", plugins::CurrentId(), ok ? "copied \"" + text + "\" to the clipboard" : "couldn't copy to the clipboard");
+    return ok;
+}
+
 // --- UI: footer ----------------------------------------------------------------------------------------------------
 template <class T>
 bool TakeFlag(T* holder, bool T::*flag) {
@@ -732,6 +753,7 @@ void RegisterCore() {
     Global("bool MaximizeWindow()", asFUNCTION(game::MaximizeWindow));
     Global("void MaximizeAtStart(int mode)", asFUNCTION(HostMaximizeAtStart));
     Global("void OpenUrl(const string &in)", asFUNCTION(OpenUrl));
+    Global("bool SetClipboard(const string &in text)", asFUNCTION(SetClipboard));
 
     e->SetDefaultNamespace("Plugins");
     Global("uint Count()", asFUNCTION(PluginCount));
@@ -2551,6 +2573,10 @@ void RegisterCampaigns() {
 
 // --- Prefabs ---------------------------------------------------------------------------------------------------------
 CScriptArray* PrefabsList() { return StringArrayOf(prefabs::List()); }
+std::string PrefabsWrite(const std::string& name, const std::string& text) {
+    if (together::IsClient()) return "";        // the map's pieces are the host's while editing together
+    return prefabs::Write(name, text);
+}
 bool PrefabsSave(const std::string& name, bool overwrite, std::string& reply) {
     if (together::IsClient()) {             // the map is the host's: its pieces aren't a joiner's to keep
         reply = "only the host can save pieces as a prefab while editing together";
@@ -2579,7 +2605,7 @@ void RegisterPrefabs() {
     Global("bool ValidName(const string &in)", asFUNCTION(prefabs::ValidName));
     Global("array<string>@ List()", asFUNCTION(PrefabsList));
     Global("string Read(const string &in)", asFUNCTION(prefabs::Read));
-    Global("string Write(const string &in name, const string &in text)", asFUNCTION(prefabs::Write));
+    Global("string Write(const string &in name, const string &in text)", asFUNCTION(PrefabsWrite));
     Global("bool Save(const string &in name, bool overwrite, string &out reply)", asFUNCTION(PrefabsSave));
     Global("array<int>@ Spawn(const string &in name, string &out reply)", asFUNCTION(PrefabsSpawn));
     Global("bool Delete(const string &in name, string &out reply)", asFUNCTION(PrefabsDelete));
@@ -2633,7 +2659,7 @@ CScriptArray* TogetherMemberIds() {
     return StringArrayOf(ids);
 }
 void TogetherLeave() {
-    if (together::IsServer() || together::IsClient() || together::JoinPending()) together::Leave();
+    if (together::IsServer() || together::IsClient() || together::JoinPending() || editor::Open()) together::Leave();
 }
 bool TogetherNewMap() {
     plugins::GameWork work;                 // the game's own work: not the plugin's time
@@ -2685,6 +2711,7 @@ void RegisterTogether() {
     Global("void SetSessionCode(const string &in code)", asFUNCTION(together::SetSessionCode));
     Global("void SetJoinCode(const string &in code)", asFUNCTION(together::SetJoinCode));
     Global("string TakeNotice()", asFUNCTION(together::TakeNotice));
+    Global("bool CodeAccepted()", asFUNCTION(together::CodeAccepted));
     Global("void FindLobbies(const string &in code = \"\")", asFUNCTION(lobby::Find));
     Global("bool Searching()", asFUNCTION(lobby::Searching));
     Global("int FoundCount()", asFUNCTION(TogetherFoundCount));

@@ -346,8 +346,8 @@ void RotateAboutCenter() {
         }
         return;
     }
-    if (gRotateMode == kRotateDefault) {
-        gRotation.active = false;
+    if (gRotateMode == kRotateDefault || Networked()) {     // editing together: the editor's own rotation (one change per
+        gRotation.active = false;                          // release, not two moves per piece every frame over the network)
         return;
     }
     if (gRotationFocusFrames > 0) --gRotationFocusFrames;
@@ -489,15 +489,42 @@ bool SetTransformThroughEditor(Obj actor, const Vec3& at, const Rot& turn) {
     return set.Set("ActorTransforms", &list, sizeof list) && eng::Invoke(handler, set);
 }
 
+// While editing together a move reaches this machine's copy of the piece only once the host has made it, so a rotation
+// set right after a location (or the other way round) takes the other half from what was just asked for, not from the
+// piece (which would still have the old one and put it back).
+struct Asked {
+    Vec3 location;
+    Rot rotation;
+    bool hasLocation = false, hasRotation = false;
+    ULONGLONG at = 0;
+};
+std::map<Obj, Asked> gAsked;
+Asked& AskedFor(Obj a) {
+    const ULONGLONG now = GetTickCount64();
+    for (auto it = gAsked.begin(); it != gAsked.end();) it = now - it->second.at > 1500 ? gAsked.erase(it) : std::next(it);
+    Asked& asked = gAsked[a];
+    asked.at = now;
+    return asked;
+}
 bool SetLocation(int id, const Vec3& location) {
     Obj a = Resolve(id);
-    if (a && gNetworked) return SetTransformThroughEditor(a, location, eng::Call(a, "K2_GetActorRotation").ReturnAs<Rot>());
+    if (a && gNetworked) {
+        Asked& asked = AskedFor(a);
+        asked.location = location;
+        asked.hasLocation = true;
+        return SetTransformThroughEditor(a, location, asked.hasRotation ? asked.rotation : eng::Call(a, "K2_GetActorRotation").ReturnAs<Rot>());
+    }
     return a && eng::Call(a, "K2_SetActorLocation", location, uint8_t{0}).Invoked();
 }
 
 bool SetRotation(int id, const Rot& rotation) {
     Obj a = Resolve(id);
-    if (a && gNetworked) return SetTransformThroughEditor(a, eng::Call(a, "K2_GetActorLocation").ReturnAs<Vec3>(), rotation);
+    if (a && gNetworked) {
+        Asked& asked = AskedFor(a);
+        asked.rotation = rotation;
+        asked.hasRotation = true;
+        return SetTransformThroughEditor(a, asked.hasLocation ? asked.location : eng::Call(a, "K2_GetActorLocation").ReturnAs<Vec3>(), rotation);
+    }
     return a && eng::Call(a, "K2_SetActorRotation", rotation, uint8_t{0}).Invoked();
 }
 
@@ -510,6 +537,8 @@ void SetJoinerRefused(std::function<void(const std::string&)> tell) { gJoinerRef
 // Every piece's replication woken (AActor.FlushNetDormancy): an undo or redo changes pieces natively, and a dormant
 // piece wouldn't send the change to the other players.
 void WakePieces() {
+    // the handler's list first made again: a piece another player's step brought back isn't in it yet
+    if (Obj h = Handler()) eng::Call(h, "GetAllActors", uint8_t{1}, uint8_t{1});
     for (Obj a : AllActors()) eng::Call(a, "FlushNetDormancy");
 }
 bool Redo() { return Handler() && eng::Call(Handler(), "Redo").Invoked(); }

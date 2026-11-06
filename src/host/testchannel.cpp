@@ -1893,6 +1893,13 @@ void Run(const std::string& cmd) {
                  const auto made = editor::SpawnPieces({sp}, false);
                  return Report(c + " -> " + std::to_string(made.size()) + " made" + (made.empty() ? "" : " id " + std::to_string(made[0])));
              }
+             else if (what == "worldrpc") {  // worldrpc <time of day>: this player's handler's Server_SetWorldTimeOfDay
+                 eng::Obj h = editor::OwnHandler();
+                 const float tod = std::strtof(Arg(a, 2).c_str(), nullptr);
+                 eng::Params p(h ? eng::FunctionOn(h, "Server_SetWorldTimeOfDay") : nullptr);
+                 const bool sent = h && p.SetArg(0, &tod, sizeof tod) && eng::Invoke(h, p);
+                 return Report(c + (sent ? " -> sent" : " -> failed"));
+             }
              else if (what == "nudge") {     // nudge <piece id> dx dy dz: selects it and moves the selection (the gizmo's path)
                  editor::Select({std::atoi(Arg(a, 2).c_str())});
                  const bool moved = editor::MoveSelection({std::atof(Arg(a, 3).c_str()), std::atof(Arg(a, 4).c_str()), std::atof(Arg(a, 5).c_str())});

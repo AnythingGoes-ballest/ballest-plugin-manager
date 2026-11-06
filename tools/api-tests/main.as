@@ -488,6 +488,8 @@ void RegisterCore()
                                Is(Together::TakeInvite() == "", "Together::TakeInvite without an invite"),
                                Is(Together::OwnName() != "", "Together::OwnName empty"),
                                Is(Together::TakeNotice() == "" || true, "Together::TakeNotice"),
+                               Is(!Together::CodeAccepted(), "Together::CodeAccepted outside a lobby"),
+                               Is(!Host::SetClipboard("") && !Host::SetClipboard("a\nb"),"Host::SetClipboard refuses empty and multi-line text"),
                                Is(Together::NewSessionCode().length() == 8 && Together::NewSessionCode() != Together::NewSessionCode(), "Together::NewSessionCode")};
             Together::SetSessionCode("");
             Together::SetJoinCode("");

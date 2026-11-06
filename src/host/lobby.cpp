@@ -380,7 +380,20 @@ void Frame() {
 
 std::string State() { return gState; }
 std::string Id() { return gId; }
-bool IsOwner() { return !gId.empty() && gOwner; }
+bool IsOwner() {
+    if (gId.empty() || !gOwner) return false;
+    if (!UseTest() && S().ok && gState == "in lobby") {
+        // Steam's word, not what it was when the lobby was made (Steam can hand a lobby to another member)
+        static ULONGLONG askedAt = 0;
+        static bool still = true;
+        if (GetTickCount64() - askedAt > 500) {
+            askedAt = GetTickCount64();
+            still = S().owner(S().mm, Parse64(gId)) == steam::OwnSteamId();
+        }
+        return still;
+    }
+    return true;
+}
 
 void Leave() {
     ++gGeneration;                      // an answer still on its way is for a request that's over
@@ -545,9 +558,13 @@ bool SetType(int type) {
     type = std::clamp(type, 0, 3);
     if (UseTest()) {
         gTestData["_type"] = std::to_string(type);
-        return WriteTestLobby();
+        if (!WriteTestLobby()) return false;
+        gType = type;
+        return true;
     }
-    return S().ok && S().setType(S().mm, Parse64(gId), type);
+    if (!S().ok || !S().setType(S().mm, Parse64(gId), type)) return false;
+    gType = type;                       // who the host lets in follows the lobby's kind
+    return true;
 }
 
 bool SetJoinable(bool joinable) {
@@ -679,6 +696,8 @@ std::vector<Found> Results() {
         const uint64_t id = Parse64(f.id);
         f.data = SteamData(id);
         if (!f.data.count("ct") || f.data.at("ct") != "1") continue;  // not ours (or emptied), or a friend's not arrived
+        // a lobby whose editor isn't its owner's (its host crashed and Steam handed it on) leads nowhere
+        if (!f.data.count("addr") || f.data.at("addr") != "steam." + std::to_string(s.owner(s.mm, id))) continue;
         const auto vis = f.data.find("vis");
         if (!gSearchCode.empty() ? f.data.count("ch") == 0 || f.data.at("ch") != gSearchCode
                                  : vis != f.data.end() && (vis->second == "code" || vis->second == "invite") && !f.friends)
