@@ -696,8 +696,11 @@ std::vector<Found> Results() {
         const uint64_t id = Parse64(f.id);
         f.data = SteamData(id);
         if (!f.data.count("ct") || f.data.at("ct") != "1") continue;  // not ours (or emptied), or a friend's not arrived
-        // a lobby whose editor isn't its owner's (its host crashed and Steam handed it on) leads nowhere
-        if (!f.data.count("addr") || f.data.at("addr") != "steam." + std::to_string(s.owner(s.mm, id))) continue;
+        // a lobby whose editor isn't its owner's (its host crashed and Steam handed it on) leads nowhere. Steam names
+        // a lobby's owner only to its members: a search result's owner is 0 (the joiner checks again once in it)
+        if (!f.data.count("addr") || f.data.at("addr").rfind("steam.", 0) != 0) continue;
+        const uint64_t owner = s.owner(s.mm, id);
+        if (owner && f.data.at("addr") != "steam." + std::to_string(owner)) continue;
         const auto vis = f.data.find("vis");
         if (!gSearchCode.empty() ? f.data.count("ch") == 0 || f.data.at("ch") != gSearchCode
                                  : vis != f.data.end() && (vis->second == "code" || vis->second == "invite") && !f.friends)
