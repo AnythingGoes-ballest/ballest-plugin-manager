@@ -1,5 +1,6 @@
 #include "engine.hpp"
 
+#include <unordered_map>
 #include <windows.h>
 
 #include <algorithm>
@@ -287,6 +288,10 @@ Obj Get(const Weak& w) {
 Obj FindClass(const std::string& name) {
     if (auto it = gClasses.find(name); it != gClasses.end())
         if (Obj cls = Get(it->second)) return cls;
+    // a class that isn't loaded is looked for again at most four times a second (every look reads every object's
+    // name: callers that ask each frame for a class not loaded yet made frames slow)
+    static std::unordered_map<std::string, ULONGLONG> missedAt;
+    if (auto m = missedAt.find(name); m != missedAt.end() && GetTickCount64() - m->second < 250) return nullptr;
     Obj found = nullptr;
     ForEachObject([&](Obj o) {
         if (ObjName(o) != name) return true;
@@ -294,8 +299,13 @@ Obj FindClass(const std::string& name) {
         if (meta.size() >= 5 && meta.compare(meta.size() - 5, 5, "Class") == 0) found = o;
         return found == nullptr;
     });
-    if (found) gClasses[name] = MakeWeak(found);
-    else ReportOnce("class " + name);
+    if (found) {
+        gClasses[name] = MakeWeak(found);
+        missedAt.erase(name);
+    } else {
+        missedAt[name] = GetTickCount64();
+        ReportOnce("class " + name);
+    }
     return found;
 }
 
@@ -872,9 +882,17 @@ std::string DumpTypes(const std::wstring& directory) {
            std::to_string(d.badFields) + " container fields unreadable";
 }
 
+// One read: only the regions it touches are asked about (listing the whole address space on every read made the
+// travel search in together.cpp, some 30000 reads, take 12 s and more).
 bool ReadMemory(uintptr_t address, void* out, size_t bytes) {
-    ListReadableMemory();
-    if (!Readable(address, bytes)) return false;
+    if (address < 0x10000 || address > 0x7FFFFFFFFFFF || bytes == 0) return false;
+    const DWORD readableProtection = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE;
+    for (uintptr_t a = address; a < address + bytes;) {
+        MEMORY_BASIC_INFORMATION info{};
+        if (!VirtualQuery(reinterpret_cast<void*>(a), &info, sizeof info)) return false;
+        if (info.State != MEM_COMMIT || !(info.Protect & readableProtection) || (info.Protect & PAGE_GUARD)) return false;
+        a = reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize;
+    }
     std::memcpy(out, reinterpret_cast<const void*>(address), bytes);
     return true;
 }

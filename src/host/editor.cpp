@@ -36,7 +36,7 @@ struct Quat {
 
 eng::Weak gHandler, gDetails;
 std::function<bool(bool redo)> gHistoryRedirect;     // Create Together: a joiner's steps go to the host's history
-std::function<void()> gAfterHistoryStep;              // and after any step on the host: its pieces sent out again
+std::function<void(const PieceSnapshot&)> gAfterHistoryStep;              // and after any step on the host: its pieces sent out again
 std::function<void(const std::string&)> gJoinerRefused;
 eng::Weak gLastHandler;                 // the editor's handler, kept through a test run (whose pawn is the ball)
 std::set<int32_t> gKnown;               // AllActors slots seen last frame
@@ -532,15 +532,87 @@ bool Undo() { return Handler() && eng::Call(Handler(), "Undo").Invoked(); }
 eng::Obj OwnHandler() { return Handler(); }
 uintptr_t UndoOriginalRva(bool redo);
 void SetHistoryRedirect(std::function<bool(bool redo)> redirect) { gHistoryRedirect = std::move(redirect); }
-void SetAfterHistoryStep(std::function<void()> after) { gAfterHistoryStep = std::move(after); }
+void SetAfterHistoryStep(std::function<void(const PieceSnapshot&)> after) { gAfterHistoryStep = std::move(after); }
 void SetJoinerRefused(std::function<void(const std::string&)> tell) { gJoinerRefused = std::move(tell); }
-// Every piece's replication woken (AActor.FlushNetDormancy): an undo or redo changes pieces natively, and a dormant
-// piece wouldn't send the change to the other players.
-void WakePieces() {
+// A piece's replicated state as one number: the bytes of its own replicated properties (CPF_Net: hidden, materials,
+// ...) and its root component's (position, rotation, scale), and of each replicated array's first elements.
+namespace {
+struct NetLayout {
+    std::vector<std::pair<int32_t, int32_t>> plain;     // offset, bytes
+    std::vector<int32_t> arrays;                        // offsets of TArrays (data, count)
+};
+constexpr uint64_t kPropertyFlagNet = 0x20;             // CPF_Net
+const NetLayout& NetLayoutOf(Obj cls) {
+    static std::unordered_map<Obj, NetLayout> cache;
+    if (auto it = cache.find(cls); it != cache.end()) return it->second;
+    NetLayout l;
+    for (Obj s = cls; s; s = eng::SuperOf(s))
+        for (uint8_t* f = *reinterpret_cast<uint8_t**>(s + layout::kUStructFirstPropertyOffset); f;
+             f = *reinterpret_cast<uint8_t**>(f + layout::kFFieldNextFieldOffset)) {
+            uint64_t flags = 0;
+            int32_t offset = 0, size = 0, dim = 1;
+            std::memcpy(&flags, f + layout::kFPropertyFlagsOffset, sizeof flags);
+            if (!(flags & kPropertyFlagNet)) continue;
+            std::memcpy(&offset, f + layout::kFPropertyValueLocationOffset, sizeof offset);
+            std::memcpy(&size, f + layout::kFPropertyValueSizeOffset, sizeof size);
+            std::memcpy(&dim, f + layout::kFPropertyArrayDimOffset, sizeof dim);
+            if (offset < 0 || size <= 0 || dim <= 0 || size * dim > 4096) continue;
+            if (eng::KindOf(eng::Prop{f, offset, size}) == "ArrayProperty") l.arrays.push_back(offset);
+            else l.plain.push_back({offset, size * dim});
+        }
+    return cache.emplace(cls, std::move(l)).first->second;
+}
+void Mix(uint64_t& h, const uint8_t* p, size_t n) {
+    for (size_t i = 0; i < n; ++i) h = (h ^ p[i]) * 1099511628211ull;
+}
+void MixObject(uint64_t& h, Obj o) {
+    if (!o) return;
+    const NetLayout& l = NetLayoutOf(eng::ClassOf(o));
+    for (const auto& [offset, bytes] : l.plain) Mix(h, o + offset, static_cast<size_t>(bytes));
+    for (int32_t offset : l.arrays) {
+        const uint8_t* data = nullptr;
+        int32_t count = 0;
+        std::memcpy(&data, o + offset, sizeof data);
+        std::memcpy(&count, o + offset + 8, sizeof count);
+        Mix(h, reinterpret_cast<const uint8_t*>(&count), sizeof count);
+        // count bytes are always there (an element is at least a byte): the first of them, enough to see a change
+        if (data && count > 0) Mix(h, data, static_cast<size_t>(std::min(count, 512)));
+    }
+}
+uint64_t NetFingerprint(Obj actor) {
+    uint64_t h = 1469598103934665603ull;
+    MixObject(h, actor);
+    MixObject(h, eng::ReadObj(actor, "RootComponent"));
+    return h;
+}
+int gWoken = 0, gWakeSteps = 0;
+}  // namespace
+
+PieceSnapshot SnapshotPieces() {
+    PieceSnapshot out;
+    for (Obj a : AllActors())
+        if (a) out[a] = NetFingerprint(a);
+    return out;
+}
+
+// The pieces an undo or redo changed natively have their replication woken (AActor.FlushNetDormancy): a dormant piece
+// wouldn't send the change to the other players. Only those: waking a dormant piece reopens its channel and sends all
+// of it again, so waking every piece sent the whole map to everyone on every step. Without a snapshot, every piece.
+void WakePieces(const PieceSnapshot* before) {
     // the handler's list first made again: a piece another player's step brought back isn't in it yet
     if (Obj h = Handler()) eng::Call(h, "GetAllActors", uint8_t{1}, uint8_t{1});
-    for (Obj a : AllActors()) eng::Call(a, "FlushNetDormancy");
+    ++gWakeSteps;
+    for (Obj a : AllActors()) {
+        if (!a) continue;
+        if (before) {
+            const auto it = before->find(a);
+            if (it != before->end() && it->second == NetFingerprint(a)) continue;
+        }
+        eng::Call(a, "FlushNetDormancy");
+        ++gWoken;
+    }
 }
+std::string WakeStatus() { return "woken=" + std::to_string(gWoken) + "/" + std::to_string(gWakeSteps) + "steps"; }
 bool Redo() { return Handler() && eng::Call(Handler(), "Redo").Invoked(); }
 
 bool Scale(int id, Vec3* out) {
@@ -1279,14 +1351,16 @@ void FinishSkippedCall(uint8_t* frame) {
 void UndoHooked(Obj context, uint8_t* frame, void* result) {
     ++gHistoryMoves;
     if (gHistoryRedirect && gHistoryRedirect(false)) return FinishSkippedCall(frame);
+    const PieceSnapshot before = gAfterHistoryStep && gNetworked && !gJoiner ? SnapshotPieces() : PieceSnapshot{};
     gUndoOriginal(context, frame, result);
-    if (gAfterHistoryStep) gAfterHistoryStep();
+    if (gAfterHistoryStep) gAfterHistoryStep(before);
 }
 void RedoHooked(Obj context, uint8_t* frame, void* result) {
     ++gHistoryMoves;
     if (gHistoryRedirect && gHistoryRedirect(true)) return FinishSkippedCall(frame);
+    const PieceSnapshot before = gAfterHistoryStep && gNetworked && !gJoiner ? SnapshotPieces() : PieceSnapshot{};
     gRedoOriginal(context, frame, result);
-    if (gAfterHistoryStep) gAfterHistoryStep();
+    if (gAfterHistoryStep) gAfterHistoryStep(before);
 }
 
 }  // namespace

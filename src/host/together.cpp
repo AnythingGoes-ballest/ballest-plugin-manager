@@ -50,6 +50,33 @@ Obj GameInstance() {
 // The travel URL the engine keeps for its next tick (the game instance's FWorldContext's TravelURL, an FString),
 // found by what it holds rather than by offset: an FString among the first bytes of a struct the game instance points
 // to, whose text starts with `start`. Read-only. "" if none matches.
+// How long the session's own work takes, part by part: the longest single call of each (in "together status", as
+// slow=...), so a hitch while editing together can be put down to a part (or shown not to be ours).
+std::map<std::string, double> gSlowest;
+struct Timed {
+    const char* name;
+    LARGE_INTEGER start;
+    explicit Timed(const char* n) : name(n) { QueryPerformanceCounter(&start); }
+    ~Timed() {
+        LARGE_INTEGER end, freq;
+        QueryPerformanceCounter(&end);
+        QueryPerformanceFrequency(&freq);
+        const double ms = 1000.0 * static_cast<double>(end.QuadPart - start.QuadPart) / static_cast<double>(freq.QuadPart);
+        double& worst = gSlowest[name];
+        if (ms > worst) worst = ms;
+    }
+};
+std::string SlowText() {
+    std::string out;
+    char buf[96];
+    for (const auto& [name, ms] : gSlowest)
+        if (ms >= 1.0) {
+            std::snprintf(buf, sizeof buf, "%s%s=%.0fms", out.empty() ? " slow=" : ",", name.c_str(), ms);
+            out += buf;
+        }
+    return out;
+}
+
 std::string FindTravelUrl(const std::wstring& start) {
     Obj gi = GameInstance();
     if (!gi || start.empty()) return "";
@@ -356,6 +383,32 @@ void RecacheClientPieces(Obj handler) {
     if (eng::Invoke(handler, p)) ++gRecached;
 }
 
+// The game's pieces replicate as a game's actors would (measured 2026-11-06, BP_Track_Short1_C): only within 15000 units
+// of a player's camera (NetCullDistanceSquared 2.25e8), and awake, looked at 100 times a second (NetUpdateFrequency).
+// In an editor that leaves a joiner with only the part of the map near them (on a big map most pieces never arrived;
+// flying around made pieces come and go, each a channel opened or closed) and the host comparing every piece 100 times
+// a second for each joiner. On the host, each piece is made relevant at any distance and looked at 20 times a second
+// (a drag still shows smoothly), checked every second for new pieces.
+constexpr float kPieceCullSquared = 1.0e14f, kPieceUpdateRate = 20.0f;
+int gPiecesRelevant = 0;
+void KeepPiecesRelevant(Obj handler) {
+    for (Obj a : eng::ReadObjArray(handler, "AllActors")) {
+        if (!a) continue;
+        float cull = 0, rate = 0;
+        if (!eng::ReadBytes(a, "NetCullDistanceSquared", &cull, sizeof cull)) continue;
+        bool changed = false;
+        if (cull < kPieceCullSquared) {
+            eng::WriteBytes(a, "NetCullDistanceSquared", &kPieceCullSquared, sizeof kPieceCullSquared);
+            changed = true;
+        }
+        if (eng::ReadBytes(a, "NetUpdateFrequency", &rate, sizeof rate) && rate > kPieceUpdateRate) {
+            eng::WriteBytes(a, "NetUpdateFrequency", &kPieceUpdateRate, sizeof kPieceUpdateRate);
+            changed = true;
+        }
+        if (changed) ++gPiecesRelevant;
+    }
+}
+
 // The map is the host's alone (user decision 2026-11-05): a client can't save or publish it. Its editor's save button
 // (WBP_SaveButton), publish tab (WBP_PublishButton), publisher tools (WBP_PublisherToolsButton, which the game shows
 // and hides itself) and publish window are kept hidden, checked again 4 times a second. The world settings tab goes too:
@@ -493,19 +546,24 @@ void SetUpClientEditor() {
     static ULONGLONG lastRecache = 0;
     const bool recache = GetTickCount64() - lastRecache > 2000;
     if (recache) lastRecache = GetTickCount64();
-    KeepHostMapName();
+    { Timed t_("KeepHostMapName"); KeepHostMapName(); }
     // the host's own list misses pieces another player's handler brings back (a joiner's undo of a delete): rebuilt too
     if (IsServer() && recache)
-        if (Obj own = editor::OwnHandler()) RecacheClientPieces(own);
+        if (Obj own = editor::OwnHandler()) { Timed t_("RecacheHost"); RecacheClientPieces(own); }
+    static ULONGLONG relevantAt = 0;
+    if (IsServer() && GetTickCount64() - relevantAt > 1000) {
+        relevantAt = GetTickCount64();
+        if (Obj own = editor::OwnHandler()) { Timed t_("KeepPiecesRelevant"); KeepPiecesRelevant(own); }
+    }
     if (!IsClient()) return;
     Obj controller = game::PlayerController();
     Obj pawn = controller ? eng::Call(controller, "K2_GetPawn").ReturnObj() : nullptr;
-    HideClientSaving();                 // a test run's ball pawn has no handler: hidden all the same
+    { Timed t_("HideClientSaving"); HideClientSaving(); }                 // a test run's ball pawn has no handler: hidden all the same
     if (!pawn || !eng::FindProp(eng::ClassOf(pawn), "SKGMLEHandler")) return;
     if (eng::Get(gSetUpPawn) == pawn) {
-        KeepClientEditing(controller);
+        { Timed t_("KeepClientEditing"); KeepClientEditing(controller); }
         if (recache)
-            if (Obj handler = eng::ReadObj(pawn, "SKGMLEHandler")) RecacheClientPieces(handler);
+            if (Obj handler = eng::ReadObj(pawn, "SKGMLEHandler")) { Timed t_("RecacheClient"); RecacheClientPieces(handler); }
         return;
     }
     Obj handler = eng::ReadObj(pawn, "SKGMLEHandler");
@@ -515,8 +573,9 @@ void SetUpClientEditor() {
     gEditingSince = 0;
     gContextSets = 0;
     eng::WriteBytes(pawn, "SKGLevelEditorHandler", &handler, sizeof handler);
-    const bool init = eng::Call(handler, "Init").Invoked();
-    const bool hud = eng::Call(pawn, "HandleHUD").Invoked();
+    bool init = false, hud = false;
+    { Timed t_("ClientInit"); init = eng::Call(handler, "Init").Invoked(); }
+    { Timed t_("ClientHud"); hud = eng::Call(pawn, "HandleHUD").Invoked(); }
     eng::Call(handler, "SetGizmoType", uint8_t{20});
     gClientNote = std::string("client editor set up (init ") + (init ? "ok" : "failed") + ", hud " + (hud ? "ok" : "failed") + ")";
     hostlog::Info("together: " + gClientNote);
@@ -613,6 +672,9 @@ bool gWrapTried = false;
 eng::Weak gWorldHistoryOwner;           // the SKGMLEGizmoWorldSubsystem
 Obj WorldHistorySubsystem() {
     if (Obj s = eng::Get(gWorldHistoryOwner)) return s;
+    static ULONGLONG lookedAt = 0;           // not there yet (a level loading): looked for again at most twice a second
+    if (GetTickCount64() - lookedAt < 500) return nullptr;
+    lookedAt = GetTickCount64();
     Obj cls = eng::FindClass("SKGMLEGizmoWorldSubsystem"), found = nullptr;
     if (!cls) return nullptr;
     eng::ForEachObject([&](Obj o) {
@@ -763,10 +825,11 @@ bool RunPlayerStep(Obj handler, bool redo) {
     Obj before = eng::ReadObj(world, "HistoryManager");
     std::memcpy(handler + kHandlerGizmoSubsystem, &world, sizeof world);
     eng::WriteBytes(world, "HistoryManager", &history, sizeof history);
+    const editor::PieceSnapshot pieces = editor::SnapshotPieces();
     ++gInPlayerCall;
     const bool ran = eng::Call(handler, redo ? "Redo" : "Undo").Invoked();
     --gInPlayerCall;
-    editor::WakePieces();
+    editor::WakePieces(&pieces);
     eng::WriteBytes(world, "HistoryManager", &before, sizeof before);
     std::memcpy(handler + kHandlerGizmoSubsystem, &theirs, sizeof theirs);
     return ran;
@@ -973,39 +1036,75 @@ void GateConnections() {
 // few seconds (late joiners), and a joiner applies it, only from the lobby's owner.
 std::string gLastWorld;
 ULONGLONG gLastWorldSent = 0;
-std::string WorldState() {
-    char buf[256];
-    std::string out;
-    Obj lightCls = eng::FindClass("SKGMapEditorDirectionalLight"), skyCls = eng::FindClass("SkyLightComponent");
-    std::string skies;
+// The map's light, sky lights and sky spheres (not the menus' copies under /Engine/Transient), found by one look over
+// every object and kept: looked for again only in another world, or when the light found is gone (at most every 5 s).
+// Looking every second made a host's (and a joiner's) frames hitch on a big game.
+struct Lighting {
+    eng::Weak light;
+    std::vector<eng::Weak> skies, spheres;
+    long long generation = -1;
+    ULONGLONG lookedAt = 0;
+};
+Lighting gLighting;
+const Lighting& FindLighting() {
+    Lighting& l = gLighting;
+    const long long generation = game::Generation();
+    const bool stale = l.generation != generation || !eng::Get(l.light);
+    if (!stale || (l.generation == generation && GetTickCount64() - l.lookedAt < 5000)) return l;
+    l = Lighting{};
+    l.generation = generation;
+    l.lookedAt = GetTickCount64();
+    Obj lightCls = eng::FindClass("SKGMapEditorDirectionalLight"), skyCls = eng::FindClass("SkyLightComponent"),
+        sphereCls = eng::FindClass("BP_Sky_Sphere_Stylized_C");
     eng::ForEachObject([&](Obj o) {
-        if (eng::IsDefaultObject(o)) return true;
-        if (lightCls && out.empty() && eng::IsA(o, lightCls) && eng::PathOf(o).find("/Engine/Transient") != 0) {
-            float st[2] = {0, 0};
-            eng::ReadBytes(o, "DirectionalLightSettings", st, sizeof st);
-            struct { double p, y, r; } rot{};
-            const eng::Params rp = eng::Call(o, "K2_GetActorRotation");
-            if (const uint8_t* rr = rp.Return()) std::memcpy(&rot, rr, sizeof rot);
-            std::snprintf(buf, sizeof buf, "world %.3f %.3f %.2f %.2f %.2f", st[0], st[1], rot.p, rot.y, rot.r);
-            out = buf;
-        } else if (skyCls && eng::IsA(o, skyCls) && eng::PathOf(o).find("/Engine/Transient") != 0) {
-            float intensity = 0;
-            eng::ReadBytes(o, "Intensity", &intensity, sizeof intensity);
-            std::snprintf(buf, sizeof buf, "=%.3f", intensity);
-            skies += "|" + eng::PathOf(o) + buf;
+        const bool light = lightCls && eng::IsA(o, lightCls), sky = !light && skyCls && eng::IsA(o, skyCls),
+                   sphere = !light && !sky && sphereCls && eng::IsA(o, sphereCls);
+        if (!(light || sky || sphere) || eng::IsDefaultObject(o) || eng::PathOf(o).find("/Engine/Transient") == 0) return true;
+        if (light) {
+            if (!eng::Get(l.light)) l.light = eng::MakeWeak(o);
+        } else if (sky) {
+            l.skies.push_back(eng::MakeWeak(o));
+        } else {
+            l.spheres.push_back(eng::MakeWeak(o));
         }
         return true;
     });
-    return out.empty() ? "" : out + skies;
+    return l;
+}
+
+std::string WorldState() {
+    char buf[256];
+    const Lighting& l = FindLighting();
+    Obj o = eng::Get(l.light);
+    if (!o) return "";
+    float st[2] = {0, 0};
+    eng::ReadBytes(o, "DirectionalLightSettings", st, sizeof st);
+    struct { double p, y, r; } rot{};
+    const eng::Params rp = eng::Call(o, "K2_GetActorRotation");
+    if (const uint8_t* rr = rp.Return()) std::memcpy(&rot, rr, sizeof rot);
+    std::snprintf(buf, sizeof buf, "world %.3f %.3f %.2f %.2f %.2f", st[0], st[1], rot.p, rot.y, rot.r);
+    std::string out = buf;
+    for (const eng::Weak& w : l.skies)
+        if (Obj sky = eng::Get(w)) {
+            float intensity = 0;
+            eng::ReadBytes(sky, "Intensity", &intensity, sizeof intensity);
+            std::snprintf(buf, sizeof buf, "=%.3f", intensity);
+            out += "|" + eng::PathOf(sky) + buf;
+        }
+    return out;
 }
 void ShareHostWorld() {
     static ULONGLONG lastLook = 0;
     if (GetTickCount64() - lastLook < 1000) return;
     lastLook = GetTickCount64();
-    if (Players() < 2) return;
+    static int lastPlayers = 0;
+    const int players = Players();
+    const bool arrived = players > lastPlayers;  // someone new: told straight away (else unchanged lighting every 15 s)
+    lastPlayers = players;
+    if (players < 2) return;
     const std::string state = WorldState();
     if (state.empty() || state.size() > 1000) return;
-    if (state != gLastWorld || GetTickCount64() - gLastWorldSent > 5000) {
+    if (arrived || state != gLastWorld || GetTickCount64() - gLastWorldSent > 15000) {
         if (lobby::Send(state)) {
             gLastWorld = state;
             gLastWorldSent = GetTickCount64();
@@ -1018,7 +1117,7 @@ void ApplyHostWorld(const std::vector<lobby::Message>& messages) {
     const std::string owner = lobby::OwnerId();
     for (const auto& m : messages) {
         if (m.from != owner || m.text.rfind("world ", 0) != 0) continue;
-        if (m.text == gLastApplied && GetTickCount64() - gLastAppliedAt < 20000) continue;     // nothing changed
+        if (m.text == gLastApplied && GetTickCount64() - gLastAppliedAt < 60000) continue;     // nothing changed
         gLastApplied = m.text;
         gLastAppliedAt = GetTickCount64();
         float tod = 0, bri = 0;
@@ -1032,31 +1131,24 @@ void ApplyHostWorld(const std::vector<lobby::Message>& messages) {
                 skies[m.text.substr(at + 1, eq - at - 1)] = static_cast<float>(std::atof(m.text.c_str() + eq + 1));
             at = next;
         }
-        Obj lightCls = eng::FindClass("SKGMapEditorDirectionalLight"), skyCls = eng::FindClass("SkyLightComponent"),
-            sphereCls = eng::FindClass("BP_Sky_Sphere_Stylized_C");
         const float settings[2] = {tod, bri};
-        std::vector<Obj> spheres;
-        eng::ForEachObject([&](Obj o) {
-            const bool light = lightCls && eng::IsA(o, lightCls), sky = !light && skyCls && eng::IsA(o, skyCls),
-                       sphere = !light && !sky && sphereCls && eng::IsA(o, sphereCls);
-            if (!(light || sky || sphere) || eng::IsDefaultObject(o) || eng::PathOf(o).find("/Engine/Transient") == 0) return true;
-            if (light) {
-                eng::WriteBytes(o, "DirectionalLightSettings", settings, sizeof settings);
-                eng::Call(o, "OnRep_DirectionalLightData");
-                const struct { double p, y, r; } rot{pitch, yaw, roll};
-                eng::Call(o, "K2_SetActorRotation", rot, uint8_t{0});
-            } else if (sky) {
+        const Lighting& l = FindLighting();
+        if (Obj o = eng::Get(l.light)) {
+            eng::WriteBytes(o, "DirectionalLightSettings", settings, sizeof settings);
+            eng::Call(o, "OnRep_DirectionalLightData");
+            const struct { double p, y, r; } rot{pitch, yaw, roll};
+            eng::Call(o, "K2_SetActorRotation", rot, uint8_t{0});
+        }
+        for (const eng::Weak& w : l.skies)
+            if (Obj o = eng::Get(w)) {
                 auto it = skies.find(eng::PathOf(o));
                 if (it != skies.end()) eng::Call(o, "SetIntensity", it->second);
-            } else {
-                spheres.push_back(o);           // after the light has turned (the sphere reads it)
             }
-            return true;
-        });
-        for (Obj o : spheres) {
-            eng::Params sp(eng::FunctionOn(o, "EstablishEditorParams"));
-            if (sp.SetArg(0, settings, sizeof settings)) eng::Invoke(o, sp);
-        }
+        for (const eng::Weak& w : l.spheres)          // after the light has turned (the sphere reads it)
+            if (Obj o = eng::Get(w)) {
+                eng::Params sp(eng::FunctionOn(o, "EstablishEditorParams"));
+                if (sp.SetArg(0, settings, sizeof settings)) eng::Invoke(o, sp);
+            }
     }
 }
 
@@ -1111,17 +1203,18 @@ void ShareHistory() {
         gAdmittedHandlers.clear();
         gGateRan = false;
     }
-    if (IsServer() && lobby::IsOwner()) ShareHostWorld();
+    if (IsServer() && lobby::IsOwner()) { Timed t_("ShareHostWorld"); ShareHostWorld(); }
     if (IsServer()) {
         WrapServerFunctions(editor::OwnHandler());
-        GiveJoinersOwnHistories();
-        KeepHostHistory();
-        GateConnections();
+        { Timed t_("GiveJoinersOwnHistories"); GiveJoinersOwnHistories(); }
+        { Timed t_("KeepHostHistory"); KeepHostHistory(); }
+        { Timed t_("GateConnections"); GateConnections(); }
     }
     if (!inLobby) return;
     // a joiner tells the host who it is: the code's proof as soon as it is in the lobby (before it connects), and
     // "hello <PlayerId>" once connected; again every few seconds (a message can be lost)
     if (!lobby::IsOwner() && GetTickCount64() - gLastHello > kHelloEveryMs) {
+        Timed t_("HelloAndProof");
         const int id = IsClient() ? PlayerIdOf(LocalPlayerState()) : -1;
         bool sent = false;
         if (id >= 0 && sandbox::On()) sent = lobby::Send("hello " + std::to_string(id));      // a test copy's identity
@@ -1129,9 +1222,10 @@ void ShareHistory() {
         if (!proof.empty()) sent = lobby::Send("join " + proof) || sent;
         if (sent) gLastHello = GetTickCount64();
     }
-    const std::vector<lobby::Message> messages = lobby::Receive();
+    std::vector<lobby::Message> messages;
+    { Timed t_("LobbyReceive"); messages = lobby::Receive(); }
     if (!lobby::IsOwner()) FromHost(messages);
-    if (IsClient()) ApplyHostWorld(messages);
+    if (IsClient()) { Timed t_("ApplyHostWorld"); ApplyHostWorld(messages); }
     if (!IsServer() || !lobby::IsOwner() || messages.empty()) return;
     const std::string own = lobby::OwnId();
     std::vector<lobby::Member> members = lobby::Members();
@@ -1154,6 +1248,7 @@ void ShareHistory() {
             continue;
         }
         if (m.text.rfind("join ", 0) == 0) {
+            Timed t_("HostProof");
             if (gSessionCode.empty()) continue;
             if (!gProved.count(m.from)) {
                 auto& expected = gExpectedProof[m.from];       // made once per member: a flood costs nothing
@@ -1462,12 +1557,12 @@ void CheckListenDriver() {
 }  // namespace
 
 void Frame() {
-    HookOpenLevel();
-    HookClientTravel();
-    UseFallbackDriverInSandbox();
-    CheckListenDriver();
-    KeepLobbyWithSession();
-    GuardMapWrites();
+    { Timed t_("HookOpenLevel"); HookOpenLevel(); }
+    { Timed t_("HookClientTravel"); HookClientTravel(); }
+    { Timed t_("UseFallbackDriverInSandbox"); UseFallbackDriverInSandbox(); }
+    { Timed t_("CheckListenDriver"); CheckListenDriver(); }
+    { Timed t_("KeepLobbyWithSession"); KeepLobbyWithSession(); }
+    { Timed t_("GuardMapWrites"); GuardMapWrites(); }
     editor::SetNetworked(IsServer() || IsClient());
     if (IsClient()) gJoinPending = false;   // joined: a later failure isn't this join's
     editor::SetJoiner(IsClient());
@@ -1475,14 +1570,14 @@ void Frame() {
     if (!hooksSet) {
         hooksSet = true;
         editor::SetJoinerRefused([](const std::string& what) { Notice(what); });
-        editor::SetAfterHistoryStep([] {
-            if (IsServer()) editor::WakePieces();
+        editor::SetAfterHistoryStep([](const editor::PieceSnapshot& before) {
+            if (IsServer()) editor::WakePieces(&before);
         });
     }
     if (IsServer() || IsClient()) HookGroups(editor::OwnHandler());
-    if (IsServer()) RefuseJoinersEditorCalls();
-    SetUpClientEditor();
-    ShareHistory();
+    if (IsServer()) { Timed t_("RefuseJoinersEditorCalls"); RefuseJoinersEditorCalls(); }
+    { Timed t_("SetUpClientEditor"); SetUpClientEditor(); }
+    { Timed t_("ShareHistory"); ShareHistory(); }
 }
 
 void ListenNextEditor(bool on) {
@@ -1701,7 +1796,9 @@ int ConnectedClients() {
 std::string Status() {
     return "net=" + NetMode() + " armed=" + (gArmed ? "1" : "0") + " port=" + std::to_string(ListenPort()) +
            " clients=" + std::to_string(ConnectedClients()) + " hook=" + (gOpenOriginal ? "1" : gHookFailed ? "failed" : "0") +
-           " lastTravel=" + gLastTravel + " driver=" + gDriverNote + gSteamOnlyNote + " client=" + gClientNote + " contextSets=" + std::to_string(gContextSets) + (gEditingKept ? " editing" : "") + " recached=" + std::to_string(gRecached) + " savingHidden=" + std::to_string(gHiddenSaving) + " nameRestores=" + std::to_string(gNameRestores) + " stepsSent=" + std::to_string(gSentSteps) + " stepsRun=" + std::to_string(gRanSteps) + " ownHistories=" + std::to_string(gOwnHistories) + " wrapped=" + std::to_string(gWrapped) + " kicked=" + std::to_string(gKicked) + " claims=" + std::to_string(gClaims.size()) + " proved=" + std::to_string(gProved.size()) + " refusedWrites=" + std::to_string(gRefusedWrites.load());
+           " lastTravel=" + gLastTravel + " driver=" + gDriverNote + gSteamOnlyNote + " client=" + gClientNote + " contextSets=" + std::to_string(gContextSets) + (gEditingKept ? " editing" : "") + " recached=" + std::to_string(gRecached) + " savingHidden=" + std::to_string(gHiddenSaving) + " nameRestores=" + std::to_string(gNameRestores) + " stepsSent=" + std::to_string(gSentSteps) + " stepsRun=" + std::to_string(gRanSteps) + " ownHistories=" + std::to_string(gOwnHistories) + " wrapped=" + std::to_string(gWrapped) + " kicked=" + std::to_string(gKicked) + " claims=" + std::to_string(gClaims.size()) + " proved=" + std::to_string(gProved.size()) + " refusedWrites=" + std::to_string(gRefusedWrites.load()) + " " + editor::WakeStatus() + " relevant=" + std::to_string(gPiecesRelevant) + SlowText();
 }
+
+void ResetSlow() { gSlowest.clear(); }
 
 }  // namespace together

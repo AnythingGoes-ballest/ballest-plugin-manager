@@ -15,6 +15,7 @@
 // Pieces are identified by their object-array slot; an id stops resolving when the piece is deleted.
 // Game thread only.
 #pragma once
+#include <unordered_map>
 #include <functional>
 #include <vector>
 
@@ -66,8 +67,13 @@ void SetNetworked(bool on);
 // later, and a chain of moves would read stale positions); `tell` hears what was refused.
 void SetJoiner(bool on);
 void SetJoinerRefused(std::function<void(const std::string&)> tell);
-void SetAfterHistoryStep(std::function<void()> after);   // after every undo / redo the editor runs
-void WakePieces();                      // every piece's replication woken (after a change made natively)
+// Each piece's replicated state as a number, to tell which pieces a native change touched.
+using PieceSnapshot = std::unordered_map<eng::Obj, uint64_t>;
+PieceSnapshot SnapshotPieces();
+// After every undo / redo the editor runs, with the pieces as they were before it (empty when not editing together).
+void SetAfterHistoryStep(std::function<void(const PieceSnapshot&)> after);
+void WakePieces(const PieceSnapshot* before = nullptr);   // replication woken: the changed pieces' (or every piece's)
+std::string WakeStatus();
 bool Networked();          // undo and redo steps the editor has run, however they were started (counted from 0)
 bool Redo();
 Vec3 ViewForward();

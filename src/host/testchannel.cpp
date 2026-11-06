@@ -1900,6 +1900,7 @@ void Run(const std::string& cmd) {
                  const bool sent = h && p.SetArg(0, &tod, sizeof tod) && eng::Invoke(h, p);
                  return Report(c + (sent ? " -> sent" : " -> failed"));
              }
+             else if (what == "slowreset") { together::ResetSlow(); return Report(c + " -> reset"); }
              else if (what == "uictx") {     // uictx <context>: the editor widget's Try Switch UIContext
                  const auto list = Instances("W_MapEditor_C", "Transient");
                  if (list.empty()) return Report(c + " -> no editor widget");
