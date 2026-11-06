@@ -125,6 +125,30 @@
       "priority": 40
     },
     {
+      "id": "create-together",
+      "name": "Create Together",
+      "description": "Edit one map with friends: a create together page in the Create menu lists open sessions, joins one by its code or starts your own from a new map or one of yours (public, friends, code only or invite only). The editor's own networking keeps every piece in sync, over Steam.",
+      "author": "AnythingGoes",
+      "repo": "AnythingGoes-ballest/ballest-create-together",
+      "version": "0.1.0",
+      "commit": "9094ecc3565ee229935a08de573030f61d59bde1",
+      "min_host": "0.34.0",
+      "icon": "icon.png",
+      "dependencies": [],
+      "category": "enhancements",
+      "priority": 40,
+      "files": {
+        "info.toml": "8e7cc471d27abe6e909a21b179c876af01e726f5c4f56c0bb73fe57a88836363",
+        "util.as": "c215bc65082529c76292510dd5015f38d7065842cbfb6c88cf968e1ca1dde3df",
+        "session.as": "87dc901d401a124722ffc23d4886350bd4194c84eb899303d96d82468a21ad0f",
+        "page.as": "ec7955cba61b03cff3a058e8bae2cc7c12cb10ff5f0d95ee339aefc60f102eb1",
+        "tab.as": "24ab6fa1c4f5ca9a42889f46a1a7fe726bbae6329f1c3f2f9c543d21220480f7",
+        "main.as": "afc4047ad6c79d5c32f7fc6108387032fb63ad295050cc138660abcd6f8db66d",
+        "tab.png": "e83c5b249a5fba7ce5a86723a6c39b0329f71c29b3cc274dd063b0899c52e9aa",
+        "icon.png": "20b64d987812237a437aaec99bd4c6458d31ba04ce7b7670be96901044140cfd"
+      }
+    },
+    {
       "id": "dominus-ball",
       "name": "Dominus Ball",
       "description": "Adds a clear ball with the Dominus car from Rocket League inside, standing on the ground and facing where the ball goes, tilting up and down slopes and falls too.",
