@@ -6,7 +6,9 @@
 #include <string>
 #include <vector>
 
+#include "engine.hpp"
 #include "game.hpp"
+#include "layout.hpp"
 #include "log.hpp"
 #include "widgets.hpp"
 
@@ -143,9 +145,59 @@ bool Build(Tab& t, Obj create) {
     return true;
 }
 
+// A click on one of our labels, however it came (mouse, keyboard, pad): the label's own click event
+// (WBP_ButtonBase_C's HitBox OnClicked handler, a Blueprint function every game button shares) is wrapped, and a call
+// on one of our labels asks for its tab. Polling the button's pressed state alone misses keyboard and pad presses
+// (never hovered). Runs inside the game's call: only sets a flag.
+const char* const kLabelClicked = "BndEvt__WBP_ButtonBase_Button_33_K2Node_ComponentBoundEvent_0_OnButtonClickedEvent__DelegateSignature";
+using NativeFunction = void (*)(Obj context, uint8_t* frame, void* result);
+NativeFunction gClickedOriginal = nullptr;
+Obj gClickedFn = nullptr;
+bool gClickWrapFailed = false;
+int gLabelClicks = 0;
+void LabelClickedHooked(Obj context, uint8_t* frame, void* result) {
+    for (auto& t : gTabs)
+        if (!t.removed && context && eng::Get(t.button) == context) {
+            t.openRequested = true;
+            ++gLabelClicks;
+        }
+    gClickedOriginal(context, frame, result);
+}
+void WrapLabelClicks() {
+    static ULONGLONG lastLook = 0;
+    if (gClickWrapFailed || GetTickCount64() - lastLook < 2000) return;
+    lastLook = GetTickCount64();
+    Obj fn = eng::FindFunction(eng::FindClass("WBP_ButtonBase_C"), kLabelClicked);
+    if (!fn || fn == gClickedFn) return;
+    NativeFunction e = nullptr;
+    std::memcpy(&e, fn + layout::kUFunctionNativeFunctionOffset, sizeof e);
+    if (e == &LabelClickedHooked) {
+        gClickedFn = fn;
+        return;
+    }
+    // a Blueprint function: the game exe's interpreter entry (anything else isn't as measured)
+    if (!e || (gClickedOriginal && e != gClickedOriginal) || !eng::InImage(reinterpret_cast<void*>(e))) {
+        hostlog::Warn("create page: the tab label's click event isn't as measured; clicks are seen by polling only");
+        gClickWrapFailed = true;
+        return;
+    }
+    gClickedOriginal = e;
+    const NativeFunction hooked = &LabelClickedHooked;
+    std::memcpy(fn + layout::kUFunctionNativeFunctionOffset, &hooked, sizeof hooked);
+    gClickedFn = fn;
+}
+
 bool Released(Obj label, bool* wasPressed) {
-    Obj button = label ? eng::ReadObj(label, "Button_33") : nullptr;
-    if (!button) return false;
+    // the label's button (WBP_ButtonBase_C.HitBox; the click handler's name still says Button_33, the property doesn't)
+    Obj button = label ? eng::ReadObj(label, "HitBox") : nullptr;
+    if (!button) {
+        static bool said = false;
+        if (label && !said) {
+            said = true;
+            hostlog::Warn("create page: the tab label has no HitBox button: its clicks can't be seen");
+        }
+        return false;
+    }
     const bool pressed = eng::Call(button, "IsPressed").ReturnBool();
     const bool clicked = *wasPressed && !pressed && eng::Call(button, "IsHovered").ReturnBool();
     *wasPressed = pressed;
@@ -198,6 +250,7 @@ void Frame() {
     for (const auto& t : gTabs) any = any || !t.removed;
     if (!any) return;
     Obj create = CreatePageWidget();
+    if (create) WrapLabelClicks();
     if (!create) {
         for (auto& t : gTabs) t.open = false;
         return;
@@ -273,7 +326,8 @@ std::string Status() {
         out += "[" + std::to_string(i) + " '" + t.label + "'" + (t.removed ? " removed" : "") + (eng::Get(t.page) ? " built" : "") +
                (t.open ? " open" : "") + "]";
     }
-    return (out.empty() ? "no create page tabs" : out) + (eng::Get(gCreate) ? " (page found)" : " (no page)") + (gNote.empty() ? "" : " " + gNote);
+    return (out.empty() ? "no create page tabs" : out) + (eng::Get(gCreate) ? " (page found)" : " (no page)") +
+           " clicks=" + std::to_string(gLabelClicks) + (gClickedFn ? "" : " (click event not wrapped)") + (gNote.empty() ? "" : " " + gNote);
 }
 
 }  // namespace createpage
