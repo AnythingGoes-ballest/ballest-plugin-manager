@@ -28,6 +28,7 @@ bool gOwner = false;
 std::string gPendingInvite;
 bool gCommandLineRead = false;
 bool gSearching = false;
+ULONGLONG gFriendDataUntil = 0;         // when a search stops waiting for its friends' lobbies' data
 std::vector<Found> gResults;
 std::string gSearchCode;                // the last Find's code ("" for the lists)
 int gSearchSeq = 0;                     // each Find's own number: an answer for an older one is dropped
@@ -131,6 +132,22 @@ Steam& S() {
 }
 
 uint64_t Parse64(const std::string& id) { return std::strtoull(id.c_str(), nullptr, 10); }
+
+// Steam's EChatRoomEnterResponse, for a player to read
+std::string EnterResponseText(uint32_t r) {
+    switch (r) {
+        case 2: return "that session is gone";
+        case 3: return "Steam didn't let you in (the session may be invite only)";
+        case 4: return "that session is full";
+        case 6: return "you're banned from that session";
+        case 7: return "Steam limits this account (accounts that haven't bought anything can't join lobbies)";
+        case 9: return "Steam's community ban stops this account joining";
+        case 10: return "a player in that session has blocked you";
+        case 11: return "you've blocked a player in that session";
+        case 15: return "Steam says too many tries: wait a minute and try again";
+        default: return "couldn't join (Steam answered " + std::to_string(r) + ")";
+    }
+}
 
 std::map<std::string, std::string> SteamData(uint64_t lobby) {
     std::map<std::string, std::string> out;
@@ -517,7 +534,8 @@ void Join(const std::string& id) {
             return;
         }
         if (failed || response != kEnterSuccess) {
-            gState = "error: couldn't join (Steam answered " + std::to_string(response) + ")";
+            gState = "error: " + EnterResponseText(response);
+            hostlog::Warn("lobby: Steam refused the join (" + std::to_string(response) + ")");
             return;
         }
         {
@@ -595,6 +613,7 @@ std::vector<Member> Members() {
     }
     return cached;
 }
+std::vector<Member> MembersNow() { return ReadMembers(); }
 std::vector<Member> ReadMembers() {
     std::vector<Member> out;
     if (gId.empty()) return out;
@@ -682,11 +701,20 @@ void Find(const std::string& code) {
                 gResults.push_back(fl);
             }
         }
+        gFriendDataUntil = GetTickCount64() + 3000;
         gSearching = false;
     });
 }
 
-bool Searching() { return gSearching; }
+// a friend's lobby has no data until Steam sends it (RequestLobbyData, a moment after the list): the search counts as
+// under way until every friend's lobby found has its data, or 3 s, so the list isn't read before it's there
+bool Searching() {
+    if (gSearching) return true;
+    if (UseTest() || !S().ok || GetTickCount64() > gFriendDataUntil) return false;
+    for (const Found& f : gResults)
+        if (f.friends && SteamData(Parse64(f.id)).count("ct") == 0) return true;
+    return false;
+}
 
 std::vector<Found> Results() {
     if (UseTest() || !S().ok) return gResults;

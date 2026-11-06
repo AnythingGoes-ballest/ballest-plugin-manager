@@ -46,6 +46,7 @@ struct Member {
     bool owner = false;
 };
 std::vector<Member> Members();         // the owner first
+std::vector<Member> MembersNow();      // the same, asked of Steam now (Members() is up to half a second old)
 
 // Lobbies to join: every lobby of ours that's public, friends' lobbies, and (with a code) the one whose "ch" data is
 // that code (a lookup key the plugin makes from the session's code: never the code itself). The lists never show

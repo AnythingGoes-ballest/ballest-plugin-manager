@@ -873,10 +873,9 @@ bool Admitted(const std::string& member) {
     }
 }
 
-std::map<std::string, ULONGLONG> gBanned;     // member -> when last sent home (sent home again on sight for kBanMs)
 std::map<int, ULONGLONG> gMissingSince;       // PlayerId -> since when their member isn't in the lobby
 ULONGLONG gNoMembersSince = 0;
-constexpr ULONGLONG kBanMs = 60000, kLobbyLagMs = 4000, kMissingMs = 5000, kNoMembersMs = 3000;
+constexpr ULONGLONG kLobbyLagMs = 4000, kMissingMs = 5000, kNoMembersMs = 3000;
 
 void GateConnections() {
     if (GetTickCount64() - gLastGate < 250) return;
@@ -937,16 +936,14 @@ void GateConnections() {
         const bool missingLong = !inLobby && now - gMissingSince[id] > kMissingMs;
         const ULONGLONG grace = sandbox::On() ? kTestAdmitMs : kAdmitMs;
         std::string why;
-        bool ban = false;                         // only a refusal keeps them out for a while (not a rejoin or a leave)
+        // nobody is kept out for a while: someone refused can come straight back (and is refused again if still not let in)
         if (id < 0) why = "no player id";
-        else if (!member.empty() && gBanned.count(member) && now - gBanned[member] < kBanMs) why = "sent home a moment ago";
         else if (!member.empty() && newest[member] != id) why = "they joined again";
         else if (!member.empty() && !inLobby && (age > kLobbyLagMs || missingLong)) why = "not in the session's lobby";
         else if (member.empty() || !Admitted(member)) {
             if (age > grace) {
                 why = member.empty() ? "didn't say who they are"
                                      : std::string("not let in (") + (lobby::Type() == lobby::kCode ? "no code" : "not the host's friend") + ")";
-                ban = !member.empty();
             } else {
                 continue;                         // not decided yet: they can't change anything meanwhile
             }
@@ -954,7 +951,6 @@ void GateConnections() {
             why = "the session is full";
         }
         if (!why.empty()) {
-            if (ban) gBanned[member] = now;
             Kick(ps, why, member);
             continue;
         }
@@ -1111,7 +1107,6 @@ void ShareHistory() {
         gLastKick.clear();
         gProved.clear();
         gExpectedProof.clear();
-        gBanned.clear();
         gMissingSince.clear();
         gAdmittedHandlers.clear();
         gGateRan = false;
@@ -1139,11 +1134,18 @@ void ShareHistory() {
     if (IsClient()) ApplyHostWorld(messages);
     if (!IsServer() || !lobby::IsOwner() || messages.empty()) return;
     const std::string own = lobby::OwnId();
-    const std::vector<lobby::Member> members = lobby::Members();
+    std::vector<lobby::Member> members = lobby::Members();
+    bool fresh = false;
     for (const auto& m : messages) {
         if (m.from == own) continue;
         bool member = false;
         for (const auto& x : members) member = member || x.id == m.from;
+        // a joiner's first message can come before the (half-second) cached member list has them: asked again
+        if (!member && !fresh) {
+            members = lobby::MembersNow();
+            fresh = true;
+            for (const auto& x : members) member = member || x.id == m.from;
+        }
         if (!member) continue;
         if (m.text.rfind("hello ", 0) == 0) {
             if (!sandbox::On()) continue;                       // a player's game knows who each player is from Steam
@@ -1156,8 +1158,13 @@ void ShareHistory() {
             if (!gProved.count(m.from)) {
                 auto& expected = gExpectedProof[m.from];       // made once per member: a flood costs nothing
                 if (expected.empty()) expected = Proof(gSessionCode, m.from);
-                if (expected.empty() || m.text.substr(5) != expected) continue;
+                if (expected.empty() || m.text.substr(5) != expected) {
+                    static std::set<std::string> told;
+                    if (told.insert(m.from).second) hostlog::Info("together: a lobby member's code proof didn't match");
+                    continue;
+                }
                 gProved.insert(m.from);
+                hostlog::Info("together: a lobby member proved the session's code");
             }
             // the host's own answer: proof that this session knows the code too (a look-alike lobby can't make it)
             lobby::Send("ok " + m.from + " " + Proof(gSessionCode, m.from + "|host"));
