@@ -39,6 +39,8 @@ int ListenPort();
 // Code-only sessions: the host's secret code (members who prove it are let in), and the code a joiner typed (proved to
 // the host over the lobby). "" for none.
 void SetSessionCode(const std::string& code);
+std::string NewSessionCode();           // 8 random letters and digits (the system's random source), "" if none
+bool JoinPending();                     // a Join has started and not yet arrived (Leave calls it off)
 void SetJoinCode(const std::string& code);
 // The last thing the host refused or ended for the player ("only the host can save this map", "the host left..."),
 // given once; "" if none.
@@ -57,6 +59,7 @@ int Players();
 int ConnectedClients();                 // a listen server's client connections, -1 if not one
 std::string Status();                   // for the test channel
 void WatchGameInstance();
-std::string HistoryStatus();            // test: each history's transactions (the world's, each player's own)               // test: logs the game instance's travel and network error events
+std::string HistoryStatus();
+std::string SteamIdsStatus();           // test: every player's Steam id as the host reads it            // test: each history's transactions (the world's, each player's own)               // test: logs the game instance's travel and network error events
 
 }  // namespace together

@@ -3931,6 +3931,13 @@ code in the lobby's data, never the code.
 Together::SetSessionCode(code);                     // the host
 Together::SetLobbyData("ch", MyLookupKey(code));
 
+== Together::NewSessionCode
+A new 8-character session code (letters and digits, no look-alikes) from the system's random source, for code-only
+sessions; "" if the random source failed.
+--
+string code = Together::NewSessionCode();
+Together::SetSessionCode(code);
+
 == Together::TakeNotice
 What the host refused or ended for the player since the last call ("only the host can save this map", "the host left:
 the session is over", "groups are off while editing together"...), once; "" if nothing.

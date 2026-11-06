@@ -2552,6 +2552,10 @@ void RegisterCampaigns() {
 // --- Prefabs ---------------------------------------------------------------------------------------------------------
 CScriptArray* PrefabsList() { return StringArrayOf(prefabs::List()); }
 bool PrefabsSave(const std::string& name, bool overwrite, std::string& reply) {
+    if (together::IsClient()) {             // the map is the host's: its pieces aren't a joiner's to keep
+        reply = "only the host can save pieces as a prefab while editing together";
+        return false;
+    }
     plugins::GameWork work;
     bool saved = false;
     reply = prefabs::SaveSelection(name, overwrite, &saved).text;
@@ -2620,6 +2624,7 @@ void TogetherJoinLobby(const std::string& id) {
 }
 bool TogetherJoin(const std::string& address) {
     TogetherUsedBy();
+    plugins::GameWork work;
     return together::Join(address);
 }
 CScriptArray* TogetherMemberIds() {
@@ -2628,7 +2633,15 @@ CScriptArray* TogetherMemberIds() {
     return StringArrayOf(ids);
 }
 void TogetherLeave() {
-    if (together::IsServer() || together::IsClient()) together::Leave();
+    if (together::IsServer() || together::IsClient() || together::JoinPending()) together::Leave();
+}
+bool TogetherNewMap() {
+    plugins::GameWork work;                 // the game's own work: not the plugin's time
+    return together::NewMap();
+}
+bool TogetherOpenMap(const std::string& file) {
+    plugins::GameWork work;
+    return together::OpenMap(file);
 }
 
 void RegisterTogether() {
@@ -2649,8 +2662,9 @@ void RegisterTogether() {
     Global("string OwnAddress()", asFUNCTION(together::OwnAddress));
     Global("bool Join(const string &in address)", asFUNCTION(TogetherJoin));
     Global("void Leave()", asFUNCTION(TogetherLeave));
-    Global("bool NewMap()", asFUNCTION(together::NewMap));
-    Global("bool OpenMap(const string &in file)", asFUNCTION(together::OpenMap));
+    Global("bool NewMap()", asFUNCTION(TogetherNewMap));
+    Global("bool OpenMap(const string &in file)", asFUNCTION(TogetherOpenMap));
+    Global("string NewSessionCode()", asFUNCTION(together::NewSessionCode));
     Global("array<string>@ SavedMaps()", asFUNCTION(TogetherSavedMaps));
     // lobbies
     Global("string LobbyState()", asFUNCTION(lobby::State));

@@ -1,6 +1,7 @@
 #include "together.hpp"
 
 #include <windows.h>
+#include <bcrypt.h>
 
 #include <cstdint>
 #include <utility>
@@ -31,6 +32,7 @@ using eng::Obj;
 
 namespace together {
 std::wstring SavedMapsFolder();
+extern bool gJoinPending;
 namespace {
 
 using NativeFunction = void (*)(Obj context, uint8_t* frame, void* result);
@@ -317,19 +319,22 @@ ULONGLONG gLastClientCheck = 0;
 std::string gClientNote;
 // The live instance of a class (in the viewport, for widgets), cached: the object array is scanned again only when the
 // cached one is gone, at most every 2 s per class (a scan goes through every object).
-Obj LiveInstance(const char* className) {
+Obj LiveInstance(const char* className, bool inViewport = true) {
     struct Cached {
         eng::Weak object;
         ULONGLONG scanned = 0;
     };
     static std::map<std::string, Cached> cache;
-    Cached& c = cache[className];
-    if (Obj o = eng::Get(c.object)) return o;
+    Cached& c = cache[std::string(className) + (inViewport ? "" : "#any")];
+    if (Obj o = eng::Get(c.object)) {
+        if (!inViewport || !eng::FindFunction(eng::ClassOf(o), "IsInViewport") || eng::Call(o, "IsInViewport").ReturnBool()) return o;
+        c.object = {};                  // gone from the screen (a test run makes the editor again): look again
+    }
     if (GetTickCount64() - c.scanned < 2000) return nullptr;
     c.scanned = GetTickCount64();
     Obj cls = eng::FindClass(className), found = nullptr;
     if (!cls) return nullptr;
-    const bool widget = eng::FindFunction(cls, "IsInViewport") != nullptr;
+    const bool widget = inViewport && eng::FindFunction(cls, "IsInViewport") != nullptr;
     eng::ForEachObject([&](Obj o) {
         if (eng::ClassOf(o) == cls && !eng::IsDefaultObject(o) && (!widget || eng::Call(o, "IsInViewport").ReturnBool())) found = o;
         return found == nullptr;
@@ -355,6 +360,8 @@ void RecacheClientPieces(Obj handler) {
 // (WBP_SaveButton), publish tab (WBP_PublishButton), publisher tools (WBP_PublisherToolsButton, which the game shows
 // and hides itself) and publish window are kept hidden, checked again 4 times a second. The world settings tab goes too:
 // its light rotation is set on the joiner's own light (W_WorldSettings: K2_SetActorRotation, no Server_ call), which
+// would leave the joiner's world different from everyone else's. Test runs are the host's: a joiner's play buttons go,
+// and the host refuses a joiner's ServerPlayHere / ServerPlayFromStart (RefuseJoinersEditorCalls). Before that, the light
 // would leave the joiner's world different from everyone else's. Saves that still start (the editor's exit and menu
 // actions save too) are refused where they write (GuardMapWrites).
 int gHiddenSaving = 0;
@@ -362,7 +369,7 @@ void HideClientSaving() {
     Obj editorUi = LiveInstance("W_MapEditor_C");
     if (!editorUi) return;
     for (const char* name : {"WBP_SaveButton", "WBP_PublishButton", "WBP_PublisherToolsButton", "WBP_PublishWindow",
-                             "WBP_WorldSettingsButton"}) {
+                             "WBP_WorldSettingsButton", "WBP_PlayHereButton", "WBP_PlayFromStartButton"}) {
         Obj widget = eng::FindProp(eng::ClassOf(editorUi), name) ? eng::ReadObj(editorUi, name) : nullptr;
         if (!widget) continue;
         constexpr uint8_t kCollapsed = 1;
@@ -377,8 +384,20 @@ void HideClientSaving() {
 // instance's CurrentUGCLevelName keeps it; measured 2026-11-05), so the host's save went to a nameless file. Whenever the
 // player count changes, the name is given back the editor's own way: W_MapEditor.PassTextToUIManager(EnteredText), what
 // typing it in the header does (WBP_LevelSubmission.WithLevelNames and the header's box).
-int gLastPlayers = -1;
+int gLastPlayers = -1, gRestoresLeft = 0;
 std::string gHostMapName;
+// The map's display name as the editor holds it: WBP_LevelSubmission.GetCurrentLevelData's LevelDisplayName (an FString
+// at 0x98 of SBallgameLevelData, from the types dump), "" if there's no panel or no name.
+std::string EditorMapName() {
+    Obj panel = LiveInstance("WBP_LevelSubmission_C", false);
+    Obj fn = panel ? eng::FindFunction(eng::ClassOf(panel), "GetCurrentLevelData") : nullptr;
+    if (!fn) return "";
+    eng::Params p(fn);
+    if (!eng::Invoke(panel, p)) return "";
+    size_t size = 0;
+    const uint8_t* data = p.Get("LevelData", &size);
+    return data && size > 0xa8 ? eng::ReadFString(data + 0x98) : "";
+}
 ULONGLONG gPlayersChangedAt = 0;
 int gNameRestores = 0;
 std::string GameInstanceMapName() {
@@ -404,20 +423,25 @@ void KeepHostMapName() {
         gHostMapName.clear();
         return;
     }
-    // the host's name for the map: the game instance's, kept while it's there (a new map has none until it's named)
-    const std::string name = GameInstanceMapName();
-    if (!name.empty()) gHostMapName = name;
+    // the host's name for the map as the editor holds it (its submission panel's level data: a renamed or newly named
+    // map's too), read while no player is arriving; the game instance's as a fallback
     const int players = Players();
+    if (players == gLastPlayers && !gPlayersChangedAt) {
+        std::string name = EditorMapName();
+        if (name.empty() && gHostMapName.empty()) name = GameInstanceMapName();
+        if (!name.empty()) gHostMapName = name;
+    }
     if (players != gLastPlayers) {
         gLastPlayers = players;
         gPlayersChangedAt = GetTickCount64();
+        gRestoresLeft = 2;
     }
-    // a moment after the change (the joiner's arrival runs over a few frames), and once more a little later
-    if (gPlayersChangedAt && GetTickCount64() - gPlayersChangedAt > 1200) {
-        const bool again = GetTickCount64() - gPlayersChangedAt < 4000;
-        if (!again) gPlayersChangedAt = 0;
-        if (!gHostMapName.empty() && PassMapName(gHostMapName)) ++gNameRestores;
-        if (again) gPlayersChangedAt = GetTickCount64() - 4000;     // the second one at the next check
+    // a moment after the change (the joiner's arrival runs over a few frames), and again a few seconds later
+    const ULONGLONG since = gPlayersChangedAt ? GetTickCount64() - gPlayersChangedAt : 0;
+    if (gPlayersChangedAt && ((gRestoresLeft == 2 && since > 1200) || (gRestoresLeft == 1 && since > 4000))) {
+        --gRestoresLeft;
+        if (!gHostMapName.empty() && EditorMapName() != gHostMapName && PassMapName(gHostMapName)) ++gNameRestores;
+        if (gRestoresLeft == 0) gPlayersChangedAt = 0;
     }
 }
 
@@ -563,7 +587,19 @@ Obj WorldHistorySubsystem() {
 }
 int gInPlayerCall = 0;                  // a joiner's Server_ call (or step) is running: the world history is theirs
 eng::Weak gHostHistory;                 // the world's own history (the host's), seen outside any such call
+std::set<int32_t> gAdmittedHandlers;    // the handlers (object slots) of players the host has let in
+bool gGateRan = false;                   // GateConnections has decided at least once
 void RunAsPlayer(int i, Obj context, uint8_t* frame, void* result) {
+    // on the host, a joiner's change runs only once that joiner is let in (these calls come from the network: no
+    // bytecode to step when one is skipped)
+    if (context && IsServer() && context != editor::OwnHandler() && gGateRan && !gAdmittedHandlers.count(eng::MakeWeak(context).index)) {
+        static ULONGLONG said = 0;
+        if (GetTickCount64() - said > 2000) {
+            said = GetTickCount64();
+            hostlog::Warn("together: a change from a player who isn't let in was refused");
+        }
+        return;
+    }
     Obj own = context && IsServer() && eng::FindProp(eng::ClassOf(context), "HistoryManagerOverride")
                   ? eng::ReadObj(context, "HistoryManagerOverride") : nullptr;
     Obj world = own ? WorldHistorySubsystem() : nullptr;
@@ -647,6 +683,7 @@ bool RunPlayerStep(Obj handler, bool redo) {
     ++gInPlayerCall;
     const bool ran = eng::Call(handler, redo ? "Redo" : "Undo").Invoked();
     --gInPlayerCall;
+    editor::WakePieces();
     eng::WriteBytes(world, "HistoryManager", &before, sizeof before);
     std::memcpy(handler + kHandlerGizmoSubsystem, &theirs, sizeof theirs);
     return ran;
@@ -670,6 +707,7 @@ std::map<int, std::string> gClaims;     // test copies: PlayerId -> the lobby me
 std::map<int, ULONGLONG> gFirstSeen;    // PlayerId -> when the host first saw that player
 std::map<int, ULONGLONG> gLastKick;     // PlayerId -> when they were last sent home
 std::set<std::string> gProved;          // members who proved the session's code
+std::map<std::string, std::string> gExpectedProof;
 std::string gSessionCode, gJoinCode;    // the host's code (code-only sessions) and the one this joiner typed
 int gKicked = 0;
 
@@ -735,6 +773,11 @@ bool Admitted(const std::string& member) {
     }
 }
 
+std::map<std::string, ULONGLONG> gBanned;     // member -> when last sent home (sent home again on sight for kBanMs)
+std::map<int, ULONGLONG> gMissingSince;       // PlayerId -> since when their member isn't in the lobby
+ULONGLONG gNoMembersSince = 0;
+constexpr ULONGLONG kBanMs = 60000, kLobbyLagMs = 4000, kMissingMs = 5000, kNoMembersMs = 3000;
+
 void GateConnections() {
     if (GetTickCount64() - gLastGate < 250) return;
     gLastGate = GetTickCount64();
@@ -742,34 +785,157 @@ void GateConnections() {
     Obj gameState = controller ? eng::Call(eng::FindCdo("GameplayStatics"), "GetGameState", controller).ReturnObj() : nullptr;
     Obj own = LocalPlayerState();
     if (!gameState) return;
+    const ULONGLONG now = GetTickCount64();
     const bool ownLobby = lobby::State() == "in lobby" && lobby::IsOwner();
     const std::vector<lobby::Member> members = ownLobby ? lobby::Members() : std::vector<lobby::Member>{};
-    if (ownLobby && members.empty()) return;          // Steam's list for a moment empty: decided next time
+    // Steam's list empty for a moment: decided next time; empty for longer: the lobby is as good as gone
+    bool closed = !ownLobby;
+    if (ownLobby && members.empty()) {
+        if (!gNoMembersSince) gNoMembersSince = now;
+        if (now - gNoMembersSince < kNoMembersMs) return;
+        closed = true;
+    } else {
+        gNoMembersSince = 0;
+    }
     const int most = std::max(1, lobby::MaxMembers());
-    const ULONGLONG now = GetTickCount64();
     std::map<int, ULONGLONG> seen;
-    int kept = 1;                                     // the host
+    std::set<int32_t> admitted;
+    std::map<std::string, int> holders;           // member -> how many connected players claim to be them
+    int kept = 1;                                 // the host
+    gGateRan = true;
     for (Obj ps : eng::ReadObjArray(gameState, "PlayerArray")) {
         if (ps == own) continue;
         const int id = PlayerIdOf(ps);
         seen[id] = gFirstSeen.count(id) ? gFirstSeen[id] : now;
-        if (!ownLobby) {
+        const ULONGLONG age = now - seen[id];
+        if (closed) {
             Kick(ps, "the session is closed");
             continue;
         }
+        // who they say they are: their PlayerState's Steam id (a test copy: their hello), and in a player's game
+        // also who said hello for this PlayerId over the lobby (Steam vouches for a lobby message's sender)
         const std::string member = MemberOf(ps, id);
+        auto claim = gClaims.find(id);
+        const std::string claimed = claim == gClaims.end() ? "" : claim->second;
         bool inLobby = false;
         for (const auto& m : members) inLobby = inLobby || (!member.empty() && m.id == member);
-        const bool waiting = now - seen[id] < (sandbox::On() ? kTestAdmitMs : kAdmitMs);
-        if (id < 0 || (!member.empty() && !inLobby && !waiting)) {
-            Kick(ps, "not in the session's lobby");
-        } else if (member.empty() || !Admitted(member)) {
-            if (!waiting) Kick(ps, member.empty() ? "didn't say who they are" : "not let in (" + std::string(lobby::Type() == lobby::kCode ? "no code" : "not the host's friend") + ")");
-        } else if (++kept > most) {
-            Kick(ps, "the session is full");
+        if (!member.empty()) ++holders[member];
+        if (!inLobby) gMissingSince.emplace(id, now);
+        else gMissingSince.erase(id);
+        const bool missingLong = !inLobby && now - gMissingSince[id] > kMissingMs;
+        const ULONGLONG grace = sandbox::On() ? kTestAdmitMs : kAdmitMs;
+        std::string why;
+        if (id < 0) why = "no player id";
+        else if (!member.empty() && gBanned.count(member) && now - gBanned[member] < kBanMs) why = "sent home a moment ago";
+        else if (!member.empty() && holders[member] > 1) why = "someone else is already in as them";
+        else if (!sandbox::On() && !claimed.empty() && claimed != member) why = "they aren't who they say they are";
+        else if (!member.empty() && !inLobby && (age > kLobbyLagMs || missingLong)) why = "not in the session's lobby";
+        else if (member.empty() || (!sandbox::On() && claimed.empty()) || !Admitted(member)) {
+            if (age > grace)
+                why = member.empty() || (!sandbox::On() && claimed.empty()) ? "didn't say who they are"
+                                                                              : std::string("not let in (") + (lobby::Type() == lobby::kCode ? "no code" : "not the host's friend") + ")";
+            else
+                continue;                         // not decided yet: they can't change anything meanwhile
+        } else if (kept + 1 > most) {
+            why = "the session is full";
         }
+        if (!why.empty()) {
+            if (!member.empty()) gBanned[member] = now;
+            Kick(ps, why);
+            continue;
+        }
+        ++kept;
+        Obj pawn = eng::ReadObj(ps, "PawnPrivate");
+        if (Obj handler = pawn && eng::FindProp(eng::ClassOf(pawn), "SKGMLEHandler") ? eng::ReadObj(pawn, "SKGMLEHandler") : nullptr)
+            admitted.insert(eng::MakeWeak(handler).index);
     }
     gFirstSeen.swap(seen);
+    gAdmittedHandlers.swap(admitted);
+    for (auto it = gMissingSince.begin(); it != gMissingSince.end();) it = gFirstSeen.count(it->first) ? std::next(it) : gMissingSince.erase(it);
+}
+
+// The world's lighting. The editor light's time of day and brightness replicate (SKGMapEditorDirectionalLight
+// .DirectionalLightSettings, OnRep_DirectionalLightData), but measured 2026-11-05 a joiner keeps its own on joining, its
+// light's yaw never follows the host's, and the sky lights' intensity and the sky sphere are each machine's own
+// (W_WorldSettings sets them locally). So the host sends what it has ("world <time> <brightness> <pitch> <yaw> <roll>" then
+// "|<sky light path>=<intensity>" for each, the same objects in every copy of the editor's level) when it changes and every
+// few seconds (late joiners), and a joiner applies it, only from the lobby's owner.
+std::string gLastWorld;
+ULONGLONG gLastWorldSent = 0;
+std::string WorldState() {
+    char buf[256];
+    std::string out;
+    Obj lightCls = eng::FindClass("SKGMapEditorDirectionalLight"), skyCls = eng::FindClass("SkyLightComponent");
+    std::string skies;
+    eng::ForEachObject([&](Obj o) {
+        if (eng::IsDefaultObject(o)) return true;
+        if (lightCls && out.empty() && eng::IsA(o, lightCls) && eng::PathOf(o).find("/Engine/Transient") != 0) {
+            float st[2] = {0, 0};
+            eng::ReadBytes(o, "DirectionalLightSettings", st, sizeof st);
+            struct { double p, y, r; } rot{};
+            const eng::Params rp = eng::Call(o, "K2_GetActorRotation");
+            if (const uint8_t* rr = rp.Return()) std::memcpy(&rot, rr, sizeof rot);
+            std::snprintf(buf, sizeof buf, "world %.3f %.3f %.2f %.2f %.2f", st[0], st[1], rot.p, rot.y, rot.r);
+            out = buf;
+        } else if (skyCls && eng::IsA(o, skyCls) && eng::PathOf(o).find("/Engine/Transient") != 0) {
+            float intensity = 0;
+            eng::ReadBytes(o, "Intensity", &intensity, sizeof intensity);
+            std::snprintf(buf, sizeof buf, "=%.3f", intensity);
+            skies += "|" + eng::PathOf(o) + buf;
+        }
+        return true;
+    });
+    return out.empty() ? "" : out + skies;
+}
+void ShareHostWorld() {
+    static ULONGLONG lastLook = 0;
+    if (GetTickCount64() - lastLook < 1000) return;
+    lastLook = GetTickCount64();
+    if (Players() < 2) return;
+    const std::string state = WorldState();
+    if (state.empty() || state.size() > 1000) return;
+    if (state != gLastWorld || GetTickCount64() - gLastWorldSent > 5000) {
+        if (lobby::Send(state)) {
+            gLastWorld = state;
+            gLastWorldSent = GetTickCount64();
+        }
+    }
+}
+void ApplyHostWorld(const std::vector<lobby::Message>& messages) {
+    const std::string owner = lobby::OwnerId();
+    for (const auto& m : messages) {
+        if (m.from != owner || m.text.rfind("world ", 0) != 0) continue;
+        float tod = 0, bri = 0;
+        double pitch = 0, yaw = 0, roll = 0;
+        if (std::sscanf(m.text.c_str() + 6, "%f %f %lf %lf %lf", &tod, &bri, &pitch, &yaw, &roll) != 5) continue;
+        std::map<std::string, float> skies;
+        size_t at = m.text.find('|');
+        while (at != std::string::npos) {
+            const size_t next = m.text.find('|', at + 1), eq = m.text.find('=', at);
+            if (eq != std::string::npos && (next == std::string::npos || eq < next))
+                skies[m.text.substr(at + 1, eq - at - 1)] = static_cast<float>(std::atof(m.text.c_str() + eq + 1));
+            at = next;
+        }
+        Obj lightCls = eng::FindClass("SKGMapEditorDirectionalLight"), skyCls = eng::FindClass("SkyLightComponent"),
+            sphereCls = eng::FindClass("BP_Sky_Sphere_Stylized_C");
+        const float settings[2] = {tod, bri};
+        eng::ForEachObject([&](Obj o) {
+            if (eng::IsDefaultObject(o) || eng::PathOf(o).find("/Engine/Transient") == 0) return true;
+            if (lightCls && eng::IsA(o, lightCls)) {
+                eng::WriteBytes(o, "DirectionalLightSettings", settings, sizeof settings);
+                eng::Call(o, "OnRep_DirectionalLightData");
+                const struct { double p, y, r; } rot{pitch, yaw, roll};
+                eng::Call(o, "K2_SetActorRotation", rot, uint8_t{0});
+            } else if (skyCls && eng::IsA(o, skyCls)) {
+                auto it = skies.find(eng::PathOf(o));
+                if (it != skies.end()) eng::Call(o, "SetIntensity", it->second);
+            } else if (sphereCls && eng::IsA(o, sphereCls)) {
+                eng::Params p(eng::FunctionOn(o, "EstablishEditorParams"));
+                if (p.SetArg(0, settings, sizeof settings)) eng::Invoke(o, p);
+            }
+            return true;
+        });
+    }
 }
 
 // A joiner's undo and redo: held a moment before they go (the change they undo travels on the game's own connection,
@@ -797,7 +963,13 @@ void ShareHistory() {
         gFirstSeen.clear();
         gLastKick.clear();
         gProved.clear();
+        gExpectedProof.clear();
+        gBanned.clear();
+        gMissingSince.clear();
+        gAdmittedHandlers.clear();
+        gGateRan = false;
     }
+    if (IsServer() && lobby::IsOwner()) ShareHostWorld();
     if (IsServer()) {
         WrapServerFunctions(editor::OwnHandler());
         GiveJoinersOwnHistories();
@@ -808,21 +980,23 @@ void ShareHistory() {
         gStepQueue.clear();
         return;
     }
-    if (IsClient()) {
+    if (IsClient())
         while (!gStepQueue.empty() && GetTickCount64() >= gStepQueue.front().first) {
             if (lobby::Send(gStepQueue.front().second)) ++gSentSteps;
             gStepQueue.erase(gStepQueue.begin());
         }
-        if (GetTickCount64() - gLastHello > kHelloEveryMs) {
-            const int id = PlayerIdOf(LocalPlayerState());
-            bool sent = false;
-            if (sandbox::On() && id >= 0) sent = lobby::Send("hello " + std::to_string(id));
-            if (!gJoinCode.empty()) sent = lobby::Send("join " + Proof(gJoinCode, lobby::OwnId())) || sent;
-            if (sent) gLastHello = GetTickCount64();
-        }
+    // a joiner tells the host who it is: the code's proof as soon as it is in the lobby (before it connects), and
+    // "hello <PlayerId>" once connected; again every few seconds (a message can be lost)
+    if (!lobby::IsOwner() && GetTickCount64() - gLastHello > kHelloEveryMs) {
+        const int id = IsClient() ? PlayerIdOf(LocalPlayerState()) : -1;
+        bool sent = false;
+        if (id >= 0) sent = lobby::Send("hello " + std::to_string(id));
+        if (!gJoinCode.empty()) sent = lobby::Send("join " + Proof(gJoinCode, lobby::OwnId())) || sent;
+        if (sent) gLastHello = GetTickCount64();
     }
     const std::vector<lobby::Message> messages = lobby::Receive();
-    if (!IsServer() || !lobby::IsOwner()) return;
+    if (IsClient()) ApplyHostWorld(messages);
+    if (!IsServer() || !lobby::IsOwner() || messages.empty()) return;
     const std::string own = lobby::OwnId();
     const std::vector<lobby::Member> members = lobby::Members();
     for (const auto& m : messages) {
@@ -831,11 +1005,15 @@ void ShareHistory() {
         for (const auto& x : members) member = member || x.id == m.from;
         if (!member) continue;
         if (m.text.rfind("hello ", 0) == 0) {
-            if (sandbox::On()) gClaims[std::atoi(m.text.c_str() + 6)] = m.from;
+            const int id = std::atoi(m.text.c_str() + 6);
+            if (!gClaims.count(id)) gClaims[id] = m.from;       // the first claim stands (a later one can't take it over)
             continue;
         }
         if (m.text.rfind("join ", 0) == 0) {
-            if (!gSessionCode.empty() && m.text.substr(5) == Proof(gSessionCode, m.from)) gProved.insert(m.from);
+            if (gSessionCode.empty() || gProved.count(m.from)) continue;
+            auto& expected = gExpectedProof[m.from];           // made once per member: a flood costs nothing
+            if (expected.empty()) expected = Proof(gSessionCode, m.from);
+            if (m.text.substr(5) == expected) gProved.insert(m.from);
             continue;
         }
         const bool undo = m.text.rfind("undo ", 0) == 0, redo = m.text.rfind("redo ", 0) == 0;
@@ -876,8 +1054,11 @@ void KeepLobbyWithSession() {
     }
     if (IsClient() && lobby::State() == "in lobby") {
         const std::string owner = lobby::OwnerId();
-        if (gJoinedOwner.empty()) gJoinedOwner = owner;
-        else if (!owner.empty() && owner != gJoinedOwner) {
+        if (owner.empty() || owner == "0") {
+            // not known this moment: decided later
+        } else if (gJoinedOwner.empty()) {
+            gJoinedOwner = owner;
+        } else if (owner != gJoinedOwner) {
             Notice("the host left: the session is over");
             gJoinedOwner.clear();
             lobby::Leave();
@@ -915,6 +1096,47 @@ void HookClientTravel() {
     std::memcpy(fn + layout::kUFunctionNativeFunctionOffset, &hooked, sizeof hooked);
 }
 
+// The editor's document calls from a player (BallestEditorPlayerState's Server* RPCs: the map's name, description,
+// difficulty and tags, loading a whole map in chunks, starting a test run, the save/publish export) run on the host for
+// any player. Only the host's own are kept: a joiner's would rename, retag or replace the host's map, or start a test run
+// in the shared editor. They come from the network, so a refused one has no bytecode to step.
+constexpr int kEditorCalls = 12;
+const char* const kEditorCallNames[kEditorCalls] = {"ServerLevelNames", "ServerLevelDescription", "ServerLevelDifficulty", "ServerLevelTags",
+                                                    "ServerBeginLoad", "ServerLoadChunk", "ServerPlayHere", "ServerPlayFromStart",
+                                                    "ServerRequestExport", "ServerExportAcknowledged", "ServerCancelEditorTransfer",
+                                                    "ServerReturnToAuthoring"};
+NativeFunction gEditorCallOriginal[kEditorCalls] = {};
+bool gEditorCallsTried = false;
+int gEditorCallsRefused = 0;
+template <int I>
+void EditorCallHooked(Obj context, uint8_t* frame, void* result) {
+    if (IsServer() && context && context != LocalPlayerState()) {
+        if (++gEditorCallsRefused % 20 == 1) hostlog::Warn(std::string("together: a joiner's ") + kEditorCallNames[I] + " was refused (the map is the host's)");
+        return;
+    }
+    gEditorCallOriginal[I](context, frame, result);
+}
+template <int... I>
+constexpr std::array<NativeFunction, sizeof...(I)> MakeEditorCallHooks(std::integer_sequence<int, I...>) { return {&EditorCallHooked<I>...}; }
+const std::array<NativeFunction, kEditorCalls> kEditorCallHooks = MakeEditorCallHooks(std::make_integer_sequence<int, kEditorCalls>{});
+void RefuseJoinersEditorCalls() {
+    if (gEditorCallsTried) return;
+    Obj cls = eng::FindClass("BallestEditorPlayerState");
+    if (!cls) return;
+    gEditorCallsTried = true;
+    int hooked = 0;
+    for (int i = 0; i < kEditorCalls; ++i) {
+        Obj fn = eng::FindFunction(cls, kEditorCallNames[i]);
+        NativeFunction entry = nullptr;
+        if (fn) std::memcpy(&entry, fn + layout::kUFunctionNativeFunctionOffset, sizeof entry);
+        if (!fn || !entry || !eng::InImage(reinterpret_cast<void*>(entry))) continue;
+        gEditorCallOriginal[i] = entry;
+        std::memcpy(fn + layout::kUFunctionNativeFunctionOffset, &kEditorCallHooks[static_cast<size_t>(i)], sizeof(NativeFunction));
+        ++hooked;
+    }
+    hostlog::Info("together: " + std::to_string(hooked) + " of the editor's " + std::to_string(kEditorCalls) + " document calls are the host's own");
+}
+
 // Grouping, ungrouping (the editor keeps groups only on the machine that made them: no Server_ function, measured from
 // the handler's functions) is off while editing together, for everyone: groups would otherwise differ between players.
 NativeFunction gGroupOriginal[4] = {};
@@ -948,13 +1170,17 @@ void HookGroups(Obj handler) {
         gGroupOriginal[i] = entry;
         std::memcpy(fn + layout::kUFunctionNativeFunctionOffset, &kGroupHooks[i], sizeof(NativeFunction));
     }
+    std::string hooked;
+    for (int i = 0; i < 4; ++i) hooked += std::string(gGroupOriginal[i] ? " " : " NOT ") + kGroupFunctions[i];
+    hostlog::Info("together: groups off while editing together:" + hooked);
 }
 
 // A joiner never writes the host's map to their own disk. The editor saves from several places (its save button, its
 // exit: W_MapEditor.HandleExit -> W_SaveLoad.SaveMapWithExitCallback, menu actions -> ManuallySaveNoCallback), all
 // ending in SKGMLEStatics.SaveMapToFile, which writes the .balledit through the game's CreateFileW. So while this game
-// is a client of a session, the game exe's CreateFileW refuses to open a .balledit file in the game's maps folder for
-// writing (ERROR_ACCESS_DENIED: the game reports a failed save). The hook sits in the exe's import slot after anything
+// is a client of a session, the game exe's CreateFileW refuses to open any file in the game's maps folder or its
+// subfolders (a publish writes its upload copy, a .ballmap, into one) for writing (ERROR_ACCESS_DENIED: the game reports
+// a failed save, and a publish has nothing to upload). The hook sits in the exe's import slot after anything
 // already there (the sandbox's own file hook in a test copy) and passes every other call straight on. CreateFileW can
 // be called from any thread, so it reads only a flag and a folder the game thread sets.
 using CreateFileWFn = HANDLE(WINAPI*)(LPCWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE);
@@ -964,7 +1190,8 @@ wchar_t gMapsFolder[MAX_PATH] = {};     // set once (game thread) before gRefuse
 std::atomic<long> gRefusedWrites{0};
 HANDLE WINAPI GuardedCreateFile(LPCWSTR name, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES sa, DWORD disposition, DWORD flags,
                                 HANDLE templ) {
-    if (gRefuseMapWrites.load() && name && (access & (GENERIC_WRITE | FILE_WRITE_DATA | FILE_APPEND_DATA | DELETE)) && gMapsFolder[0]) {
+    if (gRefuseMapWrites.load() && name && (access & (GENERIC_WRITE | GENERIC_ALL | FILE_WRITE_DATA | FILE_APPEND_DATA | DELETE)) && gMapsFolder[0]) {
+        if (name[0] == L'\\' && name[1] == L'\\' && (name[2] == L'?' || name[2] == L'.') && name[3] == L'\\') name += 4;
         const size_t folder = wcslen(gMapsFolder), len = wcslen(name);
         // the maps folder, any slash style, and a .balledit (or its temp copy)
         bool inside = len > folder;
@@ -974,7 +1201,7 @@ HANDLE WINAPI GuardedCreateFile(LPCWSTR name, DWORD access, DWORD share, LPSECUR
             if (b == L'/') b = L'\\';
             inside = a == b;
         }
-        if (inside && wcsstr(name, L".balledit")) {
+        if (inside) {                   // the maps folder and its subfolders (a publish's upload copy, a .ballmap): any file
             ++gRefusedWrites;
             SetLastError(ERROR_ACCESS_DENIED);
             return INVALID_HANDLE_VALUE;
@@ -1003,10 +1230,15 @@ void** ExeImportSlot(const char* dll, const char* function) {
 bool gWriteGuardTried = false;
 void GuardMapWrites() {
     const bool client = IsClient();
-    if (client && !gWriteGuardTried) {
-        gWriteGuardTried = true;
+    // the folder from the game (its level manager), read again until the game answers (the fallback is a guess)
+    static bool folderFromGame = false;
+    if (client && !folderFromGame && !gRefuseMapWrites.load()) {
+        folderFromGame = !tracks::LocalMapsFolder().empty();
         const std::wstring folder = SavedMapsFolder();
         if (folder.size() < MAX_PATH - 2) wcscpy(gMapsFolder, (folder + L"\\").c_str());
+    }
+    if (client && !gWriteGuardTried) {
+        gWriteGuardTried = true;
         void** slot = ExeImportSlot("KERNEL32.dll", "CreateFileW");
         DWORD old = 0;
         if (slot && *slot != reinterpret_cast<void*>(&GuardedCreateFile) && VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &old)) {
@@ -1038,8 +1270,8 @@ bool RelayOnly() {
     auto set = dll ? reinterpret_cast<bool (*)(void*, int, int32_t)>(
                          reinterpret_cast<void*>(GetProcAddress(dll, "SteamAPI_ISteamNetworkingUtils_SetGlobalConfigValueInt32"))) : nullptr;
     void* utils = accessor ? accessor() : nullptr;
-    gRelayOnly = utils && set && set(utils, 104, 0);
-    hostlog::Info(std::string("together: Steam's direct peer-to-peer path (ICE) ") + (gRelayOnly ? "off: relay only" : "COULD NOT be switched off"));
+    gRelayOnly = utils && set && set(utils, 104, 0) && sandbox::RefuseSteamIpSockets();
+    hostlog::Info(std::string("together: Steam's direct peer-to-peer path (ICE) ") + (gRelayOnly ? "off and IP sockets refused: relay only" : "or the IP sockets COULD NOT be switched off: no sessions"));
     return gRelayOnly;
 }
 
@@ -1076,7 +1308,17 @@ void Frame() {
     KeepLobbyWithSession();
     GuardMapWrites();
     editor::SetNetworked(IsServer() || IsClient());
+    editor::SetJoiner(IsClient());
+    static bool hooksSet = false;
+    if (!hooksSet) {
+        hooksSet = true;
+        editor::SetJoinerRefused([](const std::string& what) { Notice(what); });
+        editor::SetAfterHistoryStep([] {
+            if (IsServer()) editor::WakePieces();
+        });
+    }
     if (IsServer() || IsClient()) HookGroups(editor::OwnHandler());
+    if (IsServer()) RefuseJoinersEditorCalls();
     SetUpClientEditor();
     ShareHistory();
 }
@@ -1095,8 +1337,26 @@ void SetSandboxDriver(const std::string& d) {
 }
 bool ListenArmed() { return gArmed; }
 
-bool IsServer() { return SystemBool("IsServer") && !SystemBool("IsStandalone"); }
-bool IsClient() { return game::PlayerController() && !SystemBool("IsServer"); }
+// What this game is, asked of the engine once a frame (every check here runs often).
+long long gModeFrame = -1;
+bool gIsServer = false, gIsClient = false;
+void ReadMode() {
+    const long long frame = game::Generation() * 1000000ll + static_cast<long long>(GetTickCount64() / 16);
+    if (frame == gModeFrame) return;
+    gModeFrame = frame;
+    const bool controller = game::PlayerController() != nullptr;
+    const bool server = controller && SystemBool("IsServer");
+    gIsServer = server && !SystemBool("IsStandalone");
+    gIsClient = controller && !server;
+}
+bool IsServer() {
+    ReadMode();
+    return gIsServer;
+}
+bool IsClient() {
+    ReadMode();
+    return gIsClient;
+}
 
 std::string NetMode() {
     if (!game::PlayerController()) return "none";
@@ -1112,15 +1372,21 @@ bool Join(const std::string& address) {
         hostlog::Warn("together: refused to join " + address + " (not a " + (sandbox::On() ? "loopback" : "Steam") + " address)");
         return false;
     }
-    if (!(SteamOnlyInPlayersGame() && RelayOnly())) {
+    if (!(SteamOnlyInPlayersGame() && RelayOnly()) || !gClientTravelOriginal) {
         Notice("this game can't join sessions safely (Steam networking isn't available)");
         return false;
     }
+    gJoinPending = true;
     hostlog::Info("together: joining " + address);
     return CallOpenLevel(address, "");
 }
 
-bool Leave() { return CallOpenLevel("Map_MainMenu", ""); }
+bool gJoinPending = false;
+bool JoinPending() { return gJoinPending && !IsClient(); }
+bool Leave() {
+    gJoinPending = false;
+    return CallOpenLevel("Map_MainMenu", "");
+}
 
 namespace {
 // The game instance's BeginLevelTransition(LevelName, EGameModes, map text, UserLevelName, level data), as the Create
@@ -1213,12 +1479,34 @@ void PluginStopped(int plugin) {
     gArmed = false;
     gSessionCode.clear();
     gJoinCode.clear();
-    const bool inSession = IsServer() || IsClient();
-    lobby::Leave();
-    if (inSession) Leave();
+    const bool joiner = IsClient();
+    lobby::Leave();                     // a host keeps its editor (and its unsaved work): with no lobby nobody stays in
+    if (joiner) Leave();
     hostlog::Info("together: the plugin running the session stopped: the session is over");
 }
-void SetSessionCode(const std::string& code) { gSessionCode = code; }
+std::string SteamIdsStatus() {
+    std::string out;
+    Obj controller = game::PlayerController();
+    Obj gameState = controller ? eng::Call(eng::FindCdo("GameplayStatics"), "GetGameState", controller).ReturnObj() : nullptr;
+    if (gameState)
+        for (Obj ps : eng::ReadObjArray(gameState, "PlayerArray")) out += " " + std::to_string(PlayerIdOf(ps)) + "=" + SteamIdOf(ps);
+    return out + " own=" + lobby::OwnId();
+}
+// A session code: 8 of the 32 letters and digits that can't be mixed up, from the system's random source
+// (BCryptGenRandom: nothing anyone can work out from the time or the lobby).
+std::string NewSessionCode() {
+    static const char* const kLetters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    uint8_t bytes[8] = {};
+    if (BCryptGenRandom(nullptr, bytes, sizeof bytes, BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0) return "";
+    std::string code;
+    for (uint8_t b : bytes) code += kLetters[b % 32];
+    return code;
+}
+void SetSessionCode(const std::string& code) {
+    gSessionCode = code;
+    gExpectedProof.clear();
+    gProved.clear();
+}
 void SetJoinCode(const std::string& code) { gJoinCode = code; }
 std::string TakeNotice() {
     std::string n;

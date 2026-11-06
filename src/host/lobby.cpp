@@ -30,6 +30,7 @@ bool gCommandLineRead = false;
 bool gSearching = false;
 std::vector<Found> gResults;
 std::string gSearchCode;                // the last Find's code ("" for the lists)
+int gSearchSeq = 0;                     // each Find's own number: an answer for an older one is dropped
 
 bool UseTest() { return sandbox::On(); }
 
@@ -397,7 +398,7 @@ void Leave() {
                 // Steam gives the lobby to another member when its owner leaves: unlisted and emptied first, so it is
                 // never found (or joined) after the host has gone
                 S().setJoinable(S().mm, id, false);
-                for (const char* key : {"ct", "ch", "map", "host", "ver", "vis"}) S().setData(S().mm, id, key, "");
+                for (const char* key : {"ct", "ch", "map", "host", "ver", "vis", "addr"}) S().setData(S().mm, id, key, "");
             }
             S().leaveLobby(S().mm, id);
         }
@@ -447,7 +448,10 @@ void Create(int type, int maxMembers) {
             gState = "error: Steam couldn't make the lobby (" + std::to_string(result) + ")";
             return;
         }
-        gId = std::to_string(id);
+        {
+            std::lock_guard<std::mutex> lock(gCallbackLock);
+            gId = std::to_string(id);
+        }
         gOwner = true;
         gState = "in lobby";
         hostlog::Info("lobby: Steam lobby " + gId + " made");
@@ -496,14 +500,17 @@ void Join(const std::string& id) {
         uint32_t response = 0;
         if (r) std::memcpy(&response, r + 16, 4);
         if (generation != gGeneration) {
-            if (r && response == kEnterSuccess) S().leaveLobby(S().mm, wanted);
+            if (r && response == kEnterSuccess && gId != std::to_string(wanted)) S().leaveLobby(S().mm, wanted);
             return;
         }
         if (failed || response != kEnterSuccess) {
             gState = "error: couldn't join (Steam answered " + std::to_string(response) + ")";
             return;
         }
-        gId = std::to_string(wanted);
+        {
+            std::lock_guard<std::mutex> lock(gCallbackLock);
+            gId = std::to_string(wanted);
+        }
         gOwner = S().owner(S().mm, wanted) == steam::OwnSteamId();
         gState = "in lobby";
         hostlog::Info("lobby: joined Steam lobby " + gId);
@@ -558,7 +565,20 @@ int MaxMembers() {
     return S().ok ? S().memberLimit(S().mm, Parse64(gId)) : 0;
 }
 
+std::vector<Member> ReadMembers();
 std::vector<Member> Members() {
+    static std::vector<Member> cached;
+    static std::string cachedFor;
+    static ULONGLONG at = 0;
+    if (gId.empty()) return {};
+    if (cachedFor != gId || GetTickCount64() - at > 500) {
+        cached = ReadMembers();
+        cachedFor = gId;
+        at = GetTickCount64();
+    }
+    return cached;
+}
+std::vector<Member> ReadMembers() {
     std::vector<Member> out;
     if (gId.empty()) return out;
     if (UseTest()) return TestMembers(gId);
@@ -582,6 +602,7 @@ std::vector<Member> Members() {
 void Find(const std::string& code) {
     gResults.clear();
     gSearchCode = code;
+    const int seq = ++gSearchSeq;
     if (UseTest()) {
         CleanOrphans();
         for (const std::string& id : TestLobbyIds()) {
@@ -611,7 +632,8 @@ void Find(const std::string& code) {
     s.distanceFilter(s.mm, kDistanceWorldwide);
     s.countFilter(s.mm, 50);
     const bool withFriends = code.empty();
-    steam::Await(s.requestList(s.mm), kLobbyMatchList, kLobbyMatchListSize, [withFriends](const uint8_t* r, bool failed) {
+    steam::Await(s.requestList(s.mm), kLobbyMatchList, kLobbyMatchListSize, [withFriends, seq](const uint8_t* r, bool failed) {
+        if (seq != gSearchSeq) return;          // a newer search has started: this one's answer is not wanted
         Steam& st = S();
         uint32_t count = 0;
         if (r && !failed) std::memcpy(&count, r, 4);

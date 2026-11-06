@@ -25,6 +25,10 @@ bool On();                      // sandbox mode is on for this session
 // copy's editor listens (slot N's port is 17777 + N: test_instance.py passes it). Everything else stays blocked.
 constexpr unsigned kTogetherFirstPort = 17778, kTogetherPorts = 9;
 long LoopbackDatagrams();       // datagrams let through that way so far
+// In a player's game, before Create Together hosts or joins: Steam's networking sockets can't open plain IP sockets
+// (ConnectByIPAddress / CreateListenSocketIP refused), only peer-to-peer ones through Steam's relay.
+bool RefuseSteamIpSockets();
+long IpSocketsRefused();
 bool Flagged();                 // the flag is there (before InstallEarly has read it)
 bool Interactive();             // a copy the player uses (interactive.txt): normal window and sound, every block kept
 std::wstring OwnHostPath();     // a test copy's own host build, run in place of the installed one when it exists

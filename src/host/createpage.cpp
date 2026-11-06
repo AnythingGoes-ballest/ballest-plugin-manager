@@ -37,9 +37,9 @@ Obj CreatePageWidget() {
     // the Create page exists only on the main menu: no search (a scan of every object) anywhere else
     Obj controller = game::PlayerController();
     if (!controller) return nullptr;
-    const eng::Params level = eng::Call(eng::FindCdo("GameplayStatics"), "GetCurrentLevelName", controller, uint8_t{1});
-    const uint8_t* name = level.Return();
-    if (!name || eng::ReadFString(name).find("MainMenu") == std::string::npos) return nullptr;
+    Obj level = eng::OuterOf(controller);                   // its PersistentLevel, then the world it is in
+    Obj world = level ? eng::OuterOf(level) : nullptr;
+    if (!world || eng::ObjName(world).find("MainMenu") == std::string::npos) return nullptr;
     Obj cls = eng::FindClass("WBP_4_Create_C"), found = nullptr;
     if (!cls) return nullptr;
     eng::ForEachObject([&](Obj o) {

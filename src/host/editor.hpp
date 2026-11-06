@@ -62,6 +62,12 @@ void SetHistoryRedirect(std::function<bool(bool redo)> redirect);
 // Editing together (a listen server or its client): pieces are then moved only through the editor's replicated path
 // (Server_SetActorTransforms), and SpawnPieces never drops them in.
 void SetNetworked(bool on);
+// A client of a session: placing, duplicating and turning pieces from a plugin are refused (the host's paste answers
+// later, and a chain of moves would read stale positions); `tell` hears what was refused.
+void SetJoiner(bool on);
+void SetJoinerRefused(std::function<void(const std::string&)> tell);
+void SetAfterHistoryStep(std::function<void()> after);   // after every undo / redo the editor runs
+void WakePieces();                      // every piece's replication woken (after a change made natively)
 bool Networked();          // undo and redo steps the editor has run, however they were started (counted from 0)
 bool Redo();
 Vec3 ViewForward();

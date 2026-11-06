@@ -186,6 +186,7 @@ void Stop(Plugin& p, const std::string& why) {
     const int index = static_cast<int>(&p - gPlugins.data());
     ui::HideOwner(index);
     game::RequestCursor(index, false);
+    together::PluginStopped(index);     // a session its plugin no longer runs ends (its windows are gone)
 }
 
 // Overruns a plugin is let off: a callback that runs out of time is cut short, and the plugin keeps running unless it

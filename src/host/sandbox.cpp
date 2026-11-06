@@ -151,18 +151,31 @@ std::atomic<long> gLoopbackDatagrams{0};
 // other port.
 using RecvFromFn = int(WSAAPI*)(SOCKET, char*, int, int, sockaddr*, int*);
 RecvFromFn gRecvFrom = nullptr;
-std::atomic<uint32_t> gRepliedPorts[64];             // loopback ports heard from (0: free)
+// Each entry: the port in the low 16 bits, when it was last heard (in seconds, GetTickCount64 / 1000) in the high 32;
+// an entry not heard from for kHeardForS is free again.
+std::atomic<uint64_t> gRepliedPorts[64];
+constexpr uint64_t kHeardForS = 120;
+uint64_t NowS() { return GetTickCount64() / 1000; }
 void NoteHeardFrom(unsigned port) {
-    for (auto& slot : gRepliedPorts)
-        if (slot.load() == port) return;
+    const uint64_t now = NowS(), fresh = (now << 32) | port;
     for (auto& slot : gRepliedPorts) {
-        uint32_t empty = 0;
-        if (slot.compare_exchange_strong(empty, port)) return;
+        uint64_t v = slot.load();
+        if ((v & 0xFFFF) == port && v != 0) {
+            slot.compare_exchange_strong(v, fresh);
+            return;
+        }
+    }
+    for (auto& slot : gRepliedPorts) {
+        uint64_t v = slot.load();
+        if ((v == 0 || now - (v >> 32) > kHeardForS) && slot.compare_exchange_strong(v, fresh)) return;
     }
 }
 bool HeardFrom(unsigned port) {
-    for (auto& slot : gRepliedPorts)
-        if (slot.load() == port) return true;
+    const uint64_t now = NowS();
+    for (auto& slot : gRepliedPorts) {
+        const uint64_t v = slot.load();
+        if (v != 0 && (v & 0xFFFF) == port && now - (v >> 32) <= kHeardForS) return true;
+    }
     return false;
 }
 bool TogetherLoopback(const sockaddr* to, int size) {
@@ -182,15 +195,15 @@ int WSAAPI LoopbackBind(SOCKET s, const sockaddr* addr, int size) {
     if (addr && size >= static_cast<int>(sizeof(sockaddr_in)) && addr->sa_family == AF_INET) {
         sockaddr_in in;
         std::memcpy(&in, addr, sizeof in);
-        if (in.sin_addr.s_addr == htonl(INADDR_ANY)) {
+        if (in.sin_addr.s_addr != htonl(INADDR_LOOPBACK)) {         // any address, or one of this computer's own
             in.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
             return gBind(s, reinterpret_cast<const sockaddr*>(&in), sizeof in);
         }
     } else if (addr && size >= static_cast<int>(sizeof(sockaddr_in6)) && addr->sa_family == AF_INET6) {
         sockaddr_in6 in6;
         std::memcpy(&in6, addr, sizeof in6);
-        static const in6_addr any = IN6ADDR_ANY_INIT, loop = IN6ADDR_LOOPBACK_INIT;
-        if (std::memcmp(&in6.sin6_addr, &any, sizeof any) == 0) {
+        static const in6_addr loop = IN6ADDR_LOOPBACK_INIT;
+        if (std::memcmp(&in6.sin6_addr, &loop, sizeof loop) != 0) {
             in6.sin6_addr = loop;
             return gBind(s, reinterpret_cast<const sockaddr*>(&in6), sizeof in6);
         }
@@ -1220,6 +1233,43 @@ bool InstallSteamLocked() {
 
 bool InstallSteam() { return InstallSteamLocked(); }
 
+// Create Together in a player's game: Steam's networking sockets may only ever connect and listen peer-to-peer (through
+// Steam's relay). Its two IP methods, ConnectByIPAddress and CreateListenSocketIP, are refused (they return
+// k_HSteamNetConnection_Invalid / k_HSteamListenSocket_Invalid, 0): found the way the sandbox finds every Steam method,
+// from the flat wrapper's slot in the interface's table, which every object of the interface shares.
+namespace {
+std::atomic<long> gIpRefused{0};
+uint32_t WINAPI RefusedIpSocket(void*, const void*, int, const void*) {
+    if (gIpRefused++ == 0) hostlog::Warn("together: Steam was asked for a plain IP socket: refused");
+    return 0;
+}
+}  // namespace
+bool RefuseSteamIpSockets() {
+    static bool done = false;
+    if (done) return true;
+    HMODULE dll = GetModuleHandleW(L"steam_api64.dll");
+    auto accessor = dll ? reinterpret_cast<void* (*)()>(GetProcAddress(dll, "SteamAPI_SteamNetworkingSockets_SteamAPI_v012")) : nullptr;
+    void* object = accessor ? accessor() : nullptr;
+    if (!object) return false;
+    void** table = *reinterpret_cast<void***>(object);
+    int patched = 0;
+    for (const char* method : {"SteamAPI_ISteamNetworkingSockets_ConnectByIPAddress", "SteamAPI_ISteamNetworkingSockets_CreateListenSocketIP"}) {
+        auto* wrapper = reinterpret_cast<const uint8_t*>(GetProcAddress(dll, method));
+        std::string bytes;
+        const int offset = wrapper ? SlotOffset(wrapper, &bytes) : -1;
+        if (offset < 0 || offset % 8 != 0 || offset > 8 * 400) {
+            hostlog::Error(std::string("together: can't find ") + method + "'s slot (wrapper " + bytes + ")");
+            continue;
+        }
+        if (table[offset / 8] == reinterpret_cast<void*>(&RefusedIpSocket) || Patch(table + offset / 8, reinterpret_cast<void*>(&RefusedIpSocket), nullptr))
+            ++patched;
+    }
+    done = patched == 2;
+    hostlog::Info(std::string("together: Steam's IP sockets ") + (done ? "refused: peer-to-peer only" : "COULD NOT all be refused"));
+    return done;
+}
+long IpSocketsRefused() { return gIpRefused.load(); }
+
 namespace {
 bool PrepareGuard(HMODULE dll) {
     auto accessor = reinterpret_cast<void* (*)()>(GetProcAddress(dll, "SteamAPI_SteamUserStats_v013"));
@@ -1395,7 +1445,8 @@ std::string SelfTest() {
         uint64_t call = reinterpret_cast<Upload>(table[uploadSlot])(object, 0, 1, 1, nullptr, 0);
         // the upload guard may refuse first (a run the host touched, as test commands do): then what it guards, the
         // sandbox's own block, is called as well, so the block itself is always what's proved
-        if (gGuardRefused.load() != guardBefore && gUploadReal) call |= gUploadReal(object, 0, 1, 1, nullptr, 0);
+        if (gGuardRefused.load() != guardBefore && gUploadReal == reinterpret_cast<UploadFn>(gSteam[0].stub))
+            call |= gUploadReal(object, 0, 1, 1, nullptr, 0);
         const bool stored = reinterpret_cast<Store>(table[storeSlot])(object);
         out += gSteam[0].count + gSteam[8].count == before + 2 && call == 0 && !stored
                    ? "Steam uploads blocked in the game's own interface"

@@ -36,6 +36,8 @@ struct Quat {
 
 eng::Weak gHandler, gDetails;
 std::function<bool(bool redo)> gHistoryRedirect;     // Create Together: a joiner's steps go to the host's history
+std::function<void()> gAfterHistoryStep;              // and after any step on the host: its pieces sent out again
+std::function<void(const std::string&)> gJoinerRefused;
 eng::Weak gLastHandler;                 // the editor's handler, kept through a test run (whose pawn is the ball)
 std::set<int32_t> gKnown;               // AllActors slots seen last frame
 std::map<int32_t, int> gFresh;          // new pieces still being watched: frames left to reach the spawn point
@@ -503,6 +505,13 @@ bool Undo() { return Handler() && eng::Call(Handler(), "Undo").Invoked(); }
 eng::Obj OwnHandler() { return Handler(); }
 uintptr_t UndoOriginalRva(bool redo);
 void SetHistoryRedirect(std::function<bool(bool redo)> redirect) { gHistoryRedirect = std::move(redirect); }
+void SetAfterHistoryStep(std::function<void()> after) { gAfterHistoryStep = std::move(after); }
+void SetJoinerRefused(std::function<void(const std::string&)> tell) { gJoinerRefused = std::move(tell); }
+// Every piece's replication woken (AActor.FlushNetDormancy): an undo or redo changes pieces natively, and a dormant
+// piece wouldn't send the change to the other players.
+void WakePieces() {
+    for (Obj a : AllActors()) eng::Call(a, "FlushNetDormancy");
+}
 bool Redo() { return Handler() && eng::Call(Handler(), "Redo").Invoked(); }
 
 bool Scale(int id, Vec3* out) {
@@ -572,8 +581,23 @@ void MoveDrops() {
 }
 }  // namespace
 
+bool gJoiner = false;
+void SetJoiner(bool on) { gJoiner = on; }
+bool RefusedForJoiner(const char* what) {
+    if (!gJoiner) return false;
+    static ULONGLONG said = 0;
+    if (GetTickCount64() - said > 3000) {
+        said = GetTickCount64();
+        hostlog::Info(std::string("editor: ") + what + " is the host's while editing together");
+        if (gJoinerRefused) gJoinerRefused(std::string(what) + " works for the host only while editing together");
+    }
+    return true;
+}
+
 std::vector<int> SpawnPieces(const std::vector<Spawn>& pieces, bool drop, const std::vector<int>& remove) {
     if (gNetworked) drop = false;       // the drop moves pieces directly: on this machine only, while editing together
+    // a joiner's paste goes to the host and comes back later: the pieces it makes can't be given their transforms here
+    if (RefusedForJoiner("placing pieces from a plugin")) return {};
     std::vector<int> made;
     Obj handler = Handler();
     if (!handler || (pieces.empty() && remove.empty())) return made;
@@ -850,6 +874,7 @@ void HoldRefreshes(bool on) {
 }
 
 std::vector<int> DuplicateSelection() {
+    if (RefusedForJoiner("duplicating from a plugin")) return {};
     std::vector<int> copies;
     if (!Handler() || Selection().empty()) return copies;
     std::set<int32_t> before;
@@ -867,6 +892,7 @@ std::vector<int> DuplicateSelection() {
 }
 
 void RotatePieces(const std::vector<int>& ids, const Vec3& center, double degreesX, double degreesY, double degreesZ) {
+    if (RefusedForJoiner("turning pieces from a plugin")) return;
     const Quat turn = Multiply(AxisAngle(0, 0, 1, degreesZ), Multiply(AxisAngle(0, 1, 0, degreesY), AxisAngle(1, 0, 0, degreesX)));
     for (int id : ids) {
         Vec3 l;
@@ -1225,11 +1251,13 @@ void UndoHooked(Obj context, uint8_t* frame, void* result) {
     ++gHistoryMoves;
     if (gHistoryRedirect && gHistoryRedirect(false)) return FinishSkippedCall(frame);
     gUndoOriginal(context, frame, result);
+    if (gAfterHistoryStep) gAfterHistoryStep();
 }
 void RedoHooked(Obj context, uint8_t* frame, void* result) {
     ++gHistoryMoves;
     if (gHistoryRedirect && gHistoryRedirect(true)) return FinishSkippedCall(frame);
     gRedoOriginal(context, frame, result);
+    if (gAfterHistoryStep) gAfterHistoryStep();
 }
 
 }  // namespace

@@ -487,7 +487,8 @@ void RegisterCore()
                                Is(!Together::InviteDialog(), "Together::InviteDialog without a lobby"),
                                Is(Together::TakeInvite() == "", "Together::TakeInvite without an invite"),
                                Is(Together::OwnName() != "", "Together::OwnName empty"),
-                               Is(Together::TakeNotice() == "" || true, "Together::TakeNotice")};
+                               Is(Together::TakeNotice() == "" || true, "Together::TakeNotice"),
+                               Is(Together::NewSessionCode().length() == 8 && Together::NewSessionCode() != Together::NewSessionCode(), "Together::NewSessionCode")};
             Together::SetSessionCode("");
             Together::SetJoinCode("");
             if (backend != "test")

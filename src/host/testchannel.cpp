@@ -1915,6 +1915,48 @@ void Run(const std::string& cmd) {
                  });
                  return Report(c + " -> " + (cls ? std::to_string(n) + names : "no class"));
              }
+             else if (what == "light") {         // light <time of day> <brightness> <yaw>: the editor's own setters
+                 eng::Obj h = editor::OwnHandler();
+                 if (!h) return Report(c + " -> no handler");
+                 const float tod = static_cast<float>(std::atof(Arg(a, 2).c_str())), bri = static_cast<float>(std::atof(Arg(a, 3).c_str())),
+                             yaw = static_cast<float>(std::atof(Arg(a, 4).c_str()));
+                 eng::Call(h, "SetWorldTimeOfDay", tod);
+                 eng::Call(h, "SetWorldBrightness", bri);
+                 eng::Call(h, "SetWorldDirectionalLightYaw", yaw);
+                 return Report(c + " -> set");
+             }
+             else if (what == "lightstate") {    // the editor light's settings and yaw, and every sky light's intensity
+                 std::string out;
+                 eng::Obj lightCls = eng::FindClass("SKGMapEditorDirectionalLight"), skyCls = eng::FindClass("SkyLightComponent");
+                 eng::ForEachObject([&](eng::Obj o) {
+                     if (eng::IsDefaultObject(o)) return true;
+                     if (lightCls && eng::IsA(o, lightCls)) {
+                         float st[2] = {0, 0};
+                         eng::ReadBytes(o, "DirectionalLightSettings", st, sizeof st);
+                         struct { double p, y, r; } rot{};
+                         const eng::Params rp = eng::Call(o, "K2_GetActorRotation");
+                         if (const uint8_t* rr = rp.Return()) std::memcpy(&rot, rr, sizeof rot);
+                         char buf[160];
+                         std::snprintf(buf, sizeof buf, " light tod=%.2f bri=%.2f pitch=%.1f yaw=%.1f", st[0], st[1], rot.p, rot.y);
+                         out += buf;
+                     } else if (skyCls && eng::IsA(o, skyCls)) {
+                         float intensity = 0;
+                         eng::ReadBytes(o, "Intensity", &intensity, sizeof intensity);
+                         char buf[64];
+                         std::snprintf(buf, sizeof buf, " sky=%.2f", intensity);
+                         out += buf;
+                     }
+                     return true;
+                 });
+                 return Report("lightstate:" + out);
+             }
+             else if (what == "describe") {      // describe <class> <function>: its parameters
+                 eng::Obj fn = eng::FindFunction(eng::FindClass(Arg(a, 2)), Arg(a, 3));
+                 return Report(c + " -> " + (fn ? eng::Describe(fn) : std::string("no such function")));
+             }
+             else if (what == "steamids") {      // each player's Steam id as the host reads it (their UniqueID)
+                 return Report("steamids: " + together::SteamIdsStatus());
+             }
              else if (what == "createtab") {     // createtab [n]: opens a plugin's Create page tab (as a click on its label)
                  createpage::OpenTab(a.size() > 2 ? std::atoi(Arg(a, 2).c_str()) : 0);
                  return Report(c + " -> " + createpage::Status());
