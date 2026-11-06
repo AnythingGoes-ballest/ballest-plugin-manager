@@ -43,6 +43,9 @@
 #include "json.hpp"
 #include "steam.hpp"
 #include "plugins.hpp"
+#include "createpage.hpp"
+#include "lobby.hpp"
+#include "together.hpp"
 #include "editor.hpp"
 #include "engine.hpp"
 #include "race.hpp"
@@ -521,9 +524,18 @@ void WinDockInEditorTab(ui::Window* w, const std::string& icon) {
     w->editorTab = editor::AddTab(plugins::Current(), IconPath(icon));
     w->layoutDirty = true;
 }
-bool WinIsTabOpen(ui::Window* w) { return w->dock == ui::Dock::EditorTab && editor::TabOpen(w->editorTab); }
+void WinDockInCreatePage(ui::Window* w, const std::string& label) {
+    if (w->dock == ui::Dock::CreatePage) return;     // one tab per window
+    w->dock = ui::Dock::CreatePage;
+    w->createTab = createpage::AddTab(plugins::Current(), label);
+    w->layoutDirty = true;
+}
+bool WinIsTabOpen(ui::Window* w) {
+    return (w->dock == ui::Dock::EditorTab && editor::TabOpen(w->editorTab)) || (w->dock == ui::Dock::CreatePage && createpage::TabOpen(w->createTab));
+}
 void WinOpenTab(ui::Window* w) {
     if (w->dock == ui::Dock::EditorTab) editor::OpenTab(w->editorTab);
+    if (w->dock == ui::Dock::CreatePage) createpage::OpenTab(w->createTab);
 }
 
 // --- Editor ----------------------------------------------------------------------------------------------------------
@@ -850,6 +862,7 @@ void RegisterUi() {
     Method("Window", "void DockInEditorDetails()", asFUNCTION(WinDockInEditorDetails));
     Method("Window", "void DockInHub()", asFUNCTION(WinDockInHub));
     Method("Window", "void DockInEditorTab(const string &in)", asFUNCTION(WinDockInEditorTab));
+    Method("Window", "void DockInCreatePage(const string &in label)", asFUNCTION(WinDockInCreatePage));
     Method("Window", "bool IsTabOpen()", asFUNCTION(WinIsTabOpen));
     Method("Window", "void OpenTab()", asFUNCTION(WinOpenTab));
     Method("Window", "void StartHeader()", asFUNCTION(WinStartHeader));
@@ -2568,6 +2581,81 @@ void RegisterPrefabs() {
     Global("bool Delete(const string &in name, string &out reply)", asFUNCTION(PrefabsDelete));
 }
 
+// --- Together (Create Together: editing one map with other players) ----------------------------------------------------
+std::vector<lobby::Found> gFound;            // the last lobby search's results, as FoundCount took them
+CScriptArray* TogetherSavedMaps() { return StringArrayOf(together::SavedMaps()); }
+CScriptArray* TogetherMembers() {
+    std::vector<std::string> names;
+    for (const auto& m : lobby::Members()) names.push_back(m.name);
+    return StringArrayOf(names);
+}
+int TogetherFoundCount() {
+    gFound = lobby::Results();
+    return static_cast<int>(gFound.size());
+}
+const lobby::Found* FoundAt(int i) { return i >= 0 && i < static_cast<int>(gFound.size()) ? &gFound[static_cast<size_t>(i)] : nullptr; }
+std::string TogetherFoundId(int i) { return FoundAt(i) ? FoundAt(i)->id : ""; }
+std::string TogetherFoundData(int i, const std::string& key) {
+    const lobby::Found* f = FoundAt(i);
+    if (!f) return "";
+    auto it = f->data.find(key);
+    return it == f->data.end() ? "" : it->second;
+}
+int TogetherFoundMembers(int i) { return FoundAt(i) ? FoundAt(i)->members : 0; }
+int TogetherFoundMax(int i) { return FoundAt(i) ? FoundAt(i)->max : 0; }
+bool TogetherFoundFriend(int i) { return FoundAt(i) && FoundAt(i)->friends; }
+void TogetherHostNext(bool on) { together::ListenNextEditor(on); }
+void TogetherLeave() {
+    if (together::IsServer() || together::IsClient()) together::Leave();
+}
+
+void RegisterTogether() {
+    e->SetDefaultNamespace("Together");
+    Check(e->RegisterEnum("LobbyType"), "Together::LobbyType");
+    Check(e->RegisterEnumValue("LobbyType", "InviteOnly", lobby::kInviteOnly), "InviteOnly");
+    Check(e->RegisterEnumValue("LobbyType", "Friends", lobby::kFriends), "Friends");
+    Check(e->RegisterEnumValue("LobbyType", "Public", lobby::kPublic), "Public");
+    Check(e->RegisterEnumValue("LobbyType", "Code", lobby::kCode), "Code");
+    // the editor's own networking
+    Global("string Backend()", asFUNCTION(lobby::Backend));
+    Global("string NetMode()", asFUNCTION(together::NetMode));
+    Global("bool IsHosting()", asFUNCTION(together::IsServer));
+    Global("bool IsJoined()", asFUNCTION(together::IsClient));
+    Global("int Players()", asFUNCTION(together::Players));
+    Global("void HostNextEditor(bool on = true)", asFUNCTION(TogetherHostNext));
+    Global("bool HostNextArmed()", asFUNCTION(together::ListenArmed));
+    Global("string OwnAddress()", asFUNCTION(together::OwnAddress));
+    Global("bool Join(const string &in address)", asFUNCTION(together::Join));
+    Global("void Leave()", asFUNCTION(TogetherLeave));
+    Global("bool NewMap()", asFUNCTION(together::NewMap));
+    Global("bool OpenMap(const string &in file)", asFUNCTION(together::OpenMap));
+    Global("array<string>@ SavedMaps()", asFUNCTION(TogetherSavedMaps));
+    // lobbies
+    Global("string LobbyState()", asFUNCTION(lobby::State));
+    Global("void CreateLobby(LobbyType type, int maxPlayers)", asFUNCTION(lobby::Create));
+    Global("void JoinLobby(const string &in id)", asFUNCTION(lobby::Join));
+    Global("void LeaveLobby()", asFUNCTION(lobby::Leave));
+    Global("string LobbyId()", asFUNCTION(lobby::Id));
+    Global("bool IsLobbyOwner()", asFUNCTION(lobby::IsOwner));
+    Global("bool SetLobbyData(const string &in key, const string &in value)", asFUNCTION(lobby::SetData));
+    Global("string LobbyData(const string &in key)", asFUNCTION(lobby::Data));
+    Global("bool SetLobbyType(LobbyType type)", asFUNCTION(lobby::SetType));
+    Global("bool SetLobbyJoinable(bool joinable)", asFUNCTION(lobby::SetJoinable));
+    Global("int LobbyMaxPlayers()", asFUNCTION(lobby::MaxMembers));
+    Global("array<string>@ LobbyMembers()", asFUNCTION(TogetherMembers));
+    Global("void FindLobbies(const string &in code = \"\")", asFUNCTION(lobby::Find));
+    Global("bool Searching()", asFUNCTION(lobby::Searching));
+    Global("int FoundCount()", asFUNCTION(TogetherFoundCount));
+    Global("string FoundId(int)", asFUNCTION(TogetherFoundId));
+    Global("string FoundData(int, const string &in key)", asFUNCTION(TogetherFoundData));
+    Global("int FoundPlayers(int)", asFUNCTION(TogetherFoundMembers));
+    Global("int FoundMaxPlayers(int)", asFUNCTION(TogetherFoundMax));
+    Global("bool FoundIsFriend(int)", asFUNCTION(TogetherFoundFriend));
+    Global("bool InviteDialog()", asFUNCTION(lobby::InviteDialog));
+    Global("string TakeInvite()", asFUNCTION(lobby::TakeInvite));
+    Global("string OwnName()", asFUNCTION(lobby::OwnName));
+}
+
 void Register(asIScriptEngine* engine) {
     e = engine;
     RegisterCore();
@@ -2581,6 +2669,7 @@ void Register(asIScriptEngine* engine) {
     RegisterHud();
     RegisterEditor();
     RegisterPrefabs();
+    RegisterTogether();
     RegisterReplay();
     RegisterCosmetics();
     RegisterLeaderboard();

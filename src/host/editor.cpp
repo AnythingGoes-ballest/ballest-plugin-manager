@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -34,6 +35,7 @@ struct Quat {
 };
 
 eng::Weak gHandler, gDetails;
+std::function<bool(bool redo)> gHistoryRedirect;     // Create Together: a joiner's steps go to the host's history
 eng::Weak gLastHandler;                 // the editor's handler, kept through a test run (whose pawn is the ball)
 std::set<int32_t> gKnown;               // AllActors slots seen last frame
 std::map<int32_t, int> gFresh;          // new pieces still being watched: frames left to reach the spawn point
@@ -467,6 +469,9 @@ bool SetRotation(int id, const Rot& rotation) {
 }
 
 bool Undo() { return Handler() && eng::Call(Handler(), "Undo").Invoked(); }
+eng::Obj OwnHandler() { return Handler(); }
+uintptr_t UndoOriginalRva(bool redo);
+void SetHistoryRedirect(std::function<bool(bool redo)> redirect) { gHistoryRedirect = std::move(redirect); }
 bool Redo() { return Handler() && eng::Call(Handler(), "Redo").Invoked(); }
 
 bool Scale(int id, Vec3* out) {
@@ -1174,13 +1179,21 @@ bool gHistoryHookFailed = false;
 
 void UndoHooked(Obj context, uint8_t* frame, void* result) {
     ++gHistoryMoves;
+    if (gHistoryRedirect && gHistoryRedirect(false)) return;
     gUndoOriginal(context, frame, result);
 }
 void RedoHooked(Obj context, uint8_t* frame, void* result) {
     ++gHistoryMoves;
+    if (gHistoryRedirect && gHistoryRedirect(true)) return;
     gRedoOriginal(context, frame, result);
 }
 
+}  // namespace
+uintptr_t UndoOriginalRva(bool redo) {
+    const NativeFunction f = redo ? gRedoOriginal : gUndoOriginal;
+    return f ? reinterpret_cast<uintptr_t>(f) - eng::Base() : 0;
+}
+namespace {
 void HistoryWatched() {
     if ((gUndoOriginal && gRedoOriginal) || gHistoryHookFailed || !Handler()) return;
     Obj cls = eng::ClassOf(Handler());
@@ -2032,6 +2045,14 @@ std::string PiecesStatus() {
         s += buf;
     }
     return "pieces:" + s;
+}
+
+bool CallHandlerBool(const std::string& function, bool value) {
+    Obj handler = Handler();
+    if (!handler || !eng::FindFunction(eng::ClassOf(handler), function)) return false;
+    eng::Params p(eng::FunctionOn(handler, function.c_str()));
+    p.SetArg(0, static_cast<uint8_t>(value ? 1 : 0));
+    return eng::Invoke(handler, p);
 }
 
 bool CallHandler(const std::string& function) { return Handler() && eng::Call(Handler(), function.c_str()).Invoked(); }

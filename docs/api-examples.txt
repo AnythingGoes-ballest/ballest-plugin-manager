@@ -3834,3 +3834,101 @@ there isn't also reported by `ExtraRowClicked`, which is the rest of the row (th
 int row = Leaderboard::ExtraRowGhostClicked();
 if (row >= 0)
     Log::Info("toggle " + row);
+
+@@ Together
+Create Together: editing one map with other players. The track editor is the game's multiplayer level editor: its
+pieces and editing pawns are replicated, and every change goes through the host. So a host opens the editor as a
+listen server and others join it; the editor's own replication keeps everyone's pieces, materials and properties the
+same. Players find each other through Steam lobbies (in a sandboxed test copy, a stand-in that only reaches this
+computer's other test copies). In a player's game the editor is only ever on Steam's networking (SteamSocketsNetDriver
+through Steam's relay); there is no plain UDP fallback. The host:
+- owns the map: only the host can save or publish it (a joiner's editor has no save button or publish tab);
+- keeps everyone's undo and redo apart: each player's Ctrl+Z steps back their own changes only;
+- lets only the lobby's members in: a connection no member claims is sent back to its main menu.
+Requires host 0.34.0.
+
+== Together::Backend
+How lobbies are found: "steam" (a player's game), "test" (a sandboxed test copy: only this computer's test copies) or
+"none".
+--
+if (Together::Backend() == "none")
+    Log::Warn("no lobbies here");
+
+== Together::NetMode Together::IsHosting Together::IsJoined Together::Players
+What this game is now: `NetMode` is "standalone", "listen server", "client" or "none" (no world yet). `IsHosting` is a
+listen server, `IsJoined` a client of one. `Players` counts the players in this game's world (the host included).
+--
+if (Together::IsHosting())
+    Log::Info("hosting for " + (Together::Players() - 1) + " others");
+
+== Together::HostNextEditor Together::HostNextArmed
+Armed, the next time the game opens its editor (its own "+new", a saved map, or `NewMap` / `OpenMap`), the editor
+opens as a listen server. It disarms itself once used. `HostNextArmed` tells whether it is still armed.
+--
+Together::HostNextEditor(true);
+Together::OpenMap(file);
+
+== Together::NewMap Together::OpenMap Together::SavedMaps
+The game's own ways into its editor: `NewMap` as the Create page's "+new" (the game then asks for the map's name),
+`OpenMap` one of the player's saved maps (a full path from `SavedMaps`: only files in the game's own maps folder are
+opened). `SavedMaps` gives every saved map's full path.
+--
+array<string>@ maps = Together::SavedMaps();
+if (maps.length() > 0)
+    Together::OpenMap(maps[0]);
+
+== Together::OwnAddress Together::Join Together::Leave
+`OwnAddress` is where others reach this game's editor: "steam.<Steam id>" (a test copy: "127.0.0.1:<port>"). `Join`
+connects to a host's address; a player's game joins only Steam addresses (false for anything else). `Leave` ends this
+game's part in a session (back to the main menu); for a host, the session ends for everyone.
+--
+string address = Together::LobbyData("addr");
+if (!Together::Join(address))
+    Log::Warn("not a session address: " + address);
+
+== Together::CreateLobby Together::JoinLobby Together::LeaveLobby Together::LobbyState Together::LobbyId Together::IsLobbyOwner
+The one lobby this game is in. `CreateLobby` makes one (`LobbyType`: Public lists it for everyone, Friends for the
+player's Steam friends, Code finds it only by a code in its data, InviteOnly not at all) for up to `maxPlayers` (2-16);
+`JoinLobby` joins one by id. `LobbyState` is "none", "creating", "joining", "in lobby" or "error: ...".
+--
+Together::CreateLobby(Together::Public, 4);
+// later, each frame:
+if (Together::LobbyState() == "in lobby" && Together::IsLobbyOwner())
+    Together::SetLobbyData("map", "my map");
+
+== Together::SetLobbyData Together::LobbyData Together::SetLobbyType Together::SetLobbyJoinable Together::LobbyMaxPlayers Together::LobbyMembers
+The lobby's data (text keys and values everyone in it, and everyone who finds it, can read; only the owner writes,
+keys starting with "_" are the host's), who can find it, whether it takes new players, its size and its members' names
+(the owner first).
+--
+Together::SetLobbyJoinable(false);      // full: nobody new
+array<string>@ names = Together::LobbyMembers();
+
+== Together::FindLobbies Together::Searching Together::FoundCount Together::FoundId Together::FoundData Together::FoundPlayers Together::FoundMaxPlayers Together::FoundIsFriend
+Lobbies to join: with no code, every public lobby and the player's friends' lobbies; with a code, the one whose
+"code" data is that. Results arrive a moment later (`Searching` false again); `FoundCount` takes them, then each by
+number: its id (for `JoinLobby`), data, players and size, and whether it's a friend's.
+--
+Together::FindLobbies();
+// once Searching() is false:
+for (int i = 0; i < Together::FoundCount(); i++)
+    Log::Info(Together::FoundData(i, "map") + " by " + Together::FoundData(i, "host"));
+
+== Together::InviteDialog Together::TakeInvite Together::OwnName
+`InviteDialog` opens Steam's own invite dialog for the lobby (false where there is none: a test copy). `TakeInvite`
+gives, once, the lobby id of an invite the player accepted in Steam (or the one Steam started the game for), else "".
+`OwnName` is the player's Steam name.
+--
+string invite = Together::TakeInvite();
+if (invite != "")
+    Together::JoinLobby(invite);
+
+== UI::Window.DockInCreatePage
+Makes the window the page of a tab of its own on the main menu's Create page: a label of the game's kind after
+"files" and "published" shows the window in place of the game's list (the page's title stays), the game's labels show
+theirs again. Built again whenever the page is made; gone when your plugin stops. `IsTabOpen` and `OpenTab` work as
+for editor tabs. One tab per window. Requires host 0.34.0.
+--
+UI::Window@ page = UI::CreateWindow();
+page.DockInCreatePage("create together");
+page.AddText("create together", 30);

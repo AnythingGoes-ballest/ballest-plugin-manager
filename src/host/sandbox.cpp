@@ -107,6 +107,9 @@ void** gCreateFileSlot = nullptr;
 INT WSAAPI BlockedGetAddrInfo(PCSTR node, PCSTR service, const ADDRINFOA* hints, PADDRINFOA* result) {
     if (node && (_stricmp(node, "localhost") == 0 || std::strcmp(node, "127.0.0.1") == 0 || std::strcmp(node, "::1") == 0))
         return gGetAddrInfo(node, service, hints, result);
+    // No name at all with AI_PASSIVE: the addresses to bind a listening socket to (a listen server's own, for Create
+    // Together's loopback tests). Answered from this computer alone, never a lookup; sending stays blocked.
+    if (!node && hints && (hints->ai_flags & AI_PASSIVE)) return gGetAddrInfo(node, service, hints, result);
     ++gBlockedLookups;
     if (!gLoggedLookup.exchange(true)) hostlog::Info(std::string("sandbox: blocked the game's internet lookup of ") + (node ? node : "?"));
     if (result) *result = nullptr;
@@ -137,7 +140,67 @@ int WSAAPI BlockedWSAConnect(SOCKET, const sockaddr*, int, LPWSABUF, LPWSABUF, L
     WSASetLastError(WSAEACCES);
     return SOCKET_ERROR;
 }
-int WSAAPI BlockedSendTo(SOCKET, const char*, int, int, const sockaddr*, int) {
+// Create Together's test exception: a datagram to this computer's own loopback address on the slots' editor ports
+// (kTogetherPorts), the one way a slot's Unreal listen server and another slot's client reach each other. Nothing
+// listens there but the slots' own games (their IpNetDriver), and a slot's Steam traffic stays blocked.
+using SendToFn = int(WSAAPI*)(SOCKET, const char*, int, int, const sockaddr*, int);
+SendToFn gSendTo = nullptr;
+std::atomic<long> gLoopbackDatagrams{0};
+// A reply is let through too: to a loopback port that sent this copy a datagram first (recvfrom below), which is how a
+// listen server answers a client (the client's own port is any free one). The copy itself never starts traffic to any
+// other port.
+using RecvFromFn = int(WSAAPI*)(SOCKET, char*, int, int, sockaddr*, int*);
+RecvFromFn gRecvFrom = nullptr;
+std::atomic<uint32_t> gRepliedPorts[64];             // loopback ports heard from (0: free)
+void NoteHeardFrom(unsigned port) {
+    for (auto& slot : gRepliedPorts)
+        if (slot.load() == port) return;
+    for (auto& slot : gRepliedPorts) {
+        uint32_t empty = 0;
+        if (slot.compare_exchange_strong(empty, port)) return;
+    }
+}
+bool HeardFrom(unsigned port) {
+    for (auto& slot : gRepliedPorts)
+        if (slot.load() == port) return true;
+    return false;
+}
+bool TogetherLoopback(const sockaddr* to, int size) {
+    if (!to || size < static_cast<int>(sizeof(sockaddr_in)) || to->sa_family != AF_INET) return false;
+    const auto* in = reinterpret_cast<const sockaddr_in*>(to);
+    const unsigned port = ntohs(in->sin_port);
+    if (ntohl(in->sin_addr.s_addr) != INADDR_LOOPBACK) return false;
+    return (port >= kTogetherFirstPort && port < kTogetherFirstPort + kTogetherPorts) || HeardFrom(port);
+}
+// A test copy's listen socket (bound to any address on its kTogetherFirstPort port) is bound to the loopback address
+// instead: only this computer's copies can reach it, and Windows never asks to let it through its firewall.
+using BindFn = int(WSAAPI*)(SOCKET, const sockaddr*, int);
+BindFn gBind = nullptr;
+int WSAAPI LoopbackBind(SOCKET s, const sockaddr* addr, int size) {
+    if (addr && size >= static_cast<int>(sizeof(sockaddr_in)) && addr->sa_family == AF_INET) {
+        sockaddr_in in;
+        std::memcpy(&in, addr, sizeof in);
+        const unsigned port = ntohs(in.sin_port);
+        if (port >= kTogetherFirstPort && port < kTogetherFirstPort + kTogetherPorts && in.sin_addr.s_addr == htonl(INADDR_ANY)) {
+            in.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            return gBind(s, reinterpret_cast<const sockaddr*>(&in), sizeof in);
+        }
+    }
+    return gBind(s, addr, size);
+}
+int WSAAPI WatchedRecvFrom(SOCKET s, char* data, int length, int flags, sockaddr* from, int* fromSize) {
+    const int n = gRecvFrom(s, data, length, flags, from, fromSize);
+    if (n >= 0 && from && fromSize && *fromSize >= static_cast<int>(sizeof(sockaddr_in)) && from->sa_family == AF_INET) {
+        const auto* in = reinterpret_cast<const sockaddr_in*>(from);
+        if (ntohl(in->sin_addr.s_addr) == INADDR_LOOPBACK) NoteHeardFrom(ntohs(in->sin_port));
+    }
+    return n;
+}
+int WSAAPI BlockedSendTo(SOCKET s, const char* data, int length, int flags, const sockaddr* to, int size) {
+    if (gSendTo && TogetherLoopback(to, size)) {
+        ++gLoopbackDatagrams;
+        return gSendTo(s, data, length, flags, to, size);
+    }
     NoteConnection("datagram");
     WSASetLastError(WSAEACCES);
     return SOCKET_ERROR;
@@ -192,9 +255,11 @@ NetHooks BlockNetwork(HMODULE module) {
     one("gethostbyname", 52, reinterpret_cast<void*>(&BlockedGetHostByName));
     one("connect", 4, reinterpret_cast<void*>(&BlockedConnect));
     one("WSAConnect", 0, reinterpret_cast<void*>(&BlockedWSAConnect));
-    one("sendto", 20, reinterpret_cast<void*>(&BlockedSendTo));
+    one("sendto", 20, reinterpret_cast<void*>(&BlockedSendTo), gSendTo ? &ignored : reinterpret_cast<void**>(&gSendTo));
     one("WSASendTo", 0, reinterpret_cast<void*>(&BlockedWSASendTo));
     one("WSASendMsg", 0, reinterpret_cast<void*>(&BlockedWSASendMsg));
+    one("bind", 2, reinterpret_cast<void*>(&LoopbackBind), gBind ? &ignored : reinterpret_cast<void**>(&gBind));
+    one("recvfrom", 17, reinterpret_cast<void*>(&WatchedRecvFrom), gRecvFrom ? &ignored : reinterpret_cast<void**>(&gRecvFrom));
     one("WSAIoctl", 0, reinterpret_cast<void*>(&FilteredWSAIoctl), gWSAIoctl ? &ignored : reinterpret_cast<void**>(&gWSAIoctl));
     return n;
 }
@@ -1073,6 +1138,7 @@ bool MuteAudio() {
 }
 
 bool On() { return gOn; }
+long LoopbackDatagrams() { return gLoopbackDatagrams.load(); }
 
 bool Flagged() {
     const std::wstring dir = hostlog::DataDir();
@@ -1314,14 +1380,16 @@ std::string SelfTest() {
     }
     if (uploadSlot >= 0 && storeSlot >= 0) {
         void** table = *reinterpret_cast<void***>(object);
-        const long before = gSteam[0].count + gSteam[8].count;
+        // a refusal by the upload guard (a run the host touched, as test commands do) is a block too: it never reaches Steam
+        const long before = gSteam[0].count + gSteam[8].count + gGuardRefused.load();
         using Upload = uint64_t (*)(void*, uint64_t, int, int32_t, const int32_t*, int);
         using Store = bool (*)(void*);
         const uint64_t call = reinterpret_cast<Upload>(table[uploadSlot])(object, 0, 1, 1, nullptr, 0);
         const bool stored = reinterpret_cast<Store>(table[storeSlot])(object);
-        out += gSteam[0].count + gSteam[8].count == before + 2 && call == 0 && !stored
+        out += gSteam[0].count + gSteam[8].count + gGuardRefused.load() == before + 2 && call == 0 && !stored
                    ? "Steam uploads blocked in the game's own interface"
-                   : "STEAM WENT THROUGH";
+                   : "STEAM WENT THROUGH (counted " + std::to_string(gSteam[0].count + gSteam[8].count + gGuardRefused.load() - before) + " of 2, call " +
+                         std::to_string(call) + ", stored " + (stored ? "yes" : "no") + ")";
     } else {
         out += object ? "STEAM NOT BLOCKED in the game's own interface" : "the game's leaderboard interface not seen yet";
     }

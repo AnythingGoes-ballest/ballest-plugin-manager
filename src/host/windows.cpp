@@ -11,6 +11,7 @@
 #include <set>
 
 #include "cosmetics.hpp"
+#include "createpage.hpp"
 #include "editor.hpp"
 #include "hub.hpp"
 #include "game.hpp"
@@ -384,6 +385,7 @@ Obj DockTarget(const Window& win) {
         case Dock::Hub: return hub::DockPanel();
         case Dock::EditorDetails: return editor::DetailsContainer();
         case Dock::EditorTab: return editor::TabPage(win.editorTab);
+        case Dock::CreatePage: return createpage::TabPage(win.createTab);
         default: return nullptr;
     }
 }
@@ -405,7 +407,7 @@ void Build(Window& win) {
         Obj slot = eng::Call(dock, "AddChildToVerticalBox", border).ReturnObj();
         if (!slot) return;
         eng::Call(slot, "SetPadding", win.dock == Dock::Hub         ? w::Margin{0, 0, 0, 8}
-                                      : win.dock == Dock::EditorTab ? w::Margin{0, 0, 0, 0}
+                                      : win.dock == Dock::EditorTab || win.dock == Dock::CreatePage ? w::Margin{0, 0, 0, 0}
                                                                     : w::Margin{0, 10, 0, 0});
         host = border;                          // what is removed when the section is rebuilt
     } else if (sized) {

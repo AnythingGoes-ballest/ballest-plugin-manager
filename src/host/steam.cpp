@@ -185,6 +185,11 @@ void ReadEntries(uint64_t entries, int count, std::function<void(bool, std::vect
 }  // namespace
 
 bool Available() { return TheApi().ok; }
+void Await(uint64_t call, int callback, int size, std::function<void(const uint8_t* result, bool failed)> done) {
+    if (!TheApi().ok) return done(nullptr, true);
+    Start(call, callback, size, std::move(done));
+}
+void* FriendsInterface() { return TheApi().friends; }
 int Pending() { return static_cast<int>(gRequests.size()); }
 
 void Frame() {

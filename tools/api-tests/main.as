@@ -463,6 +463,91 @@ void RegisterCore()
         return All(c);
     });
 
+    // Create Together outside a session: what this game is, the address and map checks (a player's game joins only Steam
+    // addresses, a test copy only loopback ones; only saved maps open), arming the next editor as a listen server, and a
+    // lobby round trip (made, its data, found by its code, left). NewMap isn't called: it would leave the menu for the
+    // editor (the create together sessions are tested end to end in two slots).
+    Add("core", "Together outside a session", "Together::Backend,Together::NetMode,Together::IsHosting,Together::IsJoined,Together::Players,Together::OwnAddress,Together::Join,Together::Leave,Together::SavedMaps,Together::OpenMap,Together::NewMap,Together::HostNextEditor,Together::HostNextArmed,Together::InviteDialog,Together::TakeInvite,Together::OwnName,Together::CreateLobby,Together::LobbyState,Together::LobbyId,Together::IsLobbyOwner,Together::SetLobbyData,Together::LobbyData,Together::SetLobbyType,Together::SetLobbyJoinable,Together::LobbyMaxPlayers,Together::LobbyMembers,Together::FindLobbies,Together::Searching,Together::FoundCount,Together::FoundId,Together::FoundData,Together::FoundPlayers,Together::FoundMaxPlayers,Together::FoundIsFriend,Together::JoinLobby,Together::LeaveLobby", function() {
+        if (step == 0)
+        {
+            string backend = Together::Backend();
+            Together::HostNextEditor(true);
+            bool armed = Together::HostNextArmed();
+            Together::HostNextEditor(false);
+            Together::Leave();                  // nothing to leave: stays here
+            array<string> c = {Is(backend == "test" || backend == "steam" || backend == "none", "Together::Backend " + backend),
+                               Is(Together::NetMode() == "standalone", "Together::NetMode " + Together::NetMode()),
+                               Is(!Together::IsHosting() && !Together::IsJoined(), "Together::IsHosting / IsJoined outside a session"),
+                               Is(Together::Players() >= 1, "Together::Players " + Together::Players()),
+                               Is(Together::OwnAddress() != "", "Together::OwnAddress empty"),
+                               Is(!Together::Join("8.8.8.8:7777"), "Together::Join took an internet address"),
+                               Is(!Together::OpenMap("C:/Windows/win.ini"), "Together::OpenMap opened a file outside the maps folder"),
+                               Is(Together::SavedMaps().length() == 0 || Together::SavedMaps()[0].findFirst(".balledit") > 0, "Together::SavedMaps"),
+                               Is(armed && !Together::HostNextArmed(), "Together::HostNextEditor / HostNextArmed"),
+                               Is(!Together::InviteDialog(), "Together::InviteDialog without a lobby"),
+                               Is(Together::TakeInvite() == "", "Together::TakeInvite without an invite"),
+                               Is(Together::OwnName() != "", "Together::OwnName empty")};
+            if (backend != "test")
+                return All(c);                  // a lobby round trip only in a test copy (never a real Steam lobby)
+            string first = All(c);
+            if (first != PASS)
+                return first;
+            Together::CreateLobby(Together::Code, 3);
+            t0 = Host::Time();
+            step = 1;
+            return WAIT;
+        }
+        if (step == 1)
+        {
+            if (Together::LobbyState() != "in lobby")
+                return Elapsed() < 5 ? WAIT : "Together::CreateLobby: " + Together::LobbyState();
+            Together::SetLobbyData("code", "APITST");
+            array<string> c = {Is(Together::IsLobbyOwner(), "Together::IsLobbyOwner"), Is(Together::LobbyId() != "", "Together::LobbyId empty"),
+                               Is(Together::LobbyData("code") == "APITST", "Together::SetLobbyData / LobbyData"),
+                               Is(Together::SetLobbyType(Together::Code) && Together::SetLobbyJoinable(true), "Together::SetLobbyType / SetLobbyJoinable"),
+                               Is(Together::LobbyMaxPlayers() == 3, "Together::LobbyMaxPlayers " + Together::LobbyMaxPlayers()),
+                               Is(Together::LobbyMembers().length() == 1, "Together::LobbyMembers " + Together::LobbyMembers().length())};
+            string r = All(c);
+            if (r != PASS)
+            {
+                Together::LeaveLobby();
+                return r;
+            }
+            Together::FindLobbies("APITST");
+            t0 = Host::Time();
+            step = 2;
+            return WAIT;
+        }
+        if (step == 2)
+        {
+            if (Together::Searching())
+                return Elapsed() < 5 ? WAIT : "Together::Searching never ended";
+            string id = Together::LobbyId();
+            int n = Together::FoundCount();
+            array<string> c = {Is(n >= 1 && Together::FoundId(0) == id, "Together::FindLobbies / FoundCount / FoundId: " + n),
+                               Is(n >= 1 && Together::FoundData(0, "code") == "APITST", "Together::FoundData"),
+                               Is(n >= 1 && Together::FoundPlayers(0) == 1 && Together::FoundMaxPlayers(0) == 3, "Together::FoundPlayers / FoundMaxPlayers"),
+                               Is(n >= 1 && !Together::FoundIsFriend(0), "Together::FoundIsFriend on a code lobby")};
+            Together::LeaveLobby();
+            bool left = Together::LobbyState() == "none";
+            Together::JoinLobby("1");           // no such lobby
+            bool refused = Together::LobbyState().findFirst("error") == 0;
+            c.insertLast(Is(left, "Together::LeaveLobby"));
+            c.insertLast(Is(refused, "Together::JoinLobby of no lobby: " + Together::LobbyState()));
+            return All(c);
+        }
+        return WAIT;
+    });
+    // A window as the page of a tab on the Create page: shut until it's opened.
+    Add("core", "Window as a Create page tab", "UI::Window.DockInCreatePage", function() {
+        UI::Window@ w = UI::CreateWindow();
+        w.DockInCreatePage("api tests");
+        w.AddText("api tests page", 16);
+        bool open = w.IsTabOpen();
+        w.visible = false;
+        return Is(!open, "UI::Window.IsTabOpen true for a Create page tab nobody opened");
+    });
+
     Add("core", "Log writes and reads back", "Log::Info,Log::Warn,Log::Error,Log::LineCount,Log::Line", function() {
         uint before = Log::LineCount();
         Log::Info("api-test info line");

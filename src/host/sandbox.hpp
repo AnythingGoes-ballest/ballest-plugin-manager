@@ -21,6 +21,10 @@
 namespace sandbox {
 
 bool On();                      // sandbox mode is on for this session
+// Create Together in test copies: the only datagrams a copy may send go to 127.0.0.1 on these ports, where another
+// copy's editor listens (slot N's listen port is kTogetherFirstPort + N). Everything else stays blocked.
+constexpr unsigned kTogetherFirstPort = 17777, kTogetherPorts = 10;
+long LoopbackDatagrams();       // datagrams let through that way so far
 bool Flagged();                 // the flag is there (before InstallEarly has read it)
 bool Interactive();             // a copy the player uses (interactive.txt): normal window and sound, every block kept
 std::wstring OwnHostPath();     // a test copy's own host build, run in place of the installed one when it exists

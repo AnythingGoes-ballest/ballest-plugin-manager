@@ -20,6 +20,9 @@
 #include "customize.hpp"
 #include "models.hpp"
 #include "editor.hpp"
+#include "together.hpp"
+#include "lobby.hpp"
+#include "createpage.hpp"
 #include "engine.hpp"
 #include "game.hpp"
 #include "hud.hpp"
@@ -111,6 +114,9 @@ void HostFrame(float dt) {
     input::Frame();
     game::Frame();
     editor::Frame();
+    together::Frame();
+    lobby::Frame();
+    createpage::Frame();
     race::Frame();
     runs::Frame();                  // the player's own recent runs (after race: it reads the run)
     localrecords::Frame();          // the game's records cleared for a plugin, once their map is raced

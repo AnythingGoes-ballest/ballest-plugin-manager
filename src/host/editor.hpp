@@ -15,6 +15,7 @@
 // Pieces are identified by their object-array slot; an id stops resolving when the piece is deleted.
 // Game thread only.
 #pragma once
+#include <functional>
 #include <vector>
 
 #include "engine.hpp"
@@ -52,7 +53,12 @@ struct Spawn {
 std::vector<int> SpawnPieces(const std::vector<Spawn>& pieces, bool drop, const std::vector<int>& remove = {});
 // The editor's own undo and redo (its handler's, as Ctrl+Z and Ctrl+Y do); false outside the editor.
 bool Undo();
-int HistoryMoves();          // undo and redo steps the editor has run, however they were started (counted from 0)
+int HistoryMoves();
+// While set, every undo and redo the editor runs (Ctrl+Z / Ctrl+Y, its buttons, a plugin) is first offered to it;
+// when it returns true the editor's own step is skipped (Create Together sends a joiner's steps to the host).
+uintptr_t UndoOriginalRva(bool redo);   // test: the game's own Undo / Redo entry, as an offset in the exe
+eng::Obj OwnHandler();                  // the local player's editor handler (their pawn's), or null
+void SetHistoryRedirect(std::function<bool(bool redo)> redirect);          // undo and redo steps the editor has run, however they were started (counted from 0)
 bool Redo();
 Vec3 ViewForward();
 // Where a piece's middle (its bounds' centre) is on screen, in the units of window offsets and the mouse position
@@ -139,5 +145,6 @@ bool TabTapped(eng::Obj button);         // test: a tap on a game button, openin
 std::string Status();                   // for the test channel
 std::string PiecesStatus();             // test: every piece with its attach parent
 bool CallHandler(const std::string& function);   // test: a handler function without parameters
+bool CallHandlerBool(const std::string& function, bool value);   // test: one with a single bool parameter
 
 }  // namespace editor

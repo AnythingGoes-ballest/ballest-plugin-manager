@@ -86,7 +86,7 @@ enum class Kind { Text, Button, IconButton, Slider, Dropdown, Space, TextArea, T
 // (shown only while pieces are selected, since the panel's section list is), or docked as a row of the game's track
 // hub, under its header and page row (hub.hpp: DockPanel), or as the page of a tab of its own in the track editor's
 // left panel (editor.hpp: AddTab).
-enum class Dock { Screen, EditorDetails, Hub, EditorTab };
+enum class Dock { Screen, EditorDetails, Hub, EditorTab, CreatePage };
 
 struct Window;
 
@@ -164,6 +164,7 @@ struct Window {
     std::string font, typeface;                 // the texts' and buttons' font (SetFont), "" the engine's default
     Dock dock = Dock::Screen;
     int editorTab = -1;                         // Dock::EditorTab: its tab (editor::AddTab)
+    int createTab = -1;                         // Dock::CreatePage: its tab (createpage::AddTab)
     eng::Weak dockedIn;                         // the container a docked window was built into
     // Movable: while the cursor is on screen the window can be dragged; its position is saved per plugin
     // (Storage "window.<n>.x/y", n = the plugin's nth window) and restored when it is made movable.

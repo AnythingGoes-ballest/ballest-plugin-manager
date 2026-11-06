@@ -46,6 +46,9 @@
 #include "ui.hpp"
 #if __has_include("sandbox.hpp")
 #include "sandbox.hpp"
+#include "together.hpp"
+#include "lobby.hpp"
+#include "createpage.hpp"
 #define HOST_HAS_SANDBOX 1
 #endif
 
@@ -723,6 +726,7 @@ void StartTap(const Args& a, const std::string& c) {
     if (eng::Obj button = GameButtonAt(x, y)) {
         eng::Obj owner = eng::OuterOf(eng::OuterOf(button));     // (its widget tree, then the user widget)
         if (editor::TabTapped(owner)) return Report(c + " -> a plugin's tab in the editor");
+        if (createpage::TabTapped(owner)) return Report(c + " -> a plugin's tab on the Create page");
         const int pressed = CallHandlers(button, "OnPressed"), released = CallHandlers(button, "OnReleased"),
                   clicked = CallHandlers(button, "OnClicked");
         return Report(c + " -> game button " + eng::ObjName(button) + (owner ? " in " + eng::ObjName(owner) : std::string()) +
@@ -1860,6 +1864,80 @@ void Run(const std::string& cmd) {
              Report(c + " -> no such map on the Create page");
          }},
         {"sandbox", [](const Args&, const std::string&) { Report("sandbox: " + sandbox::Status()); }},
+        {"lobby", [](const Args& a, const std::string& c) {   // lobby status | create <type> <max> | join <id> | leave | set <k> <v> | find [code] | results
+             const std::string what = Arg(a, 1);
+             if (what == "create") lobby::Create(std::atoi(Arg(a, 2).c_str()), std::atoi(Arg(a, 3).c_str()));
+             else if (what == "join") lobby::Join(Arg(a, 2));
+             else if (what == "leave") lobby::Leave();
+             else if (what == "set") return Report(c + (lobby::SetData(Arg(a, 2), Arg(a, 3)) ? " -> ok" : " -> failed"));
+             else if (what == "find") lobby::Find(Arg(a, 2));
+             else if (what == "results") {
+                 std::string out;
+                 for (const auto& f : lobby::Results()) {
+                     out += " [" + f.id + " " + std::to_string(f.members) + "/" + std::to_string(f.max) + (f.friends ? " friend" : "");
+                     for (const auto& [k, v] : f.data) out += " " + k + "=" + v;
+                     out += "]";
+                 }
+                 return Report("lobby results:" + out);
+             }
+             Report("lobby: " + lobby::Status() + " | create page: " + createpage::Status());
+         }},
+        {"together", [](const Args& a, const std::string& c) {   // together status | listen [0] | join <host:port> | leave
+             const std::string what = Arg(a, 1);
+             if (what == "listen") together::ListenNextEditor(Arg(a, 2) != "0");
+             else if (what == "driver") together::SetSandboxDriver(Arg(a, 2) == "-" ? "" : Arg(a, 2));
+             else if (what == "spawn") {     // spawn <class path> x y z: one piece, as Editor::SpawnPieces (the editor's paste)
+                 editor::Spawn sp;
+                 sp.classPath = Arg(a, 2);
+                 sp.location = {std::atof(Arg(a, 3).c_str()), std::atof(Arg(a, 4).c_str()), std::atof(Arg(a, 5).c_str())};
+                 const auto made = editor::SpawnPieces({sp}, false);
+                 return Report(c + " -> " + std::to_string(made.size()) + " made" + (made.empty() ? "" : " id " + std::to_string(made[0])));
+             }
+             else if (what == "nudge") {     // nudge <piece id> dx dy dz: selects it and moves the selection (the gizmo's path)
+                 editor::Select({std::atoi(Arg(a, 2).c_str())});
+                 const bool moved = editor::MoveSelection({std::atof(Arg(a, 3).c_str()), std::atof(Arg(a, 4).c_str()), std::atof(Arg(a, 5).c_str())});
+                 return Report(c + (moved ? " -> moved" : " -> failed"));
+             }
+             else if (what == "delete") {    // delete <piece id>: selects it and deletes the selection (the Delete key's path)
+                 editor::Select({std::atoi(Arg(a, 2).c_str())});
+                 const bool ok = editor::CallHandlerBool("DeleteSelection", false);
+                 return Report(c + (ok ? " -> deleted" : " -> failed"));
+             }
+             else if (what == "count") {     // count <class>: live objects of that class (and its subclasses), with a few names
+                 eng::Obj cls = eng::FindClass(Arg(a, 2));
+                 int n = 0;
+                 std::string names;
+                 if (cls) eng::ForEachObject([&](eng::Obj o) {
+                     if (!eng::IsDefaultObject(o) && eng::IsA(o, cls)) {
+                         if (++n <= 6) names += " " + eng::ObjName(o);
+                     }
+                     return true;
+                 });
+                 return Report(c + " -> " + (cls ? std::to_string(n) + names : "no class"));
+             }
+             else if (what == "undorva") return Report("undo rva " + hostlog::Hex(editor::UndoOriginalRva(false)) + " redo rva " + hostlog::Hex(editor::UndoOriginalRva(true)));
+             else if (what == "at") {        // at <class> x y z: that class's actors within 5 units of the spot, hidden or shown
+                 eng::Obj cls = eng::FindClass(Arg(a, 2));
+                 const double x = std::atof(Arg(a, 3).c_str()), y = std::atof(Arg(a, 4).c_str()), z = std::atof(Arg(a, 5).c_str());
+                 int shown = 0, hidden = 0;
+                 if (cls) eng::ForEachObject([&](eng::Obj o) {
+                     if (eng::IsDefaultObject(o) || !eng::IsA(o, cls)) return true;
+                     struct { double x, y, z; } at{};
+                     const eng::Params p = eng::Call(o, "K2_GetActorLocation");
+                     if (const uint8_t* r = p.Return()) std::memcpy(&at, r, sizeof at);
+                     if (std::fabs(at.x - x) > 5 || std::fabs(at.y - y) > 5 || std::fabs(at.z - z) > 5) return true;
+                     (eng::Call(o, "IsHidden").ReturnBool() ? hidden : shown)++;
+                     return true;
+                 });
+                 return Report(c + " -> shown " + std::to_string(shown) + " hidden " + std::to_string(hidden));
+             }
+             else if (what == "history") return Report("together history: " + together::HistoryStatus());
+             else if (what == "watchgi") together::WatchGameInstance();
+             else if (what == "suffix") together::SetReopenSuffix(Arg(a, 2) == "-" ? "" : Arg(a, 2));
+             else if (what == "join") return Report(c + (together::Join(Arg(a, 2)) ? " -> ok" : " -> failed"));
+             else if (what == "leave") return Report(c + (together::Leave() ? " -> ok" : " -> failed"));
+             Report("together: " + together::Status() + " loopback=" + std::to_string(sandbox::LoopbackDatagrams()));
+         }},
         {"sandboxtest", [](const Args&, const std::string&) { Report("sandbox test: " + sandbox::SelfTest()); }},
         {"campaigns", [](const Args&, const std::string& c) {      // campaigns [status] | tab | open <i> | pick <i> | back | show <id> | gametab <i> | hover [<card>]
              const size_t sp = c.find(' ');

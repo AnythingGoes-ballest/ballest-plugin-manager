@@ -19,6 +19,10 @@ namespace steam {
 bool Available();                       // the game's Steam DLL is loaded and has everything used here
 void Frame();                           // polls the requests under way; call once a frame
 int Pending();                          // requests under way
+// Any Steam API call's result (a SteamAPICall_t), polled with the rest: `done` gets the callback struct (`size` bytes,
+// callback id `callback`), or null if the call failed. For other modules' calls (lobby.cpp).
+void Await(uint64_t call, int callback, int size, std::function<void(const uint8_t* result, bool failed)> done);
+void* FriendsInterface();               // the game's ISteamFriends (SteamFriends_v018), or null
 
 struct Entry {
     uint64_t steamId = 0;
