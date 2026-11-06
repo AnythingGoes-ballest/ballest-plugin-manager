@@ -1217,6 +1217,18 @@ bool SimulateClick(const std::string& label) {
                 item->checked = !item->checked;             // shown on the next refresh, as a click on it would
                 return item->changedPending = true;
             }
+    // "card" (or "card#2"...): the nth clickable card of a view on screen, in the order they were made
+    if (wanted == "card")
+        for (auto& win : gWindows) {
+            if (!win->shownVisible) continue;
+            for (size_t c = 0; c < win->cardBoxes.size(); ++c) {
+                if (!win->cardClickable[c]) continue;
+                bool shownView = false;
+                for (size_t r = 0; r < win->rowCard.size(); ++r)
+                    if (win->rowCard[r] == static_cast<int>(c) && !win->rowRetired[r]) shownView = win->rowView[r] < 0 || win->rowView[r] == win->shownView;
+                if (shownView && --nth == 0) return win->cardClickPending[c] = true;
+            }
+        }
     return false;
 }
 

@@ -2604,7 +2604,29 @@ std::string TogetherFoundData(int i, const std::string& key) {
 int TogetherFoundMembers(int i) { return FoundAt(i) ? FoundAt(i)->members : 0; }
 int TogetherFoundMax(int i) { return FoundAt(i) ? FoundAt(i)->max : 0; }
 bool TogetherFoundFriend(int i) { return FoundAt(i) && FoundAt(i)->friends; }
-void TogetherHostNext(bool on) { together::ListenNextEditor(on); }
+// The plugin that last started a session (hosting, a lobby, a join): if it stops, its session goes with it.
+void TogetherUsedBy() { together::SetOwner(plugins::Current()); }
+void TogetherHostNext(bool on) {
+    TogetherUsedBy();
+    together::ListenNextEditor(on);
+}
+void TogetherCreateLobby(int type, int most) {
+    TogetherUsedBy();
+    lobby::Create(type, most);
+}
+void TogetherJoinLobby(const std::string& id) {
+    TogetherUsedBy();
+    lobby::Join(id);
+}
+bool TogetherJoin(const std::string& address) {
+    TogetherUsedBy();
+    return together::Join(address);
+}
+CScriptArray* TogetherMemberIds() {
+    std::vector<std::string> ids;
+    for (const auto& m : lobby::Members()) ids.push_back(m.id);
+    return StringArrayOf(ids);
+}
 void TogetherLeave() {
     if (together::IsServer() || together::IsClient()) together::Leave();
 }
@@ -2625,15 +2647,15 @@ void RegisterTogether() {
     Global("void HostNextEditor(bool on = true)", asFUNCTION(TogetherHostNext));
     Global("bool HostNextArmed()", asFUNCTION(together::ListenArmed));
     Global("string OwnAddress()", asFUNCTION(together::OwnAddress));
-    Global("bool Join(const string &in address)", asFUNCTION(together::Join));
+    Global("bool Join(const string &in address)", asFUNCTION(TogetherJoin));
     Global("void Leave()", asFUNCTION(TogetherLeave));
     Global("bool NewMap()", asFUNCTION(together::NewMap));
     Global("bool OpenMap(const string &in file)", asFUNCTION(together::OpenMap));
     Global("array<string>@ SavedMaps()", asFUNCTION(TogetherSavedMaps));
     // lobbies
     Global("string LobbyState()", asFUNCTION(lobby::State));
-    Global("void CreateLobby(LobbyType type, int maxPlayers)", asFUNCTION(lobby::Create));
-    Global("void JoinLobby(const string &in id)", asFUNCTION(lobby::Join));
+    Global("void CreateLobby(LobbyType type, int maxPlayers)", asFUNCTION(TogetherCreateLobby));
+    Global("void JoinLobby(const string &in id)", asFUNCTION(TogetherJoinLobby));
     Global("void LeaveLobby()", asFUNCTION(lobby::Leave));
     Global("string LobbyId()", asFUNCTION(lobby::Id));
     Global("bool IsLobbyOwner()", asFUNCTION(lobby::IsOwner));
@@ -2643,6 +2665,12 @@ void RegisterTogether() {
     Global("bool SetLobbyJoinable(bool joinable)", asFUNCTION(lobby::SetJoinable));
     Global("int LobbyMaxPlayers()", asFUNCTION(lobby::MaxMembers));
     Global("array<string>@ LobbyMembers()", asFUNCTION(TogetherMembers));
+    Global("array<string>@ LobbyMemberIds()", asFUNCTION(TogetherMemberIds));
+    Global("string LobbyOwnerId()", asFUNCTION(lobby::OwnerId));
+    Global("string OwnId()", asFUNCTION(lobby::OwnId));
+    Global("void SetSessionCode(const string &in code)", asFUNCTION(together::SetSessionCode));
+    Global("void SetJoinCode(const string &in code)", asFUNCTION(together::SetJoinCode));
+    Global("string TakeNotice()", asFUNCTION(together::TakeNotice));
     Global("void FindLobbies(const string &in code = \"\")", asFUNCTION(lobby::Find));
     Global("bool Searching()", asFUNCTION(lobby::Searching));
     Global("int FoundCount()", asFUNCTION(TogetherFoundCount));

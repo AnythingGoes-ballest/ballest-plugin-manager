@@ -572,6 +572,9 @@ def start_claimed(n, args, plugins_from, shared, timeout, reseed, plugin_dirs, w
     if log.exists():
         log.unlink()
     args = DEFAULT_ARGS + [a for a in args if not a.lower().startswith("-userdir")] + [f"-userdir={user_dir(n)}"]
+    # Create Together: slot N's editor listens on 17777 + N (the sandbox lets slots reach each other only there)
+    if not any(a.lower().startswith("-port=") for a in args):
+        args.append(f"-port={17777 + n}")
     launcher = launch(n, args)
     info = {"slot": n, "launcher": launcher, "game": None, "started": time.time(), "args": args}
     (slot_root(n) / "instance.json").write_text(json.dumps(info), encoding="utf-8")

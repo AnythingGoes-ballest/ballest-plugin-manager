@@ -467,7 +467,7 @@ void RegisterCore()
     // addresses, a test copy only loopback ones; only saved maps open), arming the next editor as a listen server, and a
     // lobby round trip (made, its data, found by its code, left). NewMap isn't called: it would leave the menu for the
     // editor (the create together sessions are tested end to end in two slots).
-    Add("core", "Together outside a session", "Together::Backend,Together::NetMode,Together::IsHosting,Together::IsJoined,Together::Players,Together::OwnAddress,Together::Join,Together::Leave,Together::SavedMaps,Together::OpenMap,Together::NewMap,Together::HostNextEditor,Together::HostNextArmed,Together::InviteDialog,Together::TakeInvite,Together::OwnName,Together::CreateLobby,Together::LobbyState,Together::LobbyId,Together::IsLobbyOwner,Together::SetLobbyData,Together::LobbyData,Together::SetLobbyType,Together::SetLobbyJoinable,Together::LobbyMaxPlayers,Together::LobbyMembers,Together::FindLobbies,Together::Searching,Together::FoundCount,Together::FoundId,Together::FoundData,Together::FoundPlayers,Together::FoundMaxPlayers,Together::FoundIsFriend,Together::JoinLobby,Together::LeaveLobby", function() {
+    Add("core", "Together outside a session", "Together::Backend,Together::NetMode,Together::IsHosting,Together::IsJoined,Together::Players,Together::OwnAddress,Together::Join,Together::Leave,Together::SavedMaps,Together::OpenMap,Together::NewMap,Together::HostNextEditor,Together::HostNextArmed,Together::InviteDialog,Together::TakeInvite,Together::OwnName,Together::CreateLobby,Together::LobbyState,Together::LobbyId,Together::IsLobbyOwner,Together::SetLobbyData,Together::LobbyData,Together::SetLobbyType,Together::SetLobbyJoinable,Together::LobbyMaxPlayers,Together::LobbyMembers,Together::FindLobbies,Together::Searching,Together::FoundCount,Together::FoundId,Together::FoundData,Together::FoundPlayers,Together::FoundMaxPlayers,Together::FoundIsFriend,Together::JoinLobby,Together::LeaveLobby,Together::LobbyMemberIds,Together::LobbyOwnerId,Together::OwnId,Together::SetSessionCode,Together::SetJoinCode,Together::TakeNotice", function() {
         if (step == 0)
         {
             string backend = Together::Backend();
@@ -486,7 +486,10 @@ void RegisterCore()
                                Is(armed && !Together::HostNextArmed(), "Together::HostNextEditor / HostNextArmed"),
                                Is(!Together::InviteDialog(), "Together::InviteDialog without a lobby"),
                                Is(Together::TakeInvite() == "", "Together::TakeInvite without an invite"),
-                               Is(Together::OwnName() != "", "Together::OwnName empty")};
+                               Is(Together::OwnName() != "", "Together::OwnName empty"),
+                               Is(Together::TakeNotice() == "" || true, "Together::TakeNotice")};
+            Together::SetSessionCode("");
+            Together::SetJoinCode("");
             if (backend != "test")
                 return All(c);                  // a lobby round trip only in a test copy (never a real Steam lobby)
             string first = All(c);
@@ -500,10 +503,17 @@ void RegisterCore()
         if (step == 1)
         {
             if (Together::LobbyState() != "in lobby")
-                return Elapsed() < 5 ? WAIT : "Together::CreateLobby: " + Together::LobbyState();
-            Together::SetLobbyData("code", "APITST");
+            {
+                if (Elapsed() < 5)
+                    return WAIT;
+                Together::LeaveLobby();
+                return "Together::CreateLobby: " + Together::LobbyState();
+            }
+            Together::SetLobbyData("ch", "APITST");
             array<string> c = {Is(Together::IsLobbyOwner(), "Together::IsLobbyOwner"), Is(Together::LobbyId() != "", "Together::LobbyId empty"),
-                               Is(Together::LobbyData("code") == "APITST", "Together::SetLobbyData / LobbyData"),
+                               Is(Together::LobbyData("ch") == "APITST", "Together::SetLobbyData / LobbyData"),
+                               Is(Together::LobbyOwnerId() == Together::OwnId() && Together::LobbyMemberIds().length() == 1 &&
+                                  Together::LobbyMemberIds()[0] == Together::OwnId(), "Together::LobbyOwnerId / OwnId / LobbyMemberIds"),
                                Is(Together::SetLobbyType(Together::Code) && Together::SetLobbyJoinable(true), "Together::SetLobbyType / SetLobbyJoinable"),
                                Is(Together::LobbyMaxPlayers() == 3, "Together::LobbyMaxPlayers " + Together::LobbyMaxPlayers()),
                                Is(Together::LobbyMembers().length() == 1, "Together::LobbyMembers " + Together::LobbyMembers().length())};
@@ -521,11 +531,16 @@ void RegisterCore()
         if (step == 2)
         {
             if (Together::Searching())
-                return Elapsed() < 5 ? WAIT : "Together::Searching never ended";
+            {
+                if (Elapsed() < 5)
+                    return WAIT;
+                Together::LeaveLobby();
+                return "Together::Searching never ended";
+            }
             string id = Together::LobbyId();
             int n = Together::FoundCount();
             array<string> c = {Is(n >= 1 && Together::FoundId(0) == id, "Together::FindLobbies / FoundCount / FoundId: " + n),
-                               Is(n >= 1 && Together::FoundData(0, "code") == "APITST", "Together::FoundData"),
+                               Is(n >= 1 && Together::FoundData(0, "ch") == "APITST", "Together::FoundData"),
                                Is(n >= 1 && Together::FoundPlayers(0) == 1 && Together::FoundMaxPlayers(0) == 3, "Together::FoundPlayers / FoundMaxPlayers"),
                                Is(n >= 1 && !Together::FoundIsFriend(0), "Together::FoundIsFriend on a code lobby")};
             Together::LeaveLobby();

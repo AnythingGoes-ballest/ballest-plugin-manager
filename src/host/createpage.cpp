@@ -34,6 +34,12 @@ Obj CreatePageWidget() {
     if (Obj c = eng::Get(gCreate)) return c;
     if (GetTickCount64() - gLastSearch < 500) return nullptr;
     gLastSearch = GetTickCount64();
+    // the Create page exists only on the main menu: no search (a scan of every object) anywhere else
+    Obj controller = game::PlayerController();
+    if (!controller) return nullptr;
+    const eng::Params level = eng::Call(eng::FindCdo("GameplayStatics"), "GetCurrentLevelName", controller, uint8_t{1});
+    const uint8_t* name = level.Return();
+    if (!name || eng::ReadFString(name).find("MainMenu") == std::string::npos) return nullptr;
     Obj cls = eng::FindClass("WBP_4_Create_C"), found = nullptr;
     if (!cls) return nullptr;
     eng::ForEachObject([&](Obj o) {

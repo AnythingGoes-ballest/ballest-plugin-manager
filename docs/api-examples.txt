@@ -3844,7 +3844,9 @@ computer's other test copies). In a player's game the editor is only ever on Ste
 through Steam's relay); there is no plain UDP fallback. The host:
 - owns the map: only the host can save or publish it (a joiner's editor has no save button or publish tab);
 - keeps everyone's undo and redo apart: each player's Ctrl+Z steps back their own changes only;
-- lets only the lobby's members in: a connection no member claims is sent back to its main menu.
+- lets only the lobby's members in, by the session's kind: public, any member; friends and invite only, the host's Steam
+  friends; code only, members who proved the code. Anyone else who connects is sent back to their main menu;
+- turns off grouping while editing together (groups only ever exist on the machine that made them).
 Requires host 0.34.0.
 
 == Together::Backend
@@ -3913,6 +3915,29 @@ Together::FindLobbies();
 // once Searching() is false:
 for (int i = 0; i < Together::FoundCount(); i++)
     Log::Info(Together::FoundData(i, "map") + " by " + Together::FoundData(i, "host"));
+
+== Together::LobbyMemberIds Together::LobbyOwnerId Together::OwnId
+The lobby's members' ids (in the order of `LobbyMembers`: the owner first), the owner's id and this player's own
+(Steam ids; a test copy's own ids). Compare them to tell who the host is and which row is you.
+--
+bool hosting = Together::LobbyOwnerId() == Together::OwnId();
+
+== Together::SetSessionCode Together::SetJoinCode
+Code-only sessions (`LobbyType::Code`): the host keeps the session's secret code with `SetSessionCode`, and a joiner
+gives the code they typed with `SetJoinCode` before joining. The joiner proves it to the host (a hash of the code and
+their own id, never the code itself); members who don't are sent back to their menu. Put only a lookup key made from the
+code in the lobby's data, never the code.
+--
+Together::SetSessionCode(code);                     // the host
+Together::SetLobbyData("ch", MyLookupKey(code));
+
+== Together::TakeNotice
+What the host refused or ended for the player since the last call ("only the host can save this map", "the host left:
+the session is over", "groups are off while editing together"...), once; "" if nothing.
+--
+string notice = Together::TakeNotice();
+if (notice != "")
+    ShowMessage(notice);
 
 == Together::InviteDialog Together::TakeInvite Together::OwnName
 `InviteDialog` opens Steam's own invite dialog for the lobby (false where there is none: a test copy). `TakeInvite`

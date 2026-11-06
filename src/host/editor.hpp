@@ -58,7 +58,11 @@ int HistoryMoves();
 // when it returns true the editor's own step is skipped (Create Together sends a joiner's steps to the host).
 uintptr_t UndoOriginalRva(bool redo);   // test: the game's own Undo / Redo entry, as an offset in the exe
 eng::Obj OwnHandler();                  // the local player's editor handler (their pawn's), or null
-void SetHistoryRedirect(std::function<bool(bool redo)> redirect);          // undo and redo steps the editor has run, however they were started (counted from 0)
+void SetHistoryRedirect(std::function<bool(bool redo)> redirect);
+// Editing together (a listen server or its client): pieces are then moved only through the editor's replicated path
+// (Server_SetActorTransforms), and SpawnPieces never drops them in.
+void SetNetworked(bool on);
+bool Networked();          // undo and redo steps the editor has run, however they were started (counted from 0)
 bool Redo();
 Vec3 ViewForward();
 // Where a piece's middle (its bounds' centre) is on screen, in the units of window offsets and the mouse position

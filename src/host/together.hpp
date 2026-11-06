@@ -7,10 +7,9 @@
 //   * a listen server: the game opens its editor with OpenLevel(Map_LevelEditorMain, "game=...GM_LevelEditor_C");
 //     while ListenNextEditor is armed, that travel is made again with "?listen" added (OpenLevelHooked);
 //   * joining: an Unreal client travel to the host's address (Join);
-//   * how players reach each other: Steam P2P (steam lobbies and networking messages, lobby.cpp) carries the
-//     Unreal net driver's UDP datagrams between the players' own loopback ports (relay.cpp), so nobody needs an open
-//     port. In a sandboxed test copy Steam is blocked and two copies reach each other on loopback directly
-//     (sandbox.hpp: kTogetherFirstPort).
+//   * how players reach each other: the game's own net driver, SteamSocketsNetDriver (Steam's relay: no open port, no
+//     address shown; ICE, Steam's direct path, is switched off), found through Steam lobbies (lobby.cpp). In a
+//     sandboxed test copy Steam is blocked and two copies reach each other on loopback (sandbox.hpp: kTogetherFirstPort).
 // Game thread only.
 #pragma once
 #include <string>
@@ -19,7 +18,7 @@
 namespace together {
 
 void Frame();
-// The next time the game opens its editor, it opens as a listen server on `port` (0: the game's own, 7777).
+// The next time the game opens its editor, it opens as a listen server (refused where Steam's networking isn't safe).
 void ListenNextEditor(bool on);
 bool ListenArmed();
 void SetSandboxDriver(const std::string& driverClass);   // test: the GameNetDriver class a test copy uses
@@ -37,6 +36,17 @@ bool Leave();
 // "127.0.0.1:<its port>".
 std::string OwnAddress();
 int ListenPort();
+// Code-only sessions: the host's secret code (members who prove it are let in), and the code a joiner typed (proved to
+// the host over the lobby). "" for none.
+void SetSessionCode(const std::string& code);
+void SetJoinCode(const std::string& code);
+// The last thing the host refused or ended for the player ("only the host can save this map", "the host left..."),
+// given once; "" if none.
+std::string TakeNotice();
+// The plugin running the session (the last to host, make or join a lobby, or join); when it stops, the session ends:
+// hosting disarmed, the lobby left, the editor left.
+void SetOwner(int plugin);
+void PluginStopped(int plugin);
 // The game's own ways into its editor (each goes through ListenNextEditor when armed): a new map ("+new"), or one of
 // its saved maps (a file in its UserSavedMaps folder, as the Create page's files list opens it).
 bool NewMap();

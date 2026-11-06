@@ -1915,6 +1915,10 @@ void Run(const std::string& cmd) {
                  });
                  return Report(c + " -> " + (cls ? std::to_string(n) + names : "no class"));
              }
+             else if (what == "createtab") {     // createtab [n]: opens a plugin's Create page tab (as a click on its label)
+                 createpage::OpenTab(a.size() > 2 ? std::atoi(Arg(a, 2).c_str()) : 0);
+                 return Report(c + " -> " + createpage::Status());
+             }
              else if (what == "undorva") return Report("undo rva " + hostlog::Hex(editor::UndoOriginalRva(false)) + " redo rva " + hostlog::Hex(editor::UndoOriginalRva(true)));
              else if (what == "at") {        // at <class> x y z: that class's actors within 5 units of the spot, hidden or shown
                  eng::Obj cls = eng::FindClass(Arg(a, 2));

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <set>
 #include <string>
 #include <vector>
@@ -19,12 +20,16 @@ namespace lobby {
 namespace {
 
 std::string gState = "none";
+int gGeneration = 0;                    // Create, Join and Leave bump it: a Steam answer for an older request is dropped
+std::mutex gCallbackLock;               // what Steam's callbacks touch (they may run on the online subsystem's thread)
+int gType = 0;                          // the type this game's own lobby was made with
 std::string gId;                        // the lobby this game is in
 bool gOwner = false;
 std::string gPendingInvite;
 bool gCommandLineRead = false;
 bool gSearching = false;
 std::vector<Found> gResults;
+std::string gSearchCode;                // the last Find's code ("" for the lists)
 
 bool UseTest() { return sandbox::On(); }
 
@@ -147,8 +152,8 @@ void JoinRequested(void*, void* param) {
     if (!param) return;
     uint64_t lobbyId = 0;
     std::memcpy(&lobbyId, param, sizeof lobbyId);
+    std::lock_guard<std::mutex> lock(gCallbackLock);
     if (lobbyId) gPendingInvite = std::to_string(lobbyId);
-    hostlog::Info("lobby: invite accepted in Steam: lobby " + gPendingInvite);
 }
 void JoinRequestedWithCall(void* self, void* param, bool, uint64_t) { JoinRequested(self, param); }
 int JoinRequestedSize(void*) { return 16; }
@@ -167,6 +172,7 @@ void ChatArrived(void*, void* param) {
     int32_t chatId = 0;
     std::memcpy(&lobbyId, param, 8);
     std::memcpy(&chatId, static_cast<const uint8_t*>(param) + 20, 4);
+    std::lock_guard<std::mutex> lock(gCallbackLock);
     if (std::to_string(lobbyId) != gId) return;
     uint64_t user = 0;
     int type = 0;
@@ -193,7 +199,7 @@ void RegisterInvites() {
 }
 
 // --- the test copies' shared folder -------------------------------------------------------------------------------------
-constexpr ULONGLONG kStaleMs = 5000, kBeatMs = 1000;
+constexpr ULONGLONG kStaleMs = 20000, kBeatMs = 1000;
 
 std::wstring TestDir() {
     static std::wstring dir;
@@ -248,6 +254,7 @@ std::map<std::string, std::string> ParseLines(const std::string& text) {
     }
     return out;
 }
+bool Digits(const std::string& id) { return !id.empty() && id.size() < 24 && id.find_first_not_of("0123456789") == std::string::npos; }
 std::wstring LobbyFile(const std::string& id) { return TestDir() + L"\\" + std::wstring(id.begin(), id.end()) + L".lobby"; }
 std::wstring MemberFile(const std::string& id, const std::string& member) {
     return TestDir() + L"\\" + std::wstring(id.begin(), id.end()) + L".m." + std::wstring(member.begin(), member.end());
@@ -290,6 +297,21 @@ std::vector<Member> TestMembers(const std::string& id) {
     } while (FindNextFileW(h, &f));
     FindClose(h);
     return out;
+}
+// Member and chat files left by a test copy that was closed without leaving (its lobby long gone), deleted.
+void CleanOrphans() {
+    WIN32_FIND_DATAW f;
+    HANDLE h = FindFirstFileW((TestDir() + L"\\*").c_str(), &f);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        const std::wstring name = f.cFileName;
+        const size_t dot = name.find(L'.');
+        if (dot == std::wstring::npos || name.find(L".lobby") != std::wstring::npos) continue;
+        const std::string id(name.begin(), name.begin() + static_cast<std::ptrdiff_t>(dot));
+        const std::wstring path = TestDir() + L"\\" + name;
+        if (AgeMs(LobbyFile(id)) == ~0ull && AgeMs(path) > 60000) DeleteFileW(path.c_str());
+    } while (FindNextFileW(h, &f));
+    FindClose(h);
 }
 std::vector<std::string> TestLobbyIds() {
     std::vector<std::string> ids;
@@ -360,17 +382,28 @@ std::string Id() { return gId; }
 bool IsOwner() { return !gId.empty() && gOwner; }
 
 void Leave() {
-    if (gId.empty()) return;
-    if (UseTest()) {
-        if (gOwner) {
-            DeleteFileW(LobbyFile(gId).c_str());
-            DeleteFileW(ChatFile(gId).c_str());
+    ++gGeneration;                      // an answer still on its way is for a request that's over
+    if (!gId.empty()) {
+        if (UseTest()) {
+            if (gOwner) {
+                DeleteFileW(LobbyFile(gId).c_str());
+                DeleteFileW(ChatFile(gId).c_str());
+            } else {
+                DeleteFileW(MemberFile(gId, OwnTestId()).c_str());
+            }
+        } else if (S().ok) {
+            const uint64_t id = Parse64(gId);
+            if (gOwner) {
+                // Steam gives the lobby to another member when its owner leaves: unlisted and emptied first, so it is
+                // never found (or joined) after the host has gone
+                S().setJoinable(S().mm, id, false);
+                for (const char* key : {"ct", "ch", "map", "host", "ver", "vis"}) S().setData(S().mm, id, key, "");
+            }
+            S().leaveLobby(S().mm, id);
         }
-        else DeleteFileW(MemberFile(gId, OwnTestId()).c_str());
-    } else if (S().ok) {
-        S().leaveLobby(S().mm, Parse64(gId));
+        hostlog::Info("lobby: left " + gId);
     }
-    hostlog::Info("lobby: left " + gId);
+    std::lock_guard<std::mutex> lock(gCallbackLock);
     gId.clear();
     gOwner = false;
     gTestData.clear();
@@ -383,13 +416,15 @@ void Create(int type, int maxMembers) {
     Leave();
     type = std::clamp(type, 0, 3);
     maxMembers = std::clamp(maxMembers, 2, 16);
+    gType = type;
+    const int generation = gGeneration;
     if (UseTest()) {
         LARGE_INTEGER t;
         QueryPerformanceCounter(&t);
         gId = std::to_string(9000000000ull + (static_cast<uint64_t>(t.QuadPart) ^ GetCurrentProcessId()) % 999999999ull);
         gOwner = true;
         gTestData = {{"_owner", OwnTestId()}, {"_ownername", OwnName()}, {"_type", std::to_string(type)},
-                     {"_max", std::to_string(maxMembers)}, {"_joinable", "1"}, {"ct", "1"}};
+                     {"_max", std::to_string(maxMembers)}, {"_joinable", "1"}};
         gState = WriteTestLobby() ? "in lobby" : "error: the test lobby folder can't be written";
         hostlog::Info("lobby: test lobby " + gId + " made");
         return;
@@ -400,10 +435,14 @@ void Create(int type, int maxMembers) {
         return;
     }
     gState = "creating";
-    steam::Await(s.createLobby(s.mm, type, maxMembers), kLobbyCreated, kLobbyCreatedSize, [](const uint8_t* r, bool failed) {
+    steam::Await(s.createLobby(s.mm, type, maxMembers), kLobbyCreated, kLobbyCreatedSize, [generation](const uint8_t* r, bool failed) {
         int32_t result = 0;
         uint64_t id = 0;
         if (r) std::memcpy(&result, r, 4), std::memcpy(&id, r + 8, 8);
+        if (generation != gGeneration) {            // left (or something else started) while Steam made it
+            if (id) S().leaveLobby(S().mm, id);
+            return;
+        }
         if (failed || result != kResultOk || !id) {
             gState = "error: Steam couldn't make the lobby (" + std::to_string(result) + ")";
             return;
@@ -411,7 +450,6 @@ void Create(int type, int maxMembers) {
         gId = std::to_string(id);
         gOwner = true;
         gState = "in lobby";
-        S().setData(S().mm, id, "ct", "1");
         hostlog::Info("lobby: Steam lobby " + gId + " made");
     });
 }
@@ -419,6 +457,11 @@ void Create(int type, int maxMembers) {
 void Join(const std::string& id) {
     Leave();
     if (id.empty()) return;
+    if (!Digits(id)) {
+        gState = "error: not a lobby";
+        return;
+    }
+    const int generation = gGeneration;
     if (UseTest()) {
         bool fresh = false;
         const auto data = TestLobby(id, &fresh);
@@ -449,9 +492,13 @@ void Join(const std::string& id) {
     }
     gState = "joining";
     const uint64_t wanted = Parse64(id);
-    steam::Await(s.joinLobby(s.mm, wanted), kLobbyEnter, kLobbyEnterSize, [wanted](const uint8_t* r, bool failed) {
+    steam::Await(s.joinLobby(s.mm, wanted), kLobbyEnter, kLobbyEnterSize, [wanted, generation](const uint8_t* r, bool failed) {
         uint32_t response = 0;
         if (r) std::memcpy(&response, r + 16, 4);
+        if (generation != gGeneration) {
+            if (r && response == kEnterSuccess) S().leaveLobby(S().mm, wanted);
+            return;
+        }
         if (failed || response != kEnterSuccess) {
             gState = "error: couldn't join (Steam answered " + std::to_string(response) + ")";
             return;
@@ -464,7 +511,9 @@ void Join(const std::string& id) {
 }
 
 bool SetData(const std::string& key, const std::string& value) {
-    if (!IsOwner() || key.empty() || key[0] == '_') return false;
+    if (!IsOwner() || key.empty() || key[0] == '_' || key.find_first_of("=\r\n") != std::string::npos ||
+        value.find_first_of("\r\n") != std::string::npos || key.size() > 255 || value.size() > 8000)
+        return false;
     if (UseTest()) {
         gTestData[key] = value;
         return WriteTestLobby();
@@ -526,18 +575,21 @@ std::vector<Member> Members() {
         }
         out.push_back({std::to_string(m), name, m == owner});
     }
+    std::stable_partition(out.begin(), out.end(), [](const Member& m) { return m.owner; });     // the owner first
     return out;
 }
 
 void Find(const std::string& code) {
     gResults.clear();
+    gSearchCode = code;
     if (UseTest()) {
+        CleanOrphans();
         for (const std::string& id : TestLobbyIds()) {
             bool fresh = false;
             const auto data = TestLobby(id, &fresh);
             if (!fresh || !data.count("ct")) continue;
             const int type = std::atoi(data.count("_type") ? data.at("_type").c_str() : "0");
-            const bool codeMatch = !code.empty() && data.count("code") && data.at("code") == code;
+            const bool codeMatch = !code.empty() && data.count("ch") && data.at("ch") == code;
             if (code.empty() ? !(type == kPublic || type == kFriends) : !(codeMatch && type != kInviteOnly)) continue;
             Found f;
             f.id = id;
@@ -555,7 +607,7 @@ void Find(const std::string& code) {
     if (!s.ok) return;
     gSearching = true;
     s.stringFilter(s.mm, "ct", "1", kComparisonEqual);
-    if (!code.empty()) s.stringFilter(s.mm, "code", code.c_str(), kComparisonEqual);
+    if (!code.empty()) s.stringFilter(s.mm, "ch", code.c_str(), kComparisonEqual);
     s.distanceFilter(s.mm, kDistanceWorldwide);
     s.countFilter(s.mm, 50);
     const bool withFriends = code.empty();
@@ -604,7 +656,11 @@ std::vector<Found> Results() {
     for (Found f : gResults) {
         const uint64_t id = Parse64(f.id);
         f.data = SteamData(id);
-        if (!f.data.count("ct")) continue;        // not ours, or a friend's whose data hasn't arrived yet
+        if (!f.data.count("ct") || f.data.at("ct") != "1") continue;  // not ours (or emptied), or a friend's not arrived
+        const auto vis = f.data.find("vis");
+        if (!gSearchCode.empty() ? f.data.count("ch") == 0 || f.data.at("ch") != gSearchCode
+                                 : vis != f.data.end() && (vis->second == "code" || vis->second == "invite") && !f.friends)
+            continue;                           // a code search finds only its lobby; the lists never show code-only ones
         f.members = s.memberCount(s.mm, id);
         f.max = s.memberLimit(s.mm, id);
         out.push_back(f);
@@ -619,10 +675,31 @@ bool InviteDialog() {
 }
 
 std::string TakeInvite() {
+    std::lock_guard<std::mutex> lock(gCallbackLock);
     std::string id;
     id.swap(gPendingInvite);
     return id;
 }
+
+std::string OwnerId() {
+    if (gId.empty()) return "";
+    if (UseTest()) {
+        if (gOwner) return OwnTestId();
+        const auto data = TestLobby(gId, nullptr);
+        auto it = data.find("_owner");
+        return it == data.end() ? "" : it->second;
+    }
+    return S().ok ? std::to_string(S().owner(S().mm, Parse64(gId))) : "";
+}
+
+bool IsFriend(const std::string& memberId) {
+    if (UseTest()) return true;         // every test copy is the same Steam account
+    static auto hasFriend = reinterpret_cast<bool (*)(void*, uint64_t, int)>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"steam_api64.dll"), "SteamAPI_ISteamFriends_HasFriend")));
+    return hasFriend && S().friends && hasFriend(S().friends, Parse64(memberId), kFriendFlagImmediate);
+}
+
+int Type() { return gId.empty() || !gOwner ? -1 : gType; }
 
 std::string OwnId() { return UseTest() ? OwnTestId() : std::to_string(steam::OwnSteamId()); }
 
@@ -642,22 +719,37 @@ bool Send(const std::string& text) {
 std::vector<Message> Receive() {
     std::vector<Message> out;
     if (!UseTest()) {
+        std::lock_guard<std::mutex> lock(gCallbackLock);
         out.swap(gInbox);
         return out;
     }
     if (gId.empty()) return out;
-    const std::string text = ReadText(ChatFile(gId));
-    if (static_cast<long long>(text.size()) < gChatRead) gChatRead = 0;
-    size_t at = static_cast<size_t>(gChatRead);
-    while (at < text.size()) {
-        const size_t end = text.find('\n', at);
+    // only what was added since the last read
+    HANDLE h = CreateFileW(ChatFile(gId).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                           OPEN_EXISTING, 0, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return out;
+    LARGE_INTEGER size{}, at{};
+    GetFileSizeEx(h, &size);
+    if (size.QuadPart < gChatRead) gChatRead = 0;
+    at.QuadPart = gChatRead;
+    std::string text;
+    if (size.QuadPart > gChatRead && SetFilePointerEx(h, at, nullptr, FILE_BEGIN)) {
+        text.resize(static_cast<size_t>(std::min<long long>(size.QuadPart - gChatRead, 64 * 1024)));
+        DWORD n = 0;
+        if (!ReadFile(h, text.data(), static_cast<DWORD>(text.size()), &n, nullptr)) n = 0;
+        text.resize(n);
+    }
+    CloseHandle(h);
+    size_t pos = 0;
+    while (pos < text.size()) {
+        const size_t end = text.find('\n', pos);
         if (end == std::string::npos) break;               // a line still being written
-        const std::string line = text.substr(at, end - at);
+        const std::string line = text.substr(pos, end - pos);
         const size_t bar = line.find('|');
         if (bar != std::string::npos) out.push_back({line.substr(0, bar), line.substr(bar + 1)});
-        at = end + 1;
+        pos = end + 1;
     }
-    gChatRead = static_cast<long long>(at);
+    gChatRead += static_cast<long long>(pos);
     return out;
 }
 

@@ -177,13 +177,22 @@ bool TogetherLoopback(const sockaddr* to, int size) {
 using BindFn = int(WSAAPI*)(SOCKET, const sockaddr*, int);
 BindFn gBind = nullptr;
 int WSAAPI LoopbackBind(SOCKET s, const sockaddr* addr, int size) {
+    // every socket bound to "any address" is bound to this computer's own instead (IPv4 and IPv6, any port): nothing
+    // a test copy opens can be reached from another computer
     if (addr && size >= static_cast<int>(sizeof(sockaddr_in)) && addr->sa_family == AF_INET) {
         sockaddr_in in;
         std::memcpy(&in, addr, sizeof in);
-        const unsigned port = ntohs(in.sin_port);
-        if (port >= kTogetherFirstPort && port < kTogetherFirstPort + kTogetherPorts && in.sin_addr.s_addr == htonl(INADDR_ANY)) {
+        if (in.sin_addr.s_addr == htonl(INADDR_ANY)) {
             in.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
             return gBind(s, reinterpret_cast<const sockaddr*>(&in), sizeof in);
+        }
+    } else if (addr && size >= static_cast<int>(sizeof(sockaddr_in6)) && addr->sa_family == AF_INET6) {
+        sockaddr_in6 in6;
+        std::memcpy(&in6, addr, sizeof in6);
+        static const in6_addr any = IN6ADDR_ANY_INIT, loop = IN6ADDR_LOOPBACK_INIT;
+        if (std::memcmp(&in6.sin6_addr, &any, sizeof any) == 0) {
+            in6.sin6_addr = loop;
+            return gBind(s, reinterpret_cast<const sockaddr*>(&in6), sizeof in6);
         }
     }
     return gBind(s, addr, size);
@@ -1380,15 +1389,17 @@ std::string SelfTest() {
     }
     if (uploadSlot >= 0 && storeSlot >= 0) {
         void** table = *reinterpret_cast<void***>(object);
-        // a refusal by the upload guard (a run the host touched, as test commands do) is a block too: it never reaches Steam
-        const long before = gSteam[0].count + gSteam[8].count + gGuardRefused.load();
+        const long before = gSteam[0].count + gSteam[8].count, guardBefore = gGuardRefused.load();
         using Upload = uint64_t (*)(void*, uint64_t, int, int32_t, const int32_t*, int);
         using Store = bool (*)(void*);
-        const uint64_t call = reinterpret_cast<Upload>(table[uploadSlot])(object, 0, 1, 1, nullptr, 0);
+        uint64_t call = reinterpret_cast<Upload>(table[uploadSlot])(object, 0, 1, 1, nullptr, 0);
+        // the upload guard may refuse first (a run the host touched, as test commands do): then what it guards, the
+        // sandbox's own block, is called as well, so the block itself is always what's proved
+        if (gGuardRefused.load() != guardBefore && gUploadReal) call |= gUploadReal(object, 0, 1, 1, nullptr, 0);
         const bool stored = reinterpret_cast<Store>(table[storeSlot])(object);
-        out += gSteam[0].count + gSteam[8].count + gGuardRefused.load() == before + 2 && call == 0 && !stored
+        out += gSteam[0].count + gSteam[8].count == before + 2 && call == 0 && !stored
                    ? "Steam uploads blocked in the game's own interface"
-                   : "STEAM WENT THROUGH (counted " + std::to_string(gSteam[0].count + gSteam[8].count + gGuardRefused.load() - before) + " of 2, call " +
+                   : "STEAM WENT THROUGH (counted " + std::to_string(gSteam[0].count + gSteam[8].count - before) + " of 2, call " +
                          std::to_string(call) + ", stored " + (stored ? "yes" : "no") + ")";
     } else {
         out += object ? "STEAM NOT BLOCKED in the game's own interface" : "the game's leaderboard interface not seen yet";

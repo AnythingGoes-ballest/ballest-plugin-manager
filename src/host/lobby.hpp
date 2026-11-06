@@ -45,9 +45,11 @@ struct Member {
     std::string id, name;
     bool owner = false;
 };
-std::vector<Member> Members();
+std::vector<Member> Members();         // the owner first
 
-// Lobbies to join: every lobby of ours that's public, friends' lobbies, and (with a code) the one with that code.
+// Lobbies to join: every lobby of ours that's public, friends' lobbies, and (with a code) the one whose "ch" data is
+// that code (a lookup key the plugin makes from the session's code: never the code itself). The lists never show
+// code-only or invite-only lobbies, even though Steam returns invisible lobbies to searches.
 // Results come a moment later (Searching false again).
 struct Found {
     std::string id;
@@ -66,6 +68,9 @@ bool InviteDialog();
 std::string TakeInvite();
 std::string OwnName();
 std::string OwnId();                    // this player's member id (their Steam id; a test copy's own)
+std::string OwnerId();                  // the lobby owner's member id ("" if not in a lobby)
+bool IsFriend(const std::string& memberId);     // one of this player's Steam friends (a test copy: always)
+int Type();                             // the type this game's own lobby was made with (-1: not an owner)
 
 // Short messages to everyone in the lobby (Steam lobby chat: k_EChatEntryTypeChatMsg; in a test copy a shared file),
 // at most 1024 bytes each. Receive gives the ones that arrived since it was last asked, each with its sender's member

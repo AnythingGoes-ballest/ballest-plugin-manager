@@ -458,13 +458,44 @@ bool Rotation(int id, Rot* out) {
     return a != nullptr;
 }
 
+// While editing together (a listen server or its client), pieces are only ever moved the editor's own way:
+// Server_SetActorTransforms on the player's handler, which runs on the host and replicates to everyone (an actor moved
+// directly would move on this machine only). Plugin moves and placements then reach every player.
+bool gNetworked = false;
+void SetNetworked(bool on) { gNetworked = on; }
+bool Networked() { return gNetworked; }
+bool SetTransformThroughEditor(Obj actor, const Vec3& at, const Rot& turn) {
+    Obj handler = Handler();
+    if (!handler || !actor) return false;
+    struct ItemTransform {                                          // FSKGMLEItemTransform (0x70 bytes): actor, transform at 0x10
+        Obj actor;
+        uint8_t pad[8];
+        uint8_t transform[96];
+    };
+    static_assert(sizeof(ItemTransform) == 0x70, "FSKGMLEItemTransform is 0x70 bytes");
+    const Vec3 scale = eng::Call(actor, "GetActorScale3D").ReturnAs<Vec3>();
+    ItemTransform item{};
+    item.actor = actor;
+    const eng::Params made = eng::Call(eng::FindCdo("KismetMathLibrary"), "MakeTransform", at, turn, scale);
+    if (const uint8_t* r = made.Return()) std::memcpy(item.transform, r, sizeof item.transform);
+    else return false;
+    struct {
+        ItemTransform* data;
+        int32_t num, max;
+    } list{&item, 1, 1};
+    eng::Params set(eng::FunctionOn(handler, "Server_SetActorTransforms"));
+    return set.Set("ActorTransforms", &list, sizeof list) && eng::Invoke(handler, set);
+}
+
 bool SetLocation(int id, const Vec3& location) {
     Obj a = Resolve(id);
+    if (a && gNetworked) return SetTransformThroughEditor(a, location, eng::Call(a, "K2_GetActorRotation").ReturnAs<Rot>());
     return a && eng::Call(a, "K2_SetActorLocation", location, uint8_t{0}).Invoked();
 }
 
 bool SetRotation(int id, const Rot& rotation) {
     Obj a = Resolve(id);
+    if (a && gNetworked) return SetTransformThroughEditor(a, eng::Call(a, "K2_GetActorLocation").ReturnAs<Vec3>(), rotation);
     return a && eng::Call(a, "K2_SetActorRotation", rotation, uint8_t{0}).Invoked();
 }
 
@@ -542,6 +573,7 @@ void MoveDrops() {
 }  // namespace
 
 std::vector<int> SpawnPieces(const std::vector<Spawn>& pieces, bool drop, const std::vector<int>& remove) {
+    if (gNetworked) drop = false;       // the drop moves pieces directly: on this machine only, while editing together
     std::vector<int> made;
     Obj handler = Handler();
     if (!handler || (pieces.empty() && remove.empty())) return made;
@@ -1177,14 +1209,26 @@ NativeFunction gUndoOriginal = nullptr, gRedoOriginal = nullptr;
 int gHistoryMoves = 0;
 bool gHistoryHookFailed = false;
 
+// A native call skipped from its entry: what its own entry does for a function without parameters (P_FINISH, read from
+// the game's execUndo: FFrame::Code at +0x20 moves past the call's end marker when there is bytecode). Without it, a
+// call made from a blueprint (the pawn's Ctrl+Z) would leave the blueprint's bytecode pointer on that marker.
+void FinishSkippedCall(uint8_t* frame) {
+    if (!frame) return;
+    uint8_t* code = nullptr;
+    std::memcpy(&code, frame + 0x20, sizeof code);
+    if (code) {
+        ++code;
+        std::memcpy(frame + 0x20, &code, sizeof code);
+    }
+}
 void UndoHooked(Obj context, uint8_t* frame, void* result) {
     ++gHistoryMoves;
-    if (gHistoryRedirect && gHistoryRedirect(false)) return;
+    if (gHistoryRedirect && gHistoryRedirect(false)) return FinishSkippedCall(frame);
     gUndoOriginal(context, frame, result);
 }
 void RedoHooked(Obj context, uint8_t* frame, void* result) {
     ++gHistoryMoves;
-    if (gHistoryRedirect && gHistoryRedirect(true)) return;
+    if (gHistoryRedirect && gHistoryRedirect(true)) return FinishSkippedCall(frame);
     gRedoOriginal(context, frame, result);
 }
 

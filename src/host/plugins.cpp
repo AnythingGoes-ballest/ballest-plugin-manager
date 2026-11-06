@@ -22,6 +22,7 @@
 #include "engine.hpp"
 #include "game.hpp"
 #include "createpage.hpp"
+#include "together.hpp"
 #include "editor.hpp"
 #include "leaderboard.hpp"
 #include "pluginnet.hpp"
@@ -496,6 +497,7 @@ void Release(size_t i) {
     leaderboard::RemoveOwner(static_cast<int>(i));
     editor::RemoveOwner(static_cast<int>(i));
     createpage::RemoveOwner(static_cast<int>(i));
+    together::PluginStopped(static_cast<int>(i));
     draw::RemoveOwner(static_cast<int>(i));
     postprocess::RemoveOwner(static_cast<int>(i));
     hud::RemoveOwner(static_cast<int>(i));
