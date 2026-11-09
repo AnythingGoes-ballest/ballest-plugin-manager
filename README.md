@@ -56,6 +56,9 @@ If the installer can't find the game, give it the folder:
 
 ### Linux and Steam Deck
 
+> **Best effort.** Linux and Steam Deck support is community-tested: the maintainers develop and test on Windows and
+> can't try changes on a Deck. If something doesn't work, please open an issue or say so on Discord.
+
 The game runs under Proton, and the plugin manager runs inside it. Nothing here needs `sudo`, so on a Steam Deck you
 don't have to set a password for the `deck` user or unlock the system. On a Steam Deck, switch to Desktop Mode first.
 Close the game.
