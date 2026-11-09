@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Uninstalls the Ballest plugin manager (Git Bash on Windows).
+# Uninstalls the Ballest plugin manager (Git Bash on Windows, or bash on Linux and the Steam Deck).
 #
 #   ./uninstall.sh                 finds the game, removes version.dll and the plugins folder
 #   ./uninstall.sh --purge         also deletes saved plugin data (settings, storage, the log)
@@ -47,7 +47,12 @@ if [ -d "$GAME/plugins" ]; then
   done_ "removed the plugins folder"
 fi
 
-DATA="$(to_unix "${LOCALAPPDATA:-}")/Ballest/Saved/PluginManager"
+# Under Proton the game's %LOCALAPPDATA% is inside its prefix.
+if [ $ON_WINDOWS = 1 ]; then
+  DATA="$(to_unix "${LOCALAPPDATA:-}")/Ballest/Saved/PluginManager"
+else
+  DATA="$(proton_prefix || true)/drive_c/users/steamuser/AppData/Local/Ballest/Saved/PluginManager"
+fi
 if [ -d "$DATA" ]; then
   if [ $PURGE = 1 ]; then
     run rm -rf "$DATA"
@@ -56,4 +61,5 @@ if [ -d "$DATA" ]; then
     say "kept saved plugin data in $DATA (./uninstall.sh --purge removes it)"
   fi
 fi
+[ $ON_WINDOWS = 1 ] || say "you can take WINEDLLOVERRIDES=\"version=n,b\" out of Ballest's Launch Options in Steam"
 say "done: the game runs without plugins"

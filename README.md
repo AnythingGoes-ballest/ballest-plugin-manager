@@ -54,9 +54,45 @@ If the installer can't find the game, give it the folder:
 
 **Updating:** click **update plugin manager** in the game when it offers one.
 
+### Linux and Steam Deck
+
+The game runs under Proton, and the plugin manager runs inside it. Nothing here needs `sudo`, so on a Steam Deck you
+don't have to set a password for the `deck` user or unlock the system. On a Steam Deck, switch to Desktop Mode first.
+Close the game.
+
+**With the installer:** open a terminal (Konsole on the Steam Deck) and run the same three commands as above:
+
+```bash
+git clone https://github.com/AnythingGoes-ballest/ballest-plugin-manager.git
+cd ballest-plugin-manager
+./install.sh
+```
+
+If `git` isn't there, download this repo with **Code › Download ZIP** instead, extract it, and run `./install.sh` from
+the extracted folder. The installer unpacks the release with `unzip`, `bsdtar` or `python3`, whichever it finds.
+
+**By hand:**
+
+1. Download `ballest-plugin-manager-X.Y.Z.zip` from the [latest release](https://github.com/AnythingGoes-ballest/ballest-plugin-manager/releases/latest).
+2. Extract it into the game's `Win64` folder, so that `version.dll` and the `plugins` folder sit next to
+   `Ballest-Win64-Shipping.exe`. On a Steam Deck that folder is
+   `/home/deck/.local/share/Steam/steamapps/common/Ballest of Them All/Ballest/Binaries/Win64/`. Wherever the game is
+   (an SD card too), **Manage › Browse local files** on it in Steam opens `Ballest of Them All`; `Win64` is under
+   `Ballest/Binaries/`.
+
+**Either way, then set the launch option.** Proton loads its own `version.dll` unless told to prefer the game folder's.
+In Steam, open the game's **Properties** and set **Launch Options** to:
+
+```
+WINEDLLOVERRIDES="version=n,b" %command%
+```
+
+Then start the game and click **plugins** in the footer. To uninstall, run `./uninstall.sh` as below (or delete
+`version.dll` and `plugins`) and clear the launch option.
+
 ## Uninstall
 
-Close the game. In Git Bash, from the `ballest-plugin-manager` folder:
+Close the game. In Git Bash (or a terminal on Linux), from the `ballest-plugin-manager` folder:
 
 ```bash
 ./uninstall.sh

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs the Ballest plugin manager (Git Bash on Windows).
+# Installs the Ballest plugin manager (Git Bash on Windows, or bash on Linux and the Steam Deck).
 #
 #   ./install.sh                 finds the game, downloads the latest release, checks it, installs it
 #   ./install.sh --from-build    installs this checkout's build/version.dll and plugins/ instead (developers)
@@ -8,7 +8,7 @@
 #
 # The game is found through Steam (tools/find_game.sh). The release's version.dll is checked against the SHA-256 in
 # this repo's registry.json before anything is copied. Plugins installed from the in-game browser, and
-# plugins\DISABLED, are left alone.
+# plugins\DISABLED, are left alone. Nothing here needs administrator rights or sudo.
 set -euo pipefail
 
 REPO="AnythingGoes-ballest/ballest-plugin-manager"
@@ -36,6 +36,22 @@ locate_game
 # A path as a PowerShell single-quoted string: a ' in it (a Windows user name like "Josh's PC") is doubled, or it
 # would end the string early.
 ps_path() { printf "'%s'" "$(cygpath -w "$1" | sed "s/'/''/g")"; }
+
+# Unpacks zip $1 into folder $2: PowerShell on Windows; elsewhere the first of unzip, bsdtar or Python that is there
+# (on a Steam Deck, installing a missing one needs sudo and an unlocked system, so any of the three will do).
+unpack() {
+  if [ $ON_WINDOWS = 1 ]; then
+    powershell -NoProfile -Command "Expand-Archive -LiteralPath $(ps_path "$1") -DestinationPath $(ps_path "$2") -Force"
+  elif command -v unzip >/dev/null; then
+    unzip -q -o "$1" -d "$2"
+  elif command -v bsdtar >/dev/null; then
+    bsdtar -xf "$1" -C "$2"
+  elif command -v python3 >/dev/null; then
+    python3 -m zipfile -e "$1" "$2"
+  else
+    fail "found none of unzip, bsdtar or python3 to unpack the release; unzip it by hand (see the README)"
+  fi
+}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -55,8 +71,7 @@ else
   say "latest release: $tag"
   curl -fsSL -o "$WORK/release.zip" "$zip_url" || fail "download failed: $zip_url"
   mkdir -p "$WORK/release"
-  powershell -NoProfile -Command "Expand-Archive -LiteralPath $(ps_path "$WORK/release.zip") -DestinationPath $(ps_path "$WORK/release") -Force" \
-    || fail "could not unpack the release"
+  unpack "$WORK/release.zip" "$WORK/release" || fail "could not unpack the release"
   [ -f "$WORK/release/version.dll" ] || fail "the release zip has no version.dll"
 
   # The DLL must be the one the registry names for this release.
@@ -83,4 +98,13 @@ for dir in "$WORK/release/plugins"/*/; do
   say "  plugins/$name"
 done
 [ -f "$GAME/dwmapi.dll" ] && say "note: dwmapi.dll (UE4SS) is also installed; the plugin manager does not need it"
+if [ $ON_WINDOWS = 0 ]; then
+  # Proton loads its own version.dll unless told to prefer the game folder's (docs/host.md, "Under Proton").
+  say ""
+  say "one more step under Proton: in Steam, open Ballest's Properties and set its Launch Options to"
+  say ""
+  say "  WINEDLLOVERRIDES=\"version=n,b\" %command%"
+  say ""
+  say "without it the game starts without the plugin manager"
+fi
 say "done: start Ballest and look for 'plugins' in the footer"
