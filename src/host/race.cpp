@@ -454,7 +454,10 @@ void ReleasePractice(const std::string& why) {
 //     back to the start instead, and the faults don't move.
 //   * a fall is the kill zone calling the native BallestRestartBlueprintLibrary.BeginKillzoneRestart, which respawns
 //     the ball a moment later (its delay is 1 s). That function's entry is wrapped (as the cosmetics wrap theirs) to
-//     tell falls from R.
+//     tell falls from R. Since the game's 2026-11-02 update the kill zone no longer reaches it through that entry
+//     (measured: a drop into the editor's kill slab counted as R), so the game's restart coordinator is read too: each
+//     restart is a request with a new Generation and a Reason (Killzone, ManualCheckpointRespawn, ...), in
+//     BallestRestartRaceCoordinatorComponent.GetRestartDebugState.
 //   * the checkpoint a respawn goes to is the one whose bCurrent is on: a strip (or disc) the ball touches moves the
 //     level's player start to its arrow and turns itself current and every other one off. Strips start out current
 //     before any is touched (measured), so it has to be activated (bActivated) as well.
@@ -469,12 +472,53 @@ constexpr double kFallToRespawn = 4;        // seconds: the game's delay is 1 s
 using NativeFunction = void (*)(Obj context, uint8_t* frame, void* result);
 NativeFunction gKillzoneOriginal = nullptr;
 
-// Runs inside the game's own call: counts, then lets the game go on as usual.
-void HookedKillzone(Obj context, uint8_t* frame, void* result) {
+void CountFall() {
+    if (game::Seconds() - gFallAt < 0.5) return;    // the same fall, seen by both the hook and the coordinator
     ++gFalls;
     gFallAt = game::Seconds();
     gFallRespawnOpen = gFallRestartOpen = true;
+}
+
+// Runs inside the game's own call: counts, then lets the game go on as usual.
+void HookedKillzone(Obj context, uint8_t* frame, void* result) {
+    CountFall();
     gKillzoneOriginal(context, frame, result);
+}
+
+// The restart the game's coordinator is running for this controller: a new request (Generation) whose Reason is
+// Killzone is a fall. EBallestRestartOperationState Idle = 0; EBallestRestartReason Killzone = 1.
+int gRestartGeneration = -1;
+void WatchRestartRequests(Obj controller) {
+    static Obj lib = nullptr;
+    if (!lib) lib = eng::FindCdo("BallestRestartBlueprintLibrary");
+    Obj find = lib ? eng::FunctionOn(lib, "GetRestartRaceCoordinator") : nullptr;
+    if (!controller || !find) return;
+    eng::Params where(find);
+    where.Set("WorldContextObject", controller);
+    if (!eng::Invoke(lib, where)) return;
+    Obj coordinator = where.ReturnObj();
+    Obj fn = coordinator ? eng::FunctionOn(coordinator, "GetRestartDebugState") : nullptr;
+    Obj structure = fn ? eng::StructOf(eng::FindProp(fn, "DebugState")) : nullptr;
+    if (!structure) return;
+    static Obj measured = nullptr;
+    static int stateAt = -1, generationAt = -1, reasonAt = -1;
+    if (measured != structure) {
+        measured = structure;
+        auto at = [&](const char* name) { const eng::Prop p = eng::FindProp(structure, name); return p ? p.offset : -1; };
+        stateAt = at("State"), generationAt = at("Generation"), reasonAt = at("Reason");
+    }
+    if (stateAt < 0 || generationAt < 0 || reasonAt < 0) return;
+    eng::Params call(fn);
+    call.Set("PlayerController", controller);
+    if (!eng::Invoke(coordinator, call) || !call.ReturnBool()) return;
+    const uint8_t* d = call.Get("DebugState", nullptr);
+    if (!d) return;
+    int generation = 0;
+    std::memcpy(&generation, d + generationAt, 4);
+    if (d[stateAt] == 0 || generation == gRestartGeneration) return;
+    gRestartGeneration = generation;
+    hostlog::Info("race: restart request " + std::to_string(generation) + ", reason " + std::to_string(d[reasonAt]));
+    if (d[reasonAt] == 1) CountFall();
 }
 
 void WatchKillzone() {
@@ -646,6 +690,7 @@ void Frame() {
     ResolveBounces();
     WatchKillzone();
     Obj controller = game::PlayerController();
+    WatchRestartRequests(controller);
     const RunState run = ReadRun(controller);
     // On a track: the race controller (BP_MyPlayerController_C, the editor's too; the main menu has its own)
     static Obj raceController = nullptr;
