@@ -29,6 +29,7 @@ struct Footer {
     eng::Weak gap;          // the empty Overlay before Discord: buttons sit at its right edge
     eng::Weak menuRoot;     // the owning menu's root panel (Overlay or CanvasPanel), logged as a layout check
     eng::Weak refText;      // a footer text block whose font and colour are copied
+    eng::Weak row;          // the plugins' buttons: a HorizontalBox at the gap's right edge, each as wide as its label
 } gFooter;
 
 Obj FindLiveFooter() {
@@ -85,7 +86,7 @@ bool Adopt(Obj footer) {
         hostlog::Error("footer layout not as measured; footer entries not placed");
         return false;
     }
-    gFooter = {eng::MakeWeak(footer), eng::MakeWeak(tree), eng::MakeWeak(gap), eng::MakeWeak(root), eng::MakeWeak(refText)};
+    gFooter = {eng::MakeWeak(footer), eng::MakeWeak(tree), eng::MakeWeak(gap), eng::MakeWeak(root), eng::MakeWeak(refText), {}};
     ForgetWidgets();
     return true;
 }
@@ -98,18 +99,39 @@ Obj FooterText(const std::string& s, float sizeScale = 1.0f, Obj tree = nullptr)
     return text;
 }
 
-void BuildButton(FooterButton& b) {
+// The row the buttons sit in, made once per footer at the right edge of the gap before Discord.
+Obj ButtonRow() {
+    if (Obj row = eng::Get(gFooter.row)) return row;
     Obj tree = eng::Get(gFooter.tree), gap = eng::Get(gFooter.gap);
+    Obj row = gap ? w::Spawn("HorizontalBox", tree) : nullptr;
+    if (!row || !w::AddToOverlay(gap, row, w::kAlignEnd, w::kAlignCenter, {0, 0, 16, 0})) return nullptr;
+    gFooter.row = eng::MakeWeak(row);
+    return row;
+}
+
+// The space before each button. Buttons used to sit at fixed 120-unit steps, so a label wider than that ("map
+// roulette") ran into its neighbour (seen 2026-11-13 with Author Time Challenge's "Challenge" beside it).
+constexpr float kButtonSpacing = 36;
+
+// The built buttons into the row again, the first added rightmost (beside Discord), the later ones leftwards, as before.
+void PlaceButtons(Obj row) {
+    eng::Call(row, "ClearChildren");
+    for (auto it = gButtons.rbegin(); it != gButtons.rend(); ++it)
+        if (Obj button = eng::Get((*it)->button)) w::AddToRow(row, button, kButtonSpacing);
+}
+
+void BuildButton(FooterButton& b) {
+    Obj tree = eng::Get(gFooter.tree), row = ButtonRow();
     Obj text = FooterText(b.label), button = w::Spawn("Button", tree);
-    if (!text || !button || !gap) return;
+    if (!text || !button || !row) return;
     w::Transparent(button);
     eng::Call(button, "SetContent", text);
-    // Buttons stack leftwards from the right edge of the gap before Discord.
-    int placed = 0;
-    for (auto& other : gButtons)
-        if (other.get() != &b && eng::Get(other->button)) ++placed;
-    if (!w::AddToOverlay(gap, button, w::kAlignEnd, w::kAlignCenter, {0, 0, 16.0f + 120.0f * placed, 0})) return;
     b.button = eng::MakeWeak(button);
+    PlaceButtons(row);
+    if (!eng::ReadObj(button, "Slot")) {
+        b.button = {};
+        return;
+    }
     b.text = eng::MakeWeak(text);
     b.shownLabel = b.label;
     b.normalColor = w::TextColor(text);
