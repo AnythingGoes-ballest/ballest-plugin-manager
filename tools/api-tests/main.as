@@ -442,6 +442,41 @@ void Register()
     RegisterWorkshop();
     RegisterEditor();
     RegisterLocalMapsNetSources();
+    RegisterPartyStageTests();
+}
+
+void RegisterPartyStageTests()
+{
+    Add("core", "Together plugin message guards", "Together::SendPluginMessage,Together::NextPluginMessage", function() {
+        if (Together::LobbyState() != "none") {
+            Together::LeaveLobby();
+            return WAIT;
+        }
+        string sender = "stale", message = "stale";
+        if (Together::SendPluginMessage("test") || Together::NextPluginMessage(sender, message) || sender != "" || message != "")
+            return "plugin messages escaped their lobby guard";
+        return PASS;
+    });
+    Add("core", "Party stage data and context guards", "PartyStage::End,PartyStage::Reset,PartyStage::Snapshot,PartyStage::SetSnapshot,PartyStage::OpenBuild,PartyStage::BuildReady,PartyStage::Offers,PartyStage::OfferIcons,PartyStage::Choose,PartyStage::Capture,PartyStage::Append,PartyStage::OpenRace,PartyStage::RaceReady,PartyStage::StartRace,PartyStage::SetRaceLimit,PartyStage::RaceRemaining,PartyStage::FinishedReplay,PartyStage::PrepareReplayGroup,PartyStage::ReplayReady,PartyStage::StartReplay,PartyStage::HoldReplay,PartyStage::ReplayClock,PartyStage::ReplayFinished,PartyStage::FinishTime,PartyStage::Error,PartyStage::Pack,PartyStage::Unpack,PartyStage::Digest", function() {
+        PartyStage::End();
+        string value = "party data\nquotes: \" \\ unicode: čžš";
+        string packed = PartyStage::Pack(value);
+        if (packed == "" || PartyStage::Unpack(packed) != value || PartyStage::Unpack("not base64!") != "" ||
+            PartyStage::Digest("abc") != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+            return "PartyStage codec or digest";
+        array<string> ids = {"one", "two"}, recordings = {"{}", "{}"};
+        if (PartyStage::Reset("../unsafe") || PartyStage::Snapshot() != "" || PartyStage::SetSnapshot("{}") ||
+            PartyStage::OpenBuild(1) || PartyStage::BuildReady() || PartyStage::Offers().length() != 0 ||
+            PartyStage::OfferIcons().length() != 0 || PartyStage::Choose(0) != 0 || PartyStage::Capture() != "" ||
+            PartyStage::Append("{}") || PartyStage::OpenRace(1) || PartyStage::RaceReady() || PartyStage::StartRace() ||
+            PartyStage::SetRaceLimit(60) || PartyStage::RaceRemaining() != 60 || PartyStage::FinishedReplay() != "" ||
+            PartyStage::PrepareReplayGroup(ids, recordings) || PartyStage::ReplayReady() || PartyStage::StartReplay() ||
+            PartyStage::HoldReplay() || PartyStage::ReplayClock() != -1 || PartyStage::ReplayFinished(0) ||
+            PartyStage::FinishTime(0) != -1 || PartyStage::Error() == "")
+            return "PartyStage accepted work without a valid stage";
+        PartyStage::End(true);
+        return PASS;
+    });
 }
 
 // --- core: Math, Log, Host, Plugins, Settings, Registry, Console, Storage, Input -----------------------------------------

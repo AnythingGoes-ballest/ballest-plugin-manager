@@ -24,7 +24,7 @@ PAGES = [
     ("console", "Console"), ("storage", "Storage"), ("ui", "UI"), ("input", "Input"), ("race", "Race"),
     ("editor", "Editor"), ("prefabs", "Prefabs"), ("hud", "Hud"), ("replay", "Replay"), ("cosmetics", "Cosmetics"),
     ("leaderboard", "Leaderboard"), ("ghosts", "Ghosts"), ("runs", "Runs"), ("tracks", "Tracks"), ("workshop", "Workshop"), ("hub", "Hub"), ("campaigns", "Campaigns"), ("draw", "Draw"), ("camera", "Camera"),
-    ("net", "Net"), ("json", "Json"), ("steam", "Steam"), ("math", "Math"),
+    ("net", "Net"), ("json", "Json"), ("steam", "Steam"), ("partystage", "PartyStage"), ("math", "Math"),
 ]
 
 

@@ -12,6 +12,10 @@
 namespace runs {
 
 void Frame();                           // after race::Frame
+void CaptureFinishSample();             // read-only sample inside the native finish observer, before pawn removal
+// Read-only current-run snapshot and samples around a private Party respawn.
+std::string CurrentReplayText();
+void CaptureRespawnSample(bool after);
 
 void SetKeep(int count);                // how many runs are kept (oldest go first); 10 until set
 int Count();                            // runs kept, newest first

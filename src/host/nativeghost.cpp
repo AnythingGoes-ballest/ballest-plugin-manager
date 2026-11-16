@@ -750,13 +750,15 @@ void NameWatchedTag(const std::string& steamId, const std::string& name) {
     std::array<uint8_t, kRecordSize> rec{};
     if (!key || !Record(sub, key, &rec)) return;
     const std::string recordName = eng::ReadFString(rec.data() + At(sub).username);
-    if (recordName.empty() || recordName == name) return;
     Obj best = nullptr;
     double bestDistance = 1e30;
     // the label canvas's own pool of tags (BallestGhostWorldSubsystem.LabelCanvas -> WidgetTagPool), not a scan
     Obj canvasWidget = eng::ReadObj(sub, "LabelCanvas");
     const std::vector<Obj> pool = canvasWidget ? eng::ReadObjArray(canvasWidget, "WidgetTagPool") : std::vector<Obj>{};
     for (Obj o : pool) {
+        // The migration/debug label is not a player name. Keep only the
+        // replay's actual native name text in this presentation.
+        if (Obj pre = eng::ReadObj(o, "PrePatchWidget")) eng::Call(pre, "SetVisibility", uint8_t{1});
         Obj text = o ? eng::ReadObj(o, "NameText") : nullptr;
         if (!text || ui::widgets::ReadText(text) != recordName) continue;
         double d = 0;
@@ -772,6 +774,7 @@ void NameWatchedTag(const std::string& steamId, const std::string& name) {
             best = o;
         }
     }
+    if (recordName.empty() || recordName == name) return;
     if (!best) return;
     const std::wstring w = eng::Widen(name);
     eng::Call(best, "SetGhostName", eng::FString{w.c_str(), static_cast<int32_t>(w.size() + 1), static_cast<int32_t>(w.size() + 1)});

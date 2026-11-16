@@ -151,6 +151,7 @@ The local copy serves them from disk through its `release_base`, which the host 
 | `src/host/nativeghost.*` | The game's own replay ghosts (BallestGhostWorldSubsystem) fed with replays a plugin hands over: a ghost session for a local map, rivals, selection, the game's replay mode |
 | `src/host/splitref.*` | A plugin's split reference in the race timer's delta box for one track |
 | `src/host/localrecords.*` | The game's own records of the player's never-published maps: read, cleared through the game's profile save, kept out of its records for a plugin that keeps them elsewhere |
+| `src/host/partystage.*` | Local cumulative build/race rounds and two-to-four-player native ghost replay presentation for party plugins |
 | `src/host/pluginnet.*` | `Net::` for plugins: HTTPS to the hosts a plugin declares in its info.toml only (GET, POST, PUT, PATCH, DELETE; JSON or a multipart form), with size, time and rate limits, and a finished download saved to the plugin's cache folder |
 | `src/host/prefabs.*` | `Prefabs::` for plugins: the game's prefab files (its Saved\SaveGames\Prefabs) read, written, saved from the selection, placed and deleted through the game's own prefab commands |
 | `src/host/screen.*` | `Screen::Capture`: a picture of the game's view without any UI (the game's own screenshot), cut to a 480 x 300 thumbnail in the plugin's cache folder |

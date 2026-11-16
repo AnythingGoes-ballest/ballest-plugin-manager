@@ -93,6 +93,7 @@ nav:
       - Net: reference/api/net.md
       - Json: reference/api/json.md
       - Steam: reference/api/steam.md
+      - Party stage: reference/api/partystage.md
       - Math: reference/api/math.md
       - Plugins: reference/api/plugins.md
       - Settings: reference/api/settings.md
