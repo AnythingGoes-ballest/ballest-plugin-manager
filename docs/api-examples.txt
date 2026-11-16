@@ -4013,7 +4013,9 @@ PartyStage::SetSnapshot(snapshot);
 == PartyStage::OpenBuild PartyStage::BuildReady PartyStage::Offers PartyStage::OfferIcons PartyStage::Choose
 `OpenBuild` writes and opens this round's temporary local editor map. Once `BuildReady` is true, `Offers` returns three
 native object names and `OfferIcons` their game texture paths. `Choose` spawns one selection by index and returns its
-editor id, or zero. Existing base and earlier-round objects remain fixed.
+editor id, or zero. Offers are drawn from the native Tracks, Ramps, Bowls, Primitives, Props, Special, Hazards and Misc
+palettes; checkpoints, starts/finishes, point lights and decals are excluded. Existing base and earlier-round objects
+remain fixed.
 --
 PartyStage::OpenBuild(1);
 if (PartyStage::BuildReady()) {

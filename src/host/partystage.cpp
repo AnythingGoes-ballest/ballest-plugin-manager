@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -37,31 +38,9 @@ namespace {
 using eng::Obj;
 using J = json::Value;
 constexpr size_t kLimit = 2 * 1024 * 1024;
-const std::string folder = "/Game/LevelEditor/PackageAssets/MultiplayerLevelEditor/ExampleObjects/BallestPieces/";
-// Measured game classes, all ordinary geometry. No goals/starts/checkpoints.
-const std::vector<std::string> catalogue = {
-    "BP_Track_Short1", "BP_Track_Mid1", "BP_Track_Curve1",
-    "BP_Track_Curve_Tiny1", "BP_Ramp_Kicker1_Short", "BP_Ramp_Curve_Short1",
-    "BP_Bowl_RingScoop", "BP_Track_Round_Straight", "BP_Track_Round_Curve",
-    "BP_Prim_Cube", "BP_Prim_Cylinder", "BP_PhysicsPaddle", "BP_SpinningCylinder",
-    "BP_Elevator", "MP_AirVent", "RubberBlock2_M_PlasticBase", "RubberCylinder", "MP_FlatGlassPlane"
-};
-std::string Path(const std::string& name) {
-    std::string dir=folder;
-    if (name=="BP_PhysicsPaddle" || name=="BP_SpinningCylinder" || name=="BP_Elevator") dir="/Game/LevelEditor/PackageAssets/BallestAssets/PhysicsProps/";
-    if (name=="MP_AirVent") dir="/Game/Core/Gameplay/Props/";
-    if (name=="RubberBlock2_M_PlasticBase" || name=="RubberCylinder") dir="/Game/LevelEditor/PackageAssets/BallestAssets/SpecialPieces/";
-    if (name=="MP_FlatGlassPlane") dir="/Game/LevelEditor/PackageAssets/BallestAssets/MaterialUpdatePieces/";
-    return dir+name+"."+name+"_C";
-}
-const std::map<std::string,std::string> labels = {
-    {"BP_Track_Short1","Short Track"},{"BP_Track_Mid1","Medium Track"},{"BP_Track_Curve1","Curve"},
-    {"BP_Track_Curve_Tiny1","Small Curve"},{"BP_Ramp_Kicker1_Short","Kicker Ramp"},{"BP_Ramp_Curve_Short1","Curved Ramp"},
-    {"BP_Bowl_RingScoop","Ring Scoop"},{"BP_Track_Round_Straight","Round Straight"},{"BP_Track_Round_Curve","Round Curve"},
-    {"BP_Prim_Cube","Cube"},{"BP_Prim_Cylinder","Cylinder"},{"BP_PhysicsPaddle","Physics Paddle"},
-    {"BP_SpinningCylinder","Spinning Cylinder"},{"BP_Elevator","Elevator"},{"MP_AirVent","Air Vent"},
-    {"RubberBlock2_M_PlasticBase","Rubber Block"},{"RubberCylinder","Rubber Cylinder"},{"MP_FlatGlassPlane","Glass Plane"}
-};
+using PaletteMap = std::map<std::string,std::pair<std::string,std::string>>;
+const PaletteMap& Palette();
+bool AllowedPalettePath(const std::string& path);
 J Text(const std::string& s) { J v; v.type = J::String; v.string = s; return v; }
 std::string Write(const J& v) {
     switch (v.type) {
@@ -91,7 +70,7 @@ double Num(const J* v, const std::string& key, double fallback = 0) {
 bool Parse(const std::string& text, J& v) { std::string why; return !text.empty() && text.size() <= kLimit && json::Parse(text, v, why); }
 std::string Class(const J& item) { return ghostdata::ObjectPath(item.Str("actorToSpawn")); }
 bool Ordinary(const J& item,const editor::Vec3& finish) {
-    if (std::none_of(catalogue.begin(), catalogue.end(), [&](const std::string& name) { return Class(item) == Path(name); })) return false;
+    if (!AllowedPalettePath(Class(item))) return false;
     const J* t = item.Get("itemTransform"), *s = At(t, "scale3D"), *p = At(t, "translation"), *q = At(t, "rotation");
     if (!s || !p || !q || item.type != J::Object) return false;
     for (const char* axis : {"x", "y", "z"})
@@ -402,8 +381,8 @@ void FrameView(Stage& s,int owner) {
     constexpr double degrees=57.29577951308232;
     s.replayCameraPlaced=draw::SetCamera(owner,cx,cy,cz,std::atan2(z-cz,std::hypot(x-cx,y-cy))*degrees,std::atan2(y-cy,x-cx)*degrees,68);
 }
-const std::map<std::string,std::pair<std::string,std::string>>& Palette() {
-    static std::map<std::string,std::pair<std::string,std::string>> result;
+const PaletteMap& Palette() {
+    static PaletteMap result;
     if (!result.empty()) return result;
     const std::string base="/Game/LevelEditor/PackageAssets/MultiplayerLevelEditor/UI/Data/ContentBrowser/";
     for (const char* category:{"DA_BallestTracks","DA_BallestRamps","DA_BallestBowls","DA_BallestPrimitives","DA_Props","DA_Special","DA_Hazards","DA_BallestMisc"}) {
@@ -420,6 +399,25 @@ const std::map<std::string,std::pair<std::string,std::string>>& Palette() {
         }
     }
     hostlog::Info("party stage: native palette metadata: "+std::to_string(result.size())+" items");
+    return result;
+}
+std::string Lower(std::string value) {
+    std::transform(value.begin(),value.end(),value.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
+    return value;
+}
+bool AllowedPalettePath(const std::string& path) {
+    const auto found=Palette().find(path);
+    if (found==Palette().end()) return false;
+    const std::string value=Lower(path+" "+found->second.first);
+    // These items change race logic or are editor-only visuals rather than
+    // Party Mode obstacles. Starts/finishes are protected along with checkpoints.
+    for (const char* blocked:{"checkpoint","pointlight","point_light","point light","decal","start","finish","goal"})
+        if (value.find(blocked)!=std::string::npos) return false;
+    return true;
+}
+std::vector<std::string> AllowedPalette() {
+    std::vector<std::string> result;
+    for (const auto& entry:Palette()) if (AllowedPalettePath(entry.first)) result.push_back(entry.first);
     return result;
 }
 bool Fail(Stage& s, const std::string& why) { s.error = why; return false; }
@@ -578,23 +576,24 @@ bool BuildReady() {
     s.generation = game::Generation();
     CleanupTemporaryMaps();
     hud::HideGame(plugins::Current(),false);
-    s.offers = catalogue;
+    s.offers = AllowedPalette();
+    if (s.offers.size()<3) return Fail(s,"The native editor palette has fewer than three safe objects");
     std::mt19937 random(static_cast<uint32_t>(GetTickCount64()) ^ static_cast<uint32_t>(std::strtoull(lobby::OwnId().c_str(),nullptr,10)));
     std::shuffle(s.offers.begin(),s.offers.end(),random); s.offers.resize(3);
     return true;
 }
 std::vector<std::string> Offers() {
     std::vector<std::string> result;
-    if (BuildReady()) for (const auto& name : S().offers) {
-        auto found=Palette().find(Path(name));
-        result.push_back(found==Palette().end() ? name : found->second.first);
+    if (BuildReady()) for (const auto& path : S().offers) {
+        auto found=Palette().find(path);
+        result.push_back(found==Palette().end() ? path : found->second.first);
     }
     return result;
 }
 std::vector<std::string> OfferIcons() {
     std::vector<std::string> result;
-    if (BuildReady()) for (const auto& name:S().offers) {
-        auto found=Palette().find(Path(name));
+    if (BuildReady()) for (const auto& path:S().offers) {
+        auto found=Palette().find(path);
         result.push_back(found==Palette().end() ? "" : found->second.second);
         if(found!=Palette().end()) hostlog::Info("party stage: native offer "+found->second.first+" icon="+found->second.second);
     }
@@ -603,7 +602,7 @@ std::vector<std::string> OfferIcons() {
 int Choose(int index) {
     Stage& s = S(); if (!BuildReady() || s.choice >= 0 || index < 0 || index >= 3) return 0;
     // In front of the original start, off the driving line until the player places it.
-    auto ids = editor::SpawnPieces({{Path(s.offers[static_cast<size_t>(index)]),s.placement,{0,0,0},{1,1,1}}},false);
+    auto ids = editor::SpawnPieces({{s.offers[static_cast<size_t>(index)],s.placement,{0,0,0},{1,1,1}}},false);
     if (ids.size() != 1) { Fail(s,"The chosen native piece could not be spawned"); return 0; }
     s.choice = index; s.chosen = eng::MakeWeak(eng::ObjectAt(ids[0])); editor::Select(ids); return ids[0];
 }
@@ -622,7 +621,7 @@ std::string Capture() {
     if (!Parse(raw,exported) || !exported.Get("items")) { Fail(s,"Native map serialization failed"); return ""; }
     editor::Vec3 pos; if (!editor::Location(s.chosen.index,&pos)) return "";
     for (const J& item : exported.Get("items")->items) {
-        if (Class(item) != Path(s.offers[static_cast<size_t>(s.choice)])) continue;
+        if (Class(item) != s.offers[static_cast<size_t>(s.choice)]) continue;
         const auto at = Vector(At(item.Get("itemTransform"),"translation"));
         if (std::abs(at.x-pos.x)+std::abs(at.y-pos.y)+std::abs(at.z-pos.z) > 0.01) continue;
         if (!Ordinary(item,s.finish)) { Fail(s,"The object must have unit scale and stay outside the finish area"); return ""; }
