@@ -73,8 +73,11 @@ bool Ordinary(const J& item,const editor::Vec3& finish) {
     if (!AllowedPalettePath(Class(item))) return false;
     const J* t = item.Get("itemTransform"), *s = At(t, "scale3D"), *p = At(t, "translation"), *q = At(t, "rotation");
     if (!s || !p || !q || item.type != J::Object) return false;
+    const double sx=Num(s,"x",-9),sy=Num(s,"y",-9),sz=Num(s,"z",-9);
+    if (!std::isfinite(sx) || !std::isfinite(sy) || !std::isfinite(sz) || sx<0.9 || sx>1.1 ||
+        std::abs(sx-sy)>1e-4 || std::abs(sx-sz)>1e-4) return false;
     for (const char* axis : {"x", "y", "z"})
-        if (std::abs(Num(s, axis, -9) - 1) > 1e-6 || !std::isfinite(Num(p, axis)) || std::abs(Num(p, axis)) > 1000000) return false;
+        if (!std::isfinite(Num(p, axis)) || std::abs(Num(p, axis)) > 1000000) return false;
     const double dx = Num(p,"x")-finish.x, dy = Num(p,"y")-finish.y, dz = Num(p,"z")-finish.z;
     if (dx*dx + dy*dy + dz*dz < 500*500) return false;
     double length = 0;
@@ -624,7 +627,7 @@ std::string Capture() {
         if (Class(item) != s.offers[static_cast<size_t>(s.choice)]) continue;
         const auto at = Vector(At(item.Get("itemTransform"),"translation"));
         if (std::abs(at.x-pos.x)+std::abs(at.y-pos.y)+std::abs(at.z-pos.z) > 0.01) continue;
-        if (!Ordinary(item,s.finish)) { Fail(s,"The object must have unit scale and stay outside the finish area"); return ""; }
+        if (!Ordinary(item,s.finish)) { Fail(s,"The object must use uniform 90-110% scale and stay outside the finish area"); return ""; }
         s.committed = true;
         Stage::Fixed fixed; fixed.actor = s.chosen;
         editor::Location(s.chosen.index,&fixed.at); editor::Rotation(s.chosen.index,&fixed.rot); editor::Scale(s.chosen.index,&fixed.scale);
@@ -866,7 +869,13 @@ void Frame() {
             if (editor::Scale(f.actor.index,&scale) && std::memcmp(&scale,&f.scale,sizeof scale)!=0) eng::Call(actor,"SetActorScale3D",f.scale);
         }
         if (Obj actor=eng::Get(s.chosen)) {
-            editor::Vec3 scale; if (editor::Scale(s.chosen.index,&scale) && (scale.x!=1 || scale.y!=1 || scale.z!=1)) eng::Call(actor,"SetActorScale3D",editor::Vec3{1,1,1});
+            editor::Vec3 scale; if (editor::Scale(s.chosen.index,&scale)) {
+                double value=(scale.x+scale.y+scale.z)/3.0;
+                if (!std::isfinite(value)) value=1;
+                value=std::clamp(value,0.9,1.1);
+                if (std::abs(scale.x-value)>1e-4 || std::abs(scale.y-value)>1e-4 || std::abs(scale.z-value)>1e-4)
+                    eng::Call(actor,"SetActorScale3D",editor::Vec3{value,value,value});
+            }
         }
     }
 }

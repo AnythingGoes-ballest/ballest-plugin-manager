@@ -4026,6 +4026,8 @@ if (PartyStage::BuildReady()) {
 == PartyStage::Capture PartyStage::Append
 `Capture` validates and serializes the one chosen object after the player positions it. `Append` adds a received object
 to the cumulative map and shows it in the editor; pass `local = true` for the exact object just captured on this client.
+The chosen object may be scaled uniformly from 90% to 110%; non-uniform stretching is normalized and previous objects
+remain locked.
 --
 string item = PartyStage::Capture();
 PartyStage::Append(item, true);
