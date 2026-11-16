@@ -9,6 +9,7 @@
 #include "layout.hpp"
 #include "log.hpp"
 #include "race.hpp"
+#include "runs.hpp"
 #include "tracks.hpp"
 
 namespace localrecords {
@@ -54,6 +55,7 @@ bool OwnUnpublished(const std::string& levelName, std::string* error) {
 // rules keep the run out of its records (measured: a hook on the Blueprint AsyncSaveProfileChanges is never run for
 // the game's own Blueprint-to-Blueprint calls; a native function's entry is).
 void HookedCapture(Obj context, uint8_t* frame, void* result) {
+    runs::CaptureFinishSample();
     gCaptureOriginal(context, frame, result);
     race::NoteFinish();
     const race::Track& track = race::CurrentTrack();

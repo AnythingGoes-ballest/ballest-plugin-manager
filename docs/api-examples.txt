@@ -3981,3 +3981,111 @@ for editor tabs. One tab per window. Requires host 0.34.0.
 UI::Window@ page = UI::CreateWindow();
 page.DockInCreatePage("create together");
 page.AddText("create together", 30);
+
+== Together::SendPluginMessage Together::NextPluginMessage
+Short messages over the current Together lobby, scoped to the calling plugin id. The sender id comes from the lobby
+transport, never the payload. Payloads are 1-768 bytes without NUL or line breaks, limited to eight per second per
+plugin and sender; an inbox keeps the newest 64. Lobby changes and plugin unload clear queued messages. These calls
+copy their traffic from Together's lobby inbox and do not consume its admission or shared-editor messages.
+--
+Together::SendPluginMessage("ready");
+string sender, message;
+while (Together::NextPluginMessage(sender, message))
+    Log::Info(sender + ": " + message);
+
+@@ PartyStage
+A local build, timed race and multi-ghost replay made from a plugin's `maps/party_base.balledit`. Matchmaking and
+barriers stay in Together: each participant works on a local copy, exchanges committed objects and recordings through
+plugin messages, and calls these operations in the same roster order. The base must be unpublished and contain one
+start and one finish. Session files have unique names, never replace the bundled map, and are removed after use when
+unchanged. A stage belongs to the calling plugin and is restored when that plugin stops.
+
+== PartyStage::Reset PartyStage::Snapshot PartyStage::SetSnapshot
+`Reset` starts from the calling plugin's bundled base with a lowercase hexadecimal session token (1-40 characters).
+`Snapshot` serializes the cumulative map. `SetSnapshot` accepts it only while the immutable base is unchanged and all
+added items are supported ordinary geometry, unit scale and outside the protected finish area. Snapshots are bounded
+to 2 MiB and should be sent with acknowledgements, ordering and a digest.
+--
+PartyStage::Reset("0123456789abcdef");
+string snapshot = PartyStage::Snapshot();
+PartyStage::SetSnapshot(snapshot);
+
+== PartyStage::OpenBuild PartyStage::BuildReady PartyStage::Offers PartyStage::OfferIcons PartyStage::Choose
+`OpenBuild` writes and opens this round's temporary local editor map. Once `BuildReady` is true, `Offers` returns three
+native object names and `OfferIcons` their game texture paths. `Choose` spawns one selection by index and returns its
+editor id, or zero. Offers are drawn from the native Tracks, Ramps, Bowls, Primitives, Props, Special, Hazards and Misc
+palettes; checkpoints, starts/finishes, point lights and decals are excluded. Existing base and earlier-round objects
+remain fixed.
+--
+PartyStage::OpenBuild(1);
+if (PartyStage::BuildReady()) {
+    array<string>@ names = PartyStage::Offers();
+    int piece = PartyStage::Choose(0);
+}
+
+== PartyStage::Capture PartyStage::Append
+`Capture` validates and serializes the one chosen object after the player positions it. `Append` adds a received object
+to the cumulative map and shows it in the editor; pass `local = true` for the exact object just captured on this client.
+The chosen object may be scaled uniformly from 90% to 110%; non-uniform stretching is normalized and previous objects
+remain locked.
+--
+string item = PartyStage::Capture();
+PartyStage::Append(item, true);
+// For each other participant's committed item:
+PartyStage::Append(receivedItem);
+
+== PartyStage::OpenRace PartyStage::RaceReady PartyStage::StartRace
+`OpenRace` saves the cumulative snapshot under a fresh temporary filename and opens it as a local race. After
+`RaceReady`, `StartRace` calls the participant's native race request; it also adopts the same native attempt if the
+player already selected the game's Play button. No fabricated run state or physics start is written.
+--
+PartyStage::OpenRace(1);
+if (PartyStage::RaceReady()) PartyStage::StartRace();
+
+== PartyStage::SetRaceLimit PartyStage::RaceRemaining PartyStage::FinishedReplay
+Before the race starts, set a 1-600 second round limit. `RaceRemaining` uses native race elapsed time and keeps counting
+across automatic falls or manual checkpoint/start retries. `FinishedReplay` returns the current native recording once
+the player finishes or the limit expires; its Party metadata distinguishes a finish from DNF. Party attempts stay out
+of personal records because their geometry differs from the authored base.
+--
+PartyStage::SetRaceLimit(60);
+double remaining = PartyStage::RaceRemaining();
+string recording = PartyStage::FinishedReplay();
+
+== PartyStage::PrepareReplayGroup PartyStage::ReplayReady PartyStage::StartReplay
+Prepares two to four distinct lobby participants and valid current-round recordings in stable roster order. Every
+native ghost starts at playback time zero and is labelled with its authenticated lobby name. `ReplayReady` waits until
+all records are loaded; `StartReplay` starts one playback and a course-framed camera without opening the native pause
+or POV menu.
+--
+array<string> ids = {hostId, guestId};
+array<string> recordings = {hostRecording, guestRecording};
+PartyStage::PrepareReplayGroup(ids, recordings);
+if (PartyStage::ReplayReady()) PartyStage::StartReplay();
+
+== PartyStage::ReplayClock PartyStage::ReplayFinished PartyStage::FinishTime PartyStage::HoldReplay
+`ReplayClock` is the shared native playback time, or -1 outside playback. `ReplayFinished` reports finish versus DNF
+for one roster index and `FinishTime` its recorded duration. Reveal a completed place/time only when the playback
+clock reaches that finish; DNF may be shown immediately. `HoldReplay` freezes the completed presentation while the
+plugin shows its result delay.
+--
+double clock = PartyStage::ReplayClock();
+if (!PartyStage::ReplayFinished(0)) { /* DNF */ }
+else if (clock >= PartyStage::FinishTime(0)) { /* reveal place and time */ }
+PartyStage::HoldReplay();
+
+== PartyStage::Pack PartyStage::Unpack PartyStage::Digest
+Bounded zlib/base64 transport helpers and a lowercase SHA-256 digest for map snapshots and recordings. `Unpack`
+returns empty text for malformed or oversized input. The plugin remains responsible for chunk acknowledgements,
+duplicate suppression, ordering and checking the digest of the complete message.
+--
+string packed = PartyStage::Pack(snapshot);
+string original = PartyStage::Unpack(packed);
+string hash = PartyStage::Digest(original);
+
+== PartyStage::Error PartyStage::End
+`Error` is the last refusal reason for the calling plugin. `End` releases the replay camera, ghosts, hidden HUD/editor
+parts, record policy and temporary stage state; pass true to return through Together's normal main-menu path.
+--
+if (!PartyStage::StartRace()) Log::Warn(PartyStage::Error());
+PartyStage::End(true);

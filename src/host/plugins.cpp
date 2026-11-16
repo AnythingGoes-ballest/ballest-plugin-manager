@@ -23,6 +23,7 @@
 #include "game.hpp"
 #include "createpage.hpp"
 #include "together.hpp"
+#include "partystage.hpp"
 #include "editor.hpp"
 #include "leaderboard.hpp"
 #include "pluginnet.hpp"
@@ -187,6 +188,8 @@ void Stop(Plugin& p, const std::string& why) {
     ui::HideOwner(index);
     game::RequestCursor(index, false);
     together::PluginStopped(index);     // a session its plugin no longer runs ends (its windows are gone)
+    together::PluginMessagesStopped(p.id);
+    partystage::Stopped(index);
 }
 
 // Overruns a plugin is let off: a callback that runs out of time is cut short, and the plugin keeps running unless it
@@ -499,6 +502,8 @@ void Release(size_t i) {
     editor::RemoveOwner(static_cast<int>(i));
     createpage::RemoveOwner(static_cast<int>(i));
     together::PluginStopped(static_cast<int>(i));
+    together::PluginMessagesStopped(p.id);
+    partystage::Stopped(static_cast<int>(i));
     draw::RemoveOwner(static_cast<int>(i));
     postprocess::RemoveOwner(static_cast<int>(i));
     hud::RemoveOwner(static_cast<int>(i));

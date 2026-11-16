@@ -54,10 +54,12 @@ struct Sample {
 };
 bool gRecording = false;
 int gRunId = -1, gEndedRunId = -1;
+int gRunGeneration = -1, gEndedGeneration = -1;
 double gNoPawnSince = -1;                // game seconds since the run lost its pawn (a finish on its way), or -1
 double gLastSample = -1, gNow = 0;
 std::string gKey, gName;
 std::vector<Sample> gSamples;
+eng::Weak gSampleBall;                  // the actual recorded ball can outlive its controller's possession at finish
 
 std::map<std::string, ghostdata::Replay> gReplays;     // file -> read once
 
@@ -137,10 +139,19 @@ Obj Ball() { return race::RacingBall(); }
 // ActualRaceTime is gone).
 double RaceClock(Obj controller) { return controller ? race::RaceElapsed() : -1; }
 
-void TakeSample(double t) {
+void TakeSample(double t, bool finish = false) {
     Obj ball = Ball();
+    if (!ball && finish) {
+        // A finished actor may be pending destruction but still owns its final
+        // transform this game-thread frame. Read only while both UObjects are
+        // still in the object array; never extrapolate from velocity.
+        Obj previous=eng::Get(gSampleBall);
+        Obj root=previous ? eng::ReadObj(previous,"RootComponent") : nullptr;
+        if (previous && root && eng::IsLive(root)) ball=previous;
+    }
     Obj controller = game::PlayerController();
     if (!ball || !controller) return;
+    gSampleBall=eng::MakeWeak(ball);
     Obj root = eng::Call(ball, "K2_GetRootComponent").ReturnObj();
     Sample s{};
     s.t = t;
@@ -295,6 +306,9 @@ std::string RunJson(double time) {
 void Begin(int runId) {
     gRecording = true;
     gRunId = runId;
+    gRunGeneration = game::Generation();
+    gNoPawnSince = -1;
+    gSampleBall = {};
     gLastSample = -1;
     gSamples.clear();
     gKey = race::CurrentTrack().key;
@@ -305,6 +319,7 @@ void End(bool finished) {
     gRecording = false;
     gNoPawnSince = -1;
     gEndedRunId = gRunId;
+    gEndedGeneration = gRunGeneration;
     const double time = gNow;                // the race clock: a finished run's own time
     if (gSamples.size() < 5 || time < kShortest || gKey.empty()) return;
     // A run the ball never got going in (sitting at the start, or in the menu with the race clock running: measured,
@@ -318,7 +333,7 @@ void End(bool finished) {
         hostlog::Info("runs: not keeping a run of " + gName + " that never left the start");
         return;
     }
-    if (finished && gSamples.back().t < time - 0.01) TakeSample(time);    // the finish too (after a restart the ball is back at the start)
+    if (finished && gSamples.back().t < time - 0.000001) TakeSample(time,true); // read the real unpossessed ball, never extrapolate its finish
     Load();
     CreateDirectoryW(Dir().c_str(), nullptr);
     const long long ended = static_cast<long long>(std::time(nullptr));
@@ -359,12 +374,19 @@ void Frame() {
     Obj controller = game::PlayerController();
     const bool on = race::OnTrack();
     const int id = race::RunId();
+    if (gRecording && game::Generation() != gRunGeneration) {
+        // Attempt ids restart in a newly loaded world. End the old recording
+        // before reading the new world's clock or completion state.
+        End(false);
+        return;
+    }
     if (gRecording && race::Practice()) {
         // A practice run isn't one of the player's runs, and its clock is stopped (measured: kept as 999.999 s when
         // the track was left): it's dropped, and this run id isn't recorded again.
         gRecording = false;
         gNoPawnSince = -1;
         gEndedRunId = gRunId;
+        gEndedGeneration = gRunGeneration;
         hostlog::Info("runs: a practice run isn't kept");
         return;
     }
@@ -396,7 +418,7 @@ void Frame() {
         }
     }
     if (!gRecording && on && controller && race::Active() && !race::Complete() && !race::Practice() && id >= 0 &&
-        id != gEndedRunId) {
+        (id != gEndedRunId || game::Generation() != gEndedGeneration)) {
         gNow = std::max(0.0, RaceClock(controller));
         Begin(id);
     }
@@ -408,6 +430,31 @@ void SetKeep(int count) {
     const size_t before = gRuns.size();
     Prune();
     if (gRuns.size() != before) SaveIndex();
+}
+
+void CaptureFinishSample() {
+    if (!gRecording || race::Practice() || !race::OnTrack() || gKey!=race::CurrentTrack().key || gSamples.empty()) return;
+    const double time=RaceClock(game::PlayerController());
+    if (!std::isfinite(time) || time<gSamples.back().t) return;
+    const size_t before=gSamples.size();
+    TakeSample(time,true);
+    if (gSamples.size()!=before) {
+        gNow=std::max(gNow,time); gLastSample=time;
+        hostlog::Info("runs: captured native finish position at "+Number(time));
+    }
+}
+std::string CurrentReplayText() {
+    if (!gRecording || gRunGeneration!=game::Generation() || gSamples.size()<2 || gKey!=race::CurrentTrack().key) return "";
+    return RunJson(std::max(gNow,RaceClock(game::PlayerController())));
+}
+void CaptureRespawnSample(bool after) {
+    if (!gRecording || gRunGeneration!=game::Generation() || gKey!=race::CurrentTrack().key) return;
+    const double clock=RaceClock(game::PlayerController());
+    if (!std::isfinite(clock) || clock<0) return;
+    // Keep a discontinuous respawn from looking like a fast drive across the
+    // course. Both poses are actual samples, a microsecond apart in the replay.
+    const double t=std::max(clock+(after?0.000001:0.0),gSamples.empty()?0.0:gSamples.back().t+0.000001);
+    TakeSample(t); gLastSample=t; gNow=std::max(gNow,clock);
 }
 
 int Count() {

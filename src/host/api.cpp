@@ -46,6 +46,7 @@
 #include "createpage.hpp"
 #include "lobby.hpp"
 #include "together.hpp"
+#include "partystage.hpp"
 #include "editor.hpp"
 #include "engine.hpp"
 #include "race.hpp"
@@ -2669,6 +2670,12 @@ bool TogetherOpenMap(const std::string& file) {
     plugins::GameWork work;
     return together::OpenMap(file);
 }
+bool TogetherSendPluginMessage(const std::string& message) {
+    return together::SendPluginMessage(plugins::CurrentId(), message);
+}
+bool TogetherNextPluginMessage(std::string& sender, std::string& message) {
+    return together::NextPluginMessage(plugins::CurrentId(), sender, message);
+}
 
 void RegisterTogether() {
     e->SetDefaultNamespace("Together");
@@ -2723,6 +2730,66 @@ void RegisterTogether() {
     Global("bool InviteDialog()", asFUNCTION(lobby::InviteDialog));
     Global("string TakeInvite()", asFUNCTION(lobby::TakeInvite));
     Global("string OwnName()", asFUNCTION(lobby::OwnName));
+    Global("bool SendPluginMessage(const string &in message)", asFUNCTION(TogetherSendPluginMessage));
+    Global("bool NextPluginMessage(string &out senderId, string &out message)", asFUNCTION(TogetherNextPluginMessage));
+}
+
+CScriptArray* StageOffers() { plugins::GameWork work; return StringArrayOf(partystage::Offers()); }
+CScriptArray* StageOfferIcons() { plugins::GameWork work; return StringArrayOf(partystage::OfferIcons()); }
+bool StageReset(const std::string& token) { plugins::GameWork work; return partystage::Reset(token); }
+bool StageOpenBuild(int round) { plugins::GameWork work; return partystage::OpenBuild(round); }
+int StageChoose(int index) { plugins::GameWork work; return partystage::Choose(index); }
+std::string StageCapture() { plugins::GameWork work; return partystage::Capture(); }
+bool StageAppend(const std::string& item, bool local) { plugins::GameWork work; return partystage::Append(item, local); }
+bool StageOpenRace(int round) { plugins::GameWork work; return partystage::OpenRace(round); }
+bool StageStartRace() { plugins::GameWork work; return partystage::StartRace(); }
+bool StagePrepareReplayGroup(const CScriptArray* ids, const CScriptArray* recordings) {
+    if (!ids || !recordings || ids->GetSize() < 2 || ids->GetSize() > 4 || ids->GetSize() != recordings->GetSize()) return false;
+    std::vector<std::string> participantIds, participantRecordings;
+    for (asUINT i = 0; i < ids->GetSize(); ++i) {
+        participantIds.push_back(*static_cast<const std::string*>(ids->At(i)));
+        participantRecordings.push_back(*static_cast<const std::string*>(recordings->At(i)));
+    }
+    plugins::GameWork work;
+    return partystage::PrepareReplayGroup(participantIds, participantRecordings);
+}
+bool StageStartReplay() { plugins::GameWork work; return partystage::StartReplay(); }
+bool StageHoldReplay() { plugins::GameWork work; return partystage::HoldReplay(); }
+void StageEnd(bool returnToMenu) {
+    plugins::GameWork work;
+    partystage::End();
+    if (returnToMenu) together::Leave();
+}
+void RegisterPartyStage() {
+    e->SetDefaultNamespace("PartyStage");
+    Global("void End(bool returnToMenu = false)", asFUNCTION(StageEnd));
+    Global("bool Reset(const string &in token)", asFUNCTION(StageReset));
+    Global("string Snapshot()", asFUNCTION(partystage::Snapshot));
+    Global("bool SetSnapshot(const string &in text)", asFUNCTION(partystage::SetSnapshot));
+    Global("bool OpenBuild(int round)", asFUNCTION(StageOpenBuild));
+    Global("bool BuildReady()", asFUNCTION(partystage::BuildReady));
+    Global("array<string>@ Offers()", asFUNCTION(StageOffers));
+    Global("array<string>@ OfferIcons()", asFUNCTION(StageOfferIcons));
+    Global("int Choose(int index)", asFUNCTION(StageChoose));
+    Global("string Capture()", asFUNCTION(StageCapture));
+    Global("bool Append(const string &in item, bool local = false)", asFUNCTION(StageAppend));
+    Global("bool OpenRace(int round)", asFUNCTION(StageOpenRace));
+    Global("bool RaceReady()", asFUNCTION(partystage::RaceReady));
+    Global("bool StartRace()", asFUNCTION(StageStartRace));
+    Global("bool SetRaceLimit(int seconds)", asFUNCTION(partystage::SetRaceLimit));
+    Global("double RaceRemaining()", asFUNCTION(partystage::RaceRemaining));
+    Global("string FinishedReplay()", asFUNCTION(partystage::FinishedReplay));
+    Global("bool PrepareReplayGroup(const array<string> &in ids, const array<string> &in recordings)", asFUNCTION(StagePrepareReplayGroup));
+    Global("bool ReplayReady()", asFUNCTION(partystage::ReplayReady));
+    Global("bool StartReplay()", asFUNCTION(StageStartReplay));
+    Global("bool HoldReplay()", asFUNCTION(StageHoldReplay));
+    Global("double ReplayClock()", asFUNCTION(partystage::ReplayClock));
+    Global("bool ReplayFinished(int player)", asFUNCTION(partystage::ReplayFinished));
+    Global("double FinishTime(int player)", asFUNCTION(partystage::FinishTime));
+    Global("string Error()", asFUNCTION(partystage::Error));
+    Global("string Pack(const string &in text)", asFUNCTION(partystage::Pack));
+    Global("string Unpack(const string &in text)", asFUNCTION(partystage::Unpack));
+    Global("string Digest(const string &in text)", asFUNCTION(partystage::Digest));
 }
 
 void Register(asIScriptEngine* engine) {
@@ -2739,6 +2806,7 @@ void Register(asIScriptEngine* engine) {
     RegisterEditor();
     RegisterPrefabs();
     RegisterTogether();
+    RegisterPartyStage();
     RegisterReplay();
     RegisterCosmetics();
     RegisterLeaderboard();

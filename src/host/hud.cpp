@@ -432,6 +432,8 @@ void ResetPartColor(const std::string& key, const std::string& part) {
 
 namespace {
 std::set<int> gHiders;
+std::set<int> gFooterHiders;
+eng::Weak gHiddenFooter;
 // The game's race UI is hidden part by part, all but the footer (the plugin manager's footer lives in it, reported
 // missing when the whole UI was hidden): every widget beside the footer's line of parents is hidden, and each one's
 // own visibility kept to give back.
@@ -449,6 +451,7 @@ void RestoreGame() {
         if (Obj widget = eng::Get(part.widget)) w::SetVisibility(widget, part.visibility);
     gHiddenParts.clear();
     gHiddenIn = {};
+    gHiddenFooter = {};
 }
 
 void HidePart(Obj widget) {
@@ -788,7 +791,12 @@ void HideGameFrame() {
     if (eng::Get(gHiddenIn) != raceUi) {                // another map, another UI
         gHiddenParts.clear();
         gHiddenIn = eng::MakeWeak(raceUi);
+        gHiddenFooter={};
     }
+    // A native delayed menu callback can show an already-hidden panel between
+    // discovery passes. Enforce cached visibility each frame, not every 250 ms.
+    for (const auto& part:gHiddenParts)
+        if (Obj widget=eng::Get(part.widget)) w::SetVisibility(widget,kHidden);
     if (now >= gNextHide && (!raceUi || race::EditorTesting())) {
         // Editor test-play has no race UI manager: its HUD is a WBP_PlayerUI of its own (measured 2026-10-06).
         gNextHide = now + 0.25;
@@ -812,6 +820,10 @@ void HideGameFrame() {
     if (!raceUi || now < gNextHide) return;
     gNextHide = now + 0.25;
     const std::vector<Obj> line = FooterLine(raceUi);
+    if (!line.empty()) {
+        gHiddenFooter=eng::MakeWeak(line.front());
+        if (!gFooterHiders.empty()) HidePart(line.front());
+    }
     Obj root = RootOf(raceUi);
     if (line.empty()) {                                 // no footer: all of it
         if (root) HidePart(root);
@@ -843,6 +855,7 @@ Obj LiveOf(const char* className) {
     if (cls) eng::ForEachObject([&](Obj o) {
         if (!eng::IsA(o, cls) || eng::IsDefaultObject(o)) return true;
         if (eng::PathOf(o).rfind("/Engine/Transient.", 0) != 0) return true;
+        if (eng::FunctionOn(o,"GetOwningPlayer") && eng::Call(o,"GetOwningPlayer").ReturnObj()!=game::PlayerController()) return true;
         found = o;
         return false;
     });
@@ -866,7 +879,12 @@ void HideEditorPart(Obj widget) {
 }
 
 eng::Weak gEditorWidget, gEditorUi;
+int gEditorScreenGeneration=-1;
 void HideEditorFrame() {
+    if (gEditorScreenGeneration!=game::Generation()) {
+        RestoreEditor(); gEditorWidget={}; gEditorUi={}; gNextEditorHide=0;
+        gEditorScreenGeneration=game::Generation();
+    }
     if (gEditorHiders.empty()) {
         if (!gEditorParts.empty()) RestoreEditor();
         return;
@@ -914,9 +932,18 @@ void HideEditor(int owner, bool hidden) {
     if (gEditorHiders.empty()) RestoreEditor();
 }
 
-void HideGame(int owner, bool hidden) {
+void HideGame(int owner, bool hidden, bool keepFooter) {
     if (hidden) gHiders.insert(owner);
     else gHiders.erase(owner);
+    if (hidden && !keepFooter) gFooterHiders.insert(owner);
+    else gFooterHiders.erase(owner);
+    if (gFooterHiders.empty() && !gHiders.empty()) {
+        const Obj footer=eng::Get(gHiddenFooter);
+        std::erase_if(gHiddenParts,[&](const HiddenPart& part) {
+            if (!footer || eng::Get(part.widget)!=footer) return false;
+            w::SetVisibility(footer,part.visibility); return true;
+        });
+    }
     if (gHiders.empty()) RestoreGame();
 }
 

@@ -21,6 +21,7 @@
 #include "models.hpp"
 #include "editor.hpp"
 #include "together.hpp"
+#include "partystage.hpp"
 #include "lobby.hpp"
 #include "createpage.hpp"
 #include "engine.hpp"
@@ -116,6 +117,7 @@ void HostFrame(float dt) {
     editor::Frame();
     together::Frame();
     lobby::Frame();
+    partystage::Frame();
     createpage::Frame();
     race::Frame();
     runs::Frame();                  // the player's own recent runs (after race: it reads the run)
