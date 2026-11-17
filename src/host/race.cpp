@@ -7,6 +7,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <array>
 #include <set>
 #include <cmath>
 #include <cstdio>
@@ -555,6 +556,179 @@ void CountRespawns(Obj controller, const RunState& run) {
     gLastFaults = faults;                   // a new controller, or a new run's reset: a new baseline
 }
 
+// Continuous respawn uses the game's reflected Blueprint entry points measured on the 2026-11-02 build:
+//   * IA_RestartLevel and ManuallyRestartBall restart from the course start;
+//   * IA_RestartCheckpoint respawns at the current checkpoint (or the start before one);
+//   * BP_KillZone.ReceiveActorBeginOverlap begins the delayed kill-zone restart.
+// The option stops only those calls for the local player while its exact map/run is active, then moves the same ball
+// itself. No executable code is patched: these UFunctions normally point at Unreal's shared Blueprint interpreter;
+// their reflected native-entry pointer is replaced only after checking that it still points at that interpreter.
+struct ContinuousRespawnState {
+    std::set<int> owners;
+    int generation = -1;
+    std::string track;
+    eng::Weak ball;
+    std::array<uint8_t, 96> start{};            // FTransform: rotation, translation, scale (three FVector4d)
+    bool haveStart = false, physicalStartSaved = false;
+    int pending = 0;                            // 1 checkpoint/R, 2 full restart, 3 kill zone
+    double last = -100;
+};
+ContinuousRespawnState gContinuousRespawn;
+
+struct RespawnHook {
+    const char* cls;
+    const char* name;
+    int kind;
+    Obj fn = nullptr;
+    NativeFunction original = nullptr;
+    int otherAt = -1;
+};
+RespawnHook gRespawnHooks[] = {
+    {"BP_MyPlayerController_C", "InpActEvt_IA_RestartLevel_K2Node_EnhancedInputActionEvent_9", 2},
+    {"BP_MyPlayerController_C", "InpActEvt_IA_RestartCheckpoint_K2Node_EnhancedInputActionEvent_14", 1},
+    {"BP_MyPlayerController_C", "InpActEvt_IA_RestartCheckpoint_K2Node_EnhancedInputActionEvent_15", 1},
+    {"BP_MyPlayerController_C", "ManuallyRestartBall", 2},
+    {"BP_KillZone_C", "ReceiveActorBeginOverlap", 3},
+};
+NativeFunction gRespawnInterpreter = nullptr;
+
+bool ContinuousRespawnActive() {
+    return !gContinuousRespawn.owners.empty() && gContinuousRespawn.generation == game::Generation() &&
+           gContinuousRespawn.track == gTrack.key && gActive && !gComplete && eng::Get(gContinuousRespawn.ball);
+}
+
+void HookedContinuousRespawn(Obj context, uint8_t* frame, void* result) {
+    Obj node = nullptr;
+    uint8_t* params = nullptr;
+    if (frame) {
+        std::memcpy(&node, frame + layout::kFFrameFunctionOffset, sizeof node);
+        std::memcpy(&params, frame + layout::kFFrameParametersOffset, sizeof params);
+    }
+    for (auto& hook : gRespawnHooks) {
+        if (hook.fn != node) continue;
+        bool ours = ContinuousRespawnActive();
+        if (ours && hook.kind == 3) {
+            Obj other = nullptr;
+            if (!params || hook.otherAt < 0) ours = false;
+            else std::memcpy(&other, params + hook.otherAt, sizeof other);
+            ours = ours && other == eng::Get(gContinuousRespawn.ball);
+        } else if (ours) {
+            ours = context == game::PlayerController();
+        }
+        if (ours) {
+            if (!gContinuousRespawn.pending) gContinuousRespawn.pending = hook.kind;
+            return;
+        }
+        if (hook.original) hook.original(context, frame, result);
+        return;
+    }
+    if (gRespawnInterpreter) gRespawnInterpreter(context, frame, result);
+}
+
+bool InstallContinuousRespawnHooks() {
+    bool full = false, checkpoint = false, kill = false;
+    for (auto& hook : gRespawnHooks) {
+        if (hook.fn) {
+            full |= hook.kind == 2;
+            checkpoint |= hook.kind == 1;
+            kill |= hook.kind == 3;
+            continue;
+        }
+        Obj fn = eng::FindFunction(eng::FindClass(hook.cls), hook.name);
+        if (!fn) continue;
+        NativeFunction entry = nullptr;
+        std::memcpy(&entry, fn + layout::kUFunctionNativeFunctionOffset, sizeof entry);
+        Obj reference = eng::FindFunction(eng::FindClass(hook.cls), hook.kind == 3 ? "PlayWaterDeathSplash" : "ToggleMouseCursor");
+        NativeFunction interpreter = nullptr;
+        if (reference) std::memcpy(&interpreter, reference + layout::kUFunctionNativeFunctionOffset, sizeof interpreter);
+        if (!entry || entry != interpreter || !eng::InImage(reinterpret_cast<void*>(entry))) continue;
+        if (hook.kind == 3)
+            for (const auto& p : eng::ParamsOf(fn))
+                if (p.name == "OtherActor" && p.size == 8) hook.otherAt = p.offset;
+        if (hook.kind == 3 && hook.otherAt < 0) continue;
+        hook.fn = fn;
+        hook.original = entry;
+        gRespawnInterpreter = entry;
+        const NativeFunction replacement = HookedContinuousRespawn;
+        std::memcpy(fn + layout::kUFunctionNativeFunctionOffset, &replacement, sizeof replacement);
+        full |= hook.kind == 2;
+        checkpoint |= hook.kind == 1;
+        kill |= hook.kind == 3;
+        hostlog::Info(std::string("race: continuous respawn watches ") + hook.name);
+    }
+    return full && checkpoint && kill;
+}
+
+bool ReadRespawnTransform(std::array<uint8_t, 96>* transform) {
+    Obj controller = game::PlayerController();
+    Obj library = eng::FindCdo("BallestCourseModeLibrary");
+    if (!controller || !library) return false;
+    eng::Params get(eng::FunctionOn(library, "GetCourseRespawnTransform"));
+    if (!get.Fn()) return false;
+    get.SetArg(0, controller);
+    if (!eng::Invoke(library, get) || !get.ReturnBool()) return false;
+    size_t size = 0;
+    const uint8_t* value = get.Get("OutTransform", &size);
+    if (!value || size != transform->size()) return false;
+    std::memcpy(transform->data(), value, size);
+    return true;
+}
+
+void ContinuousRespawnFrame() {
+    auto& state = gContinuousRespawn;
+    if (state.owners.empty()) return;
+    if (state.generation != game::Generation() || state.track != gTrack.key) {
+        state = {};
+        hostlog::Info("race: continuous respawn off (map changed)");
+        return;
+    }
+    if (!gActive || gComplete) {
+        state.pending = 0;
+        return;
+    }
+    Obj ball = PlayedBall();
+    if (!ball) return;
+    if (eng::Get(state.ball) != ball) state.ball = eng::MakeWeak(ball);
+    if (!state.physicalStartSaved && CurrentCheckpoint() < 0) {
+        std::array<uint8_t, 96> start{};
+        if (ReadRespawnTransform(&start)) {
+            state.start = start;
+            state.haveStart = state.physicalStartSaved = true;
+        }
+    }
+    const int kind = state.pending;
+    state.pending = 0;
+    if (!kind || !state.haveStart || game::Seconds() - state.last < 0.2) return;
+
+    std::array<uint8_t, 96> transform = state.start;
+    if (kind != 2) ReadRespawnTransform(&transform);
+    struct MovementInterface {
+        Obj object;
+        void* implementation;
+    } movement{};
+    if (eng::ReadBytes(ball, "BallestMovementInterface", &movement, sizeof movement) && movement.object &&
+        eng::FindFunction(eng::ClassOf(movement.object), "ResetBallMovementState"))
+        eng::Call(movement.object, "ResetBallMovementState", uint8_t{1});
+    eng::Params move(eng::FunctionOn(ball, "K2_SetActorTransform"));
+    move.Set("NewTransform", transform.data(), transform.size());
+    move.Set("bSweep", uint8_t{0});
+    move.Set("bTeleport", uint8_t{1});
+    if (!eng::Invoke(ball, move) || !move.ReturnBool()) {
+        hostlog::Warn("race: continuous respawn transform was refused");
+        return;
+    }
+    if (Obj root = eng::Call(ball, "K2_GetRootComponent").ReturnObj()) {
+        eng::Call(root, "SetPhysicsLinearVelocity", Vec3{}, uint8_t{0}, kNoBone);
+        eng::Call(root, "SetPhysicsAngularVelocityInRadians", Vec3{}, uint8_t{0}, kNoBone);
+    }
+    if (kind == 1 && CurrentCheckpoint() >= 0) ++gRespawns;
+    if (kind == 3) ++gFalls;
+    TaintRun("a plugin respawned the ball without restarting the clock");
+    state.last = game::Seconds();
+    hostlog::Info("race: continuous respawn, event " + std::to_string(kind) + ", same attempt " +
+                  std::to_string(gRunId) + " at " + std::to_string(RaceElapsed()) + " s");
+}
+
 struct CheckpointActor {
     eng::Weak actor;
     Vec3 at;
@@ -699,6 +873,10 @@ void Frame() {
     gActive = gComplete = false;
     if (gTrackGeneration != game::Generation()) {
         gTrackGeneration = game::Generation();
+        if (!gContinuousRespawn.owners.empty()) {
+            gContinuousRespawn = {};
+            hostlog::Info("race: continuous respawn off (map changed)");
+        }
         if (!gFinishesWatched) gFinishesWatched = localrecords::WatchFinishes(nullptr);
         gLiveRunId = gFinishedRunId = -1;
         gTrack = Track{};
@@ -726,6 +904,7 @@ void Frame() {
         gNextTrackRead = game::Seconds() + 1;
         ReadTrack();
     }
+    ContinuousRespawnFrame();
 
     Obj pawn = eng::Call(controller, "K2_GetPawn").ReturnObj();
     // The run id: the run's attempt serial (the ball's RaceId before the update), only while a ball is played
@@ -1005,6 +1184,48 @@ bool OwnUnpublishedMapHere(std::string* why) {
         return allowed;
     }
     return LocalUnpublishedMap(why);
+}
+
+bool ContinuousRespawn(int owner, bool enabled) {
+    auto& state = gContinuousRespawn;
+    if (!enabled) {
+        state.owners.erase(owner);
+        if (state.owners.empty()) state = {};
+        return true;
+    }
+    std::string why;
+    if (!gOnTrack || gTrack.key.rfind("custom:local:", 0) != 0 || !LocalUnpublishedMap(&why)) {
+        hostlog::Warn("race: ContinuousRespawn refused: " + (why.empty() ? std::string("not a local unpublished race") : why));
+        return false;
+    }
+    if (!InstallContinuousRespawnHooks()) {
+        hostlog::Warn("race: ContinuousRespawn refused: the game's restart events aren't as measured");
+        return false;
+    }
+    if (!state.owners.empty() && state.generation == game::Generation() && state.track == gTrack.key) {
+        state.owners.insert(owner);
+        return true;
+    }
+    if (state.generation != game::Generation() || state.track != gTrack.key) state = {};
+    std::array<uint8_t, 96> start{};
+    if (!ReadRespawnTransform(&start)) {
+        hostlog::Warn("race: ContinuousRespawn refused: the course start isn't available");
+        return false;
+    }
+    state.generation = game::Generation();
+    state.track = gTrack.key;
+    state.ball = eng::MakeWeak(PlayedBall());
+    state.start = start;
+    state.haveStart = true;
+    state.physicalStartSaved = gActive && CurrentCheckpoint() < 0;
+    state.owners.insert(owner);
+    hostlog::Info("race: continuous respawn on for plugin " + std::to_string(owner));
+    return true;
+}
+
+void RemoveOwner(int owner) {
+    gContinuousRespawn.owners.erase(owner);
+    if (gContinuousRespawn.owners.empty()) gContinuousRespawn = {};
 }
 
 bool SetBallVelocity(double x, double y, double z) {

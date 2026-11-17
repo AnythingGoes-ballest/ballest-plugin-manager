@@ -31,6 +31,7 @@
 #include "splitref.hpp"
 #include "log.hpp"
 #include "registry.hpp"
+#include "race.hpp"
 #include "settings.hpp"
 #include "ui.hpp"
 
@@ -497,6 +498,7 @@ void Release(size_t i) {
     game::RequestCursor(static_cast<int>(i), false);
     leaderboard::RemoveOwner(static_cast<int>(i));
     editor::RemoveOwner(static_cast<int>(i));
+    race::RemoveOwner(static_cast<int>(i));
     createpage::RemoveOwner(static_cast<int>(i));
     together::PluginStopped(static_cast<int>(i));
     draw::RemoveOwner(static_cast<int>(i));

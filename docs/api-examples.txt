@@ -1477,6 +1477,17 @@ sets it back to -1.
 int cp = Race::CurrentCheckpoint();
 cpText.text = cp < 0 ? "start" : "checkpoint " + (cp + 1);
 
+== Race::ContinuousRespawn
+On the player's own unpublished map raced with `Tracks::OpenLocal`, makes restart, R/checkpoint-respawn and kill-zone
+events return the same ball to the course start or current checkpoint without starting a new attempt or resetting the
+race clock. The moved run is marked as touched and cannot be submitted to a leaderboard. The option belongs to the
+calling plugin and the current map: it turns off when passed false, when the plugin stops, or when the map changes.
+Enabling returns false anywhere else, or when the game's measured restart events aren't available. Enable it after
+the local map has loaded and before the race begins, so the course start is captured before any checkpoint.
+--
+if (!Race::IsActive())
+    Race::ContinuousRespawn();
+
 == Race::RunId
 The run the player is on: a new number for every new run (a restart), the same through checkpoint respawns; -1 off a
 track. The ball also gets a new one when a race starts after the pre-race screen, so count while `IsActive()`.

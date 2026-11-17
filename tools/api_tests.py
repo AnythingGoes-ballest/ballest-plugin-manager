@@ -105,7 +105,7 @@ def main():
     # The project's rule: race tests only on its own test map (the workshop map "stasis"), never an official track or
     # someone else's map (2026-10-03: a test teleport on an official track reached the real leaderboard).
     ap.add_argument("--track", default="workshop:3805348161",
-                    help="the track for the track and race phases: workshop:<id> or an official level (default: the test map)")
+                    help="the track for track/race phases: workshop:<id>, local:<file>, or an official level (default: test map)")
     ap.add_argument("--workshop", default="3805348161", help="the workshop track for the workshop phase (default: the test map)")
     ap.add_argument("--strict", action="store_true", help="exit 1 if any API is untested")
     ap.add_argument("--timeout", type=int, default=1500, help="seconds for the whole run")
