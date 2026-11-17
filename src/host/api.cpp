@@ -1864,6 +1864,14 @@ bool TracksOpenLocal(const std::string& file) {
     return tracks::OpenLocal(file);
 }
 std::string TracksLocalFolder() { return tracks::LocalMapsFolder(); }
+std::string TracksCreateTemporaryMap(const std::string& key, const std::string& mapJson) {
+    plugins::GameWork work;
+    return tracks::CreateTemporaryMap(plugins::Current(), plugins::CurrentId(), key, mapJson);
+}
+bool TracksRemoveTemporaryMap(const std::string& file) {
+    plugins::GameWork work;
+    return tracks::RemoveTemporaryMap(plugins::Current(), file);
+}
 int TracksInstallLocalMap(const std::string& file) {
     const std::wstring path = OwnFile(file);
     if (path.empty()) return -1;
@@ -2112,6 +2120,8 @@ void RegisterGhosts() {
     Global("int InstallLocalMap(const string &in)", asFUNCTION(TracksInstallLocalMap));
     Global("int InstallLocalMapAs(const string &in file, const string &in target)", asFUNCTION(TracksInstallLocalMapAs));
     Global("string LocalFolder()", asFUNCTION(TracksLocalFolder));
+    Global("string CreateTemporaryMap(const string &in key, const string &in mapJson)", asFUNCTION(TracksCreateTemporaryMap));
+    Global("bool RemoveTemporaryMap(const string &in file)", asFUNCTION(TracksRemoveTemporaryMap));
     Global("bool OpenLocalList(const array<string>@, int)", asFUNCTION(TracksOpenLocalList));
     e->SetDefaultNamespace("Draw");
     Global("int Tube(const array<double>@ path, double radius, float r, float g, float b, bool glow = false, float opacity = 1)", asFUNCTION(DrawTube));

@@ -3266,6 +3266,25 @@ void RegisterLocalMapsNetSources()
                            Is(!listed && !badIndex, "Tracks::OpenLocalList of missing maps / a bad index answered true")};
         return All(c);
     });
+    Add("core", "Tracks temporary maps are plugin-owned", "Tracks::CreateTemporaryMap,Tracks::RemoveTemporaryMap", function() {
+        string local = Plugins::ReadFile("apitest_as.balledit");
+        string published = Plugins::ReadFile("apitestpub_as.balledit");
+        string first = Tracks::CreateTemporaryMap("api test first", local);
+        string same = Tracks::CreateTemporaryMap("api test first", local);
+        string second = Tracks::CreateTemporaryMap("api test second", local);
+        string malformed = Tracks::CreateTemporaryMap("api test malformed", "{}");
+        string refusedPublished = Tracks::CreateTemporaryMap("api test published", published);
+        bool notOwned = Tracks::RemoveTemporaryMap("Map_LevelEditorMain&PluginTemp_000000000000000000000000.balledit");
+        bool removedFirst = Tracks::RemoveTemporaryMap(first);
+        bool removedAgain = Tracks::RemoveTemporaryMap(first);
+        bool removedSecond = Tracks::RemoveTemporaryMap(second);
+        array<string> c = {Is(first != "" && same == first && second != "" && second != first,
+                              "temporary map names: '" + first + "', '" + same + "', '" + second + "'"),
+                           Is(malformed == "" && refusedPublished == "", "temporary maps accepted malformed or published JSON"),
+                           Is(!notOwned, "Tracks::RemoveTemporaryMap removed an unowned name"),
+                           Is(removedFirst && !removedAgain && removedSecond, "temporary map removal did not enforce ownership")};
+        return All(c);
+    });
     Add("core", "Race local records and ball velocity off a map", "Race::LocalRecordTime,Race::ClearLocalRecord,Race::SuppressLocalRecords,Race::RunTainted,Race::BallVelocity,Race::AddBallVelocity", function() {
         string why;
         bool tainted = Race::RunTainted(why);
