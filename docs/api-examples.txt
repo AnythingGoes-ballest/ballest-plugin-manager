@@ -2148,6 +2148,64 @@ up and down, Shift for speed).
 --
 Replay::SetCameraMode(Replay::Follow3D);
 
+== Replay::PrepareGhosts
+Prepares one shared playback from two to four recorded runs. `names` and `recordings` (the JSON returned by
+`Runs::Replay`) must have the same length. Only the calling plugin can use or stop the prepared playback. Whether a
+run finished or is a DNF is a rule for the plugin to keep; the replay system only plays the supplied recording.
+
+This function only prepares native ghosts. The plugin owns its camera, HUD and rules, and should call
+`Replay::StopGhosts()` before leaving the presentation.
+--
+array<string> names = {"Ada", "Ben"};
+array<string> recordings = {adaReplay, benReplay};
+if (!Replay::PrepareGhosts(names, recordings))
+    Log::Error(Replay::GhostError());
+
+== Replay::GhostsReady
+Whether the game has parsed every prepared recording and the group can start.
+--
+if (Replay::GhostsReady())
+    Replay::StartGhosts();
+
+== Replay::StartGhosts
+Starts every prepared ghost together at time zero. Returns false until all ghosts are ready.
+--
+if (!Replay::StartGhosts())
+    Log::Error(Replay::GhostError());
+
+== Replay::StopGhosts
+Stops and removes the calling plugin's prepared ghost playback.
+--
+Replay::StopGhosts();
+
+== Replay::GhostTime
+The shared playback clock in seconds, or zero before playback starts.
+--
+timeText.text = FormatTime(Replay::GhostTime());
+
+== Replay::GhostCount
+The number of prepared ghosts owned by this plugin, or zero when it has none.
+--
+for (int i = 0; i < Replay::GhostCount(); i++)
+    Log::Info(Replay::GhostName(i));
+
+== Replay::GhostName
+The supplied name of a prepared ghost, or an empty string for an invalid index.
+--
+nameText.text = Replay::GhostName(player);
+
+== Replay::GhostDuration
+The recording duration in seconds, or `-1` for an invalid index. A plugin can compare this with `GhostTime` to
+reveal a finisher; it should keep its own DNF state.
+--
+double until = Replay::GhostDuration(player);
+
+== Replay::GhostError
+The last error from this plugin's ghost playback, or an empty string when there is none.
+--
+if (Replay::GhostError() != "")
+    Log::Warn(Replay::GhostError());
+
 @@ Cosmetics
 Custom balls, hats and goal explosions (the Customize page's **bfx**). Each one gets a tile in a **custom** section at
 the bottom of its tab, and choosing it works like choosing one of the game's. See the

@@ -53,6 +53,8 @@ std::string DebugReopenAs(const std::string& localId);
 // replay needs a session whose local player is that player: OpenAsLocal closes the session and opens one so (core
 // identity of the level, ghosts shown). CloseSession closes it (OpenSession then opens the normal one again).
 bool OpenAsLocal(const std::string& localId, std::string* error);
+bool StartPlayback(double seconds, std::string* error);
+double PlaybackTime();
 void CloseSession();
 // The player's own saved best into the open session, by the game's own function (as its session set-up does).
 bool LoadOwnBest();

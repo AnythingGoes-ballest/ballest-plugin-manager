@@ -2153,6 +2153,22 @@ void RegisterGhosts() {
            asFUNCTION(CameraPickOn));
 }
 
+bool ReplayPrepareGhosts(const CScriptArray* names, const CScriptArray* recordings) {
+    plugins::GameWork work;
+    return replay::PrepareGhosts(plugins::Current(), VectorOf<std::string>(names), VectorOf<std::string>(recordings));
+}
+bool ReplayGhostsReady() { return replay::GhostsReady(plugins::Current()); }
+bool ReplayStartGhosts() {
+    plugins::GameWork work;
+    return replay::StartGhosts(plugins::Current());
+}
+void ReplayStopGhosts() { replay::StopGhosts(plugins::Current()); }
+double ReplayGhostTime() { return replay::GhostTime(plugins::Current()); }
+int ReplayGhostCount() { return replay::GhostCount(plugins::Current()); }
+std::string ReplayGhostName(int index) { return replay::GhostName(plugins::Current(), index); }
+double ReplayGhostDuration(int index) { return replay::GhostDuration(plugins::Current(), index); }
+std::string ReplayGhostError() { return replay::GhostError(plugins::Current()); }
+
 void RegisterReplay() {
     e->SetDefaultNamespace("Replay");
     Check(e->RegisterEnum("Camera"), "Replay::Camera");
@@ -2170,6 +2186,15 @@ void RegisterReplay() {
     Global("void SetCameraDistance(double)", asFUNCTION(replay::SetCameraDistance));
     Global("bool SeeThrough()", asFUNCTION(replay::SeeThrough));
     Global("void SetSeeThrough(bool)", asFUNCTION(replay::SetSeeThrough));
+    Global("bool PrepareGhosts(const array<string> &in names, const array<string> &in recordings)", asFUNCTION(ReplayPrepareGhosts));
+    Global("bool GhostsReady()", asFUNCTION(ReplayGhostsReady));
+    Global("bool StartGhosts()", asFUNCTION(ReplayStartGhosts));
+    Global("void StopGhosts()", asFUNCTION(ReplayStopGhosts));
+    Global("double GhostTime()", asFUNCTION(ReplayGhostTime));
+    Global("int GhostCount()", asFUNCTION(ReplayGhostCount));
+    Global("string GhostName(int)", asFUNCTION(ReplayGhostName));
+    Global("double GhostDuration(int)", asFUNCTION(ReplayGhostDuration));
+    Global("string GhostError()", asFUNCTION(ReplayGhostError));
 }
 
 }  // namespace

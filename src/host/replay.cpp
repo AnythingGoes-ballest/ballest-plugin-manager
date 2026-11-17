@@ -4,12 +4,16 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <vector>
 
 #include "engine.hpp"
 #include "game.hpp"
+#include "ghostdata.hpp"
 #include "input.hpp"
 #include "log.hpp"
 #include "manager.hpp"
+#include "nativeghost.hpp"
 
 using eng::Obj;
 using eng::Params;
@@ -41,6 +45,36 @@ POINT gLookAnchor{};
 
 bool gSimulated = false;
 double gSimTime = 0, gSimLength = 30;
+
+struct GroupGhost {
+    std::string id, name;
+    double duration = -1;
+};
+struct GhostGroup {
+    int owner = -1, generation = -1;
+    bool prepared = false, started = false;
+    std::vector<GroupGhost> ghosts;
+};
+GhostGroup gGroup;
+std::map<int, std::string> gGroupErrors;
+
+void ClearGroup(bool closeSession) {
+    if (closeSession && gGroup.prepared && gGroup.generation == game::Generation()) nativeghost::CloseSession();
+    gGroup = {};
+}
+
+bool GroupError(int owner, const std::string& message) {
+    if (owner >= 0) gGroupErrors[owner] = message;
+    hostlog::Warn("multi-ghost replay: " + message);
+    return false;
+}
+
+bool OwnsGroup(int owner) { return owner >= 0 && gGroup.owner == owner && gGroup.prepared; }
+
+bool ValidName(const std::string& name) {
+    return !name.empty() && name.size() <= 64 &&
+           std::none_of(name.begin(), name.end(), [](unsigned char c) { return c < 0x20 || c == 0x7f; });
+}
 
 // --- game objects --------------------------------------------------------------------------------------------------
 Obj ViewTarget() { return eng::Call(game::PlayerController(), "GetViewTarget").ReturnObj(); }
@@ -448,8 +482,14 @@ void Frame(float dt) {
         gActive = false;
         gCameraFor = -1;
         gLength = -1;
+        if (gGroup.prepared && gGroup.generation != game::Generation()) ClearGroup(false);
     }
     if (!game::PlayerController()) return;
+
+    // The game's label canvas refreshes names from its own records. Keep the names supplied for this group on the
+    // corresponding tags, as the existing single-replay path does for the watched ghost.
+    if (gGroup.started && gGroup.generation == game::Generation())
+        for (const GroupGhost& ghost : gGroup.ghosts) nativeghost::NameWatchedTag(ghost.id, ghost.name);
 
     // A replay is on while the game's replay camera follows a ghost; our free camera may be the view target.
     Obj viewTarget = ViewTarget();
@@ -534,6 +574,87 @@ void SetSeeThrough(bool on) {
     gSeeThrough = on;
     hostlog::Info(on ? "replay see-through on" : "replay see-through off");
 }
+
+bool PrepareGhosts(int owner, const std::vector<std::string>& names, const std::vector<std::string>& recordings) {
+    if (owner < 0) return false;
+    if (gGroup.prepared && gGroup.owner != owner) return GroupError(owner, "another plugin owns the ghost replay");
+    if (names.size() < 2 || names.size() > 4 || names.size() != recordings.size())
+        return GroupError(owner, "two to four equally-sized names and recordings are required");
+
+    std::vector<GroupGhost> ghosts;
+    ghosts.reserve(names.size());
+    size_t bytes = 0;
+    for (size_t i = 0; i < names.size(); ++i) {
+        bytes += recordings[i].size();
+        ghostdata::Replay parsed;
+        std::string error;
+        if (!ValidName(names[i])) return GroupError(owner, "a ghost name is empty, too long or contains a control character");
+        if (recordings[i].size() > 1024 * 1024 || bytes > 4 * 1024 * 1024 ||
+            !ghostdata::Parse(recordings[i], &parsed, &error) || parsed.samples.size() < 2 || parsed.time <= 0 || parsed.time > 3600)
+            return GroupError(owner, "invalid ghost recording " + std::to_string(i + 1) + (error.empty() ? "" : ": " + error));
+        ghosts.push_back({"765611989999990" + std::to_string(10 + i), names[i], parsed.time});
+    }
+
+    if (gGroup.prepared) ClearGroup(true);
+    gGroup.owner = owner;
+    gGroup.generation = game::Generation();
+    gGroup.ghosts = std::move(ghosts);
+    gGroupErrors.erase(owner);
+
+    std::string error;
+    // The session's local identity is deliberately not one of the loaded ghosts: no participant is treated as the
+    // signed-in player's own record, and all participant labels are handled alike by Frame.
+    if (!nativeghost::OpenAsLocal("76561198999999000", &error)) {
+        ClearGroup(false);
+        return GroupError(owner, "could not open the native ghost session: " + error);
+    }
+    for (size_t i = 0; i < recordings.size(); ++i) {
+        const GroupGhost& ghost = gGroup.ghosts[i];
+        if (!nativeghost::Load(ghost.id, recordings[i], &error) || !nativeghost::Select(ghost.id, 1, &error)) {
+            ClearGroup(true);
+            return GroupError(owner, "could not load ghost " + std::to_string(i + 1) + ": " + error);
+        }
+    }
+    gGroup.prepared = true;
+    hostlog::Info("multi-ghost replay: prepared " + std::to_string(gGroup.ghosts.size()) + " recordings");
+    return true;
+}
+
+bool GhostsReady(int owner) {
+    return OwnsGroup(owner) && std::all_of(gGroup.ghosts.begin(), gGroup.ghosts.end(), [](const GroupGhost& ghost) {
+        return nativeghost::Ready(ghost.id);
+    });
+}
+
+bool StartGhosts(int owner) {
+    if (!OwnsGroup(owner)) return GroupError(owner, "this plugin has no prepared ghost replay");
+    if (!GhostsReady(owner)) return GroupError(owner, "the ghost recordings are not ready");
+    std::string error;
+    if (!nativeghost::StartPlayback(0, &error)) return GroupError(owner, "playback could not start: " + error);
+    gGroup.started = true;
+    gGroupErrors.erase(owner);
+    hostlog::Info("multi-ghost replay: playback started");
+    return true;
+}
+
+void StopGhosts(int owner) {
+    if (OwnsGroup(owner)) ClearGroup(true);
+    gGroupErrors.erase(owner);
+}
+
+double GhostTime(int owner) { return OwnsGroup(owner) && gGroup.started ? nativeghost::PlaybackTime() : 0; }
+int GhostCount(int owner) { return OwnsGroup(owner) ? static_cast<int>(gGroup.ghosts.size()) : 0; }
+std::string GhostName(int owner, int index) {
+    return OwnsGroup(owner) && index >= 0 && index < static_cast<int>(gGroup.ghosts.size()) ? gGroup.ghosts[static_cast<size_t>(index)].name : "";
+}
+double GhostDuration(int owner, int index) {
+    return OwnsGroup(owner) && index >= 0 && index < static_cast<int>(gGroup.ghosts.size()) ? gGroup.ghosts[static_cast<size_t>(index)].duration : -1;
+}
+std::string GhostError(int owner) {
+    const auto found = gGroupErrors.find(owner);
+    return found == gGroupErrors.end() ? "" : found->second;
+}
+void RemoveOwner(int owner) { StopGhosts(owner); }
 
 void Simulate(bool on, double length) {
     gSimulated = on;

@@ -3,6 +3,7 @@
 // BP_FreeCam_C and its AC_GhostFollowCam component for following. Game thread only.
 #pragma once
 #include <string>
+#include <vector>
 
 namespace replay {
 
@@ -24,6 +25,20 @@ void SetCameraDistance(double units);
 // Pieces between the camera and the ball turn to glass, and the camera is no longer pulled in by them.
 bool SeeThrough();
 void SetSeeThrough(bool on);
+
+// A plugin-owned replay made from two to four recordings. This only owns the native ghost session and playback;
+// camera, HUD and game-mode rules remain the plugin's. All functions are scoped to the plugin that prepared the
+// ghosts.
+bool PrepareGhosts(int owner, const std::vector<std::string>& names, const std::vector<std::string>& recordings);
+bool GhostsReady(int owner);
+bool StartGhosts(int owner);
+void StopGhosts(int owner);
+double GhostTime(int owner);
+int GhostCount(int owner);
+std::string GhostName(int owner, int index);
+double GhostDuration(int owner, int index);         // recording duration, or -1 for an invalid index
+std::string GhostError(int owner);
+void RemoveOwner(int owner);
 
 // Test hook: a simulated replay (its own clock at 1x, restarting at the end) behind the same functions, for
 // testing replay plugins when no real replay can be started.
