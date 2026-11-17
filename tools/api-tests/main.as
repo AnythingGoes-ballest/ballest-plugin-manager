@@ -462,6 +462,27 @@ void RegisterCore()
                            Near(Math::floor(-2.5), -3, "Math::floor(-2.5)"), Near(Math::ceil(2.1), 3, "Math::ceil(2.1)")};
         return All(c);
     });
+    Add("core", "Data pack and digest", "Data::Pack,Data::Unpack,Data::Digest", function() {
+        string value = "";
+        for (int i = 0; i < 200; i++)
+            value += "round map snapshot | player placements | replay data\n";
+        string packed = Data::Pack(value);
+        string damaged = packed;
+        if (damaged.length() > 12)
+            damaged[damaged.length() / 2] = damaged[damaged.length() / 2] == 65 ? 66 : 65;
+        string oversized = "x";
+        for (int i = 0; i < 22; i++)
+            oversized += oversized;
+        array<string> c = {Is(packed != "" && packed.findFirst("=") < 0, "Data::Pack returned invalid text"),
+                           Is(Data::Unpack(packed) == value, "Data::Unpack did not restore the text"),
+                           Is(Data::Unpack(damaged) != value, "Data::Unpack accepted damaged data as the original"),
+                           Is(Data::Unpack("not base64!") == "", "Data::Unpack accepted malformed text"),
+                           Is(Data::Pack("") == "", "Data::Pack accepted an empty input"),
+                           Is(Data::Pack(oversized) == "", "Data::Pack accepted more than 2 MB"),
+                           Is(Data::Digest("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "Data::Digest wrong SHA-256"),
+                           Is(Data::Digest(oversized) == "", "Data::Digest accepted more than 2 MB")};
+        return All(c);
+    });
 
     // Create Together outside a session: what this game is, the address and map checks (a player's game joins only Steam
     // addresses, a test copy only loopback ones; only saved maps open), arming the next editor as a listen server, and a

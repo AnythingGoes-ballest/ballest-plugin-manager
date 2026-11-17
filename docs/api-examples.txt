@@ -2266,6 +2266,30 @@ The extra worn in a slot, or `""` for none. It changes when the player picks a t
 --
 Storage::Set("arms", Cosmetics::EquippedExtra("arms"));
 
+@@ Data
+Small, bounded helpers for sending data through text-only transports. Inputs are limited to 2 MB. Invalid or
+oversized inputs return an empty string.
+
+== Data::Pack
+Compresses a non-empty string with Windows XPRESS_HUFF and returns unpadded base64 text. The result can be split
+into messages and reconstructed with `Data::Unpack` without treating it as trusted data.
+--
+string packed = Data::Pack(snapshot);
+if (packed == "")
+    Log::Warn("snapshot could not be packed");
+
+== Data::Unpack
+Restores text made by `Data::Pack`, or returns an empty string if the input is malformed, truncated or expands past
+the 2 MB limit.
+--
+string snapshot = Data::Unpack(packed);
+
+== Data::Digest
+Returns the lowercase SHA-256 of a string, or an empty string for an input larger than 2 MB or when the Windows hash
+provider is unavailable. A digest detects accidental or malicious changes; it is not a signature or a secret.
+--
+string hash = Data::Digest(snapshot);
+
 @@ Leaderboard
 The leaderboard on the right while you're in a map.
 

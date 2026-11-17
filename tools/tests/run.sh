@@ -3,6 +3,7 @@
 #   asrun          builds tools/tests/asrun (runs a plugin's script tests without the game: asrun <plugin> <test.as>)
 #   ascheck        compiles every plugin folder given (default: the bundled ones) against the host's real API
 #   models_test    parses model texts: material statements (game materials, set, animate, plugin assets), rigs
+#   codec_test     round-trips bounded packed text and verifies its digest and refusal cases
 #   modcontainer_test  the gate on plugin-shipped cooked containers (set MOD_UTOC and MOD_NAME, else skipped)
 #   release_files_test the registry's release_files rules (review_guard.py, registry.py)
 #   ghostdata_test parses the ghost replays the game cached and checks their routes against a reference
@@ -18,6 +19,9 @@ $CXX -std=c++20 -O1 -isystem $AS/include -isystem $AS/add_on -c tools/tests/asch
 $CXX -static -o build/ascheck.exe build/ascheck.o $OBJS build/as/*.o -lkernel32 -luser32 -lws2_32 -lshell32 -lole32 -luuid -lbcrypt
 $CXX -std=c++20 -O1 -isystem $AS/include -isystem $AS/add_on -c tools/tests/asrun.cpp -o build/asrun.o
 $CXX -static -o build/asrun.exe build/asrun.o $OBJS build/as/*.o -lkernel32 -luser32 -lws2_32 -lshell32 -lole32 -luuid -lbcrypt
+$CXX -std=c++20 -O1 -isystem $AS/include -isystem $AS/add_on -c tools/tests/codec_test.cpp -o build/codec_test.o
+$CXX -static -o build/codec_test.exe build/codec_test.o $OBJS build/as/*.o -lkernel32 -luser32 -lws2_32 -lshell32 -lole32 -luuid -lbcrypt
+build/codec_test.exe
 $CXX -std=c++20 -O1 -isystem $AS/include -isystem $AS/add_on -c tools/tests/models_test.cpp -o build/models_test.o
 $CXX -static -o build/models_test.exe build/models_test.o $OBJS build/as/*.o -lkernel32 -luser32 -lws2_32 -lshell32 -lole32 -luuid -lbcrypt
 build/models_test.exe
