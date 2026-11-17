@@ -3981,3 +3981,14 @@ for editor tabs. One tab per window. Requires host 0.34.0.
 UI::Window@ page = UI::CreateWindow();
 page.DockInCreatePage("create together");
 page.AddText("create together", 30);
+
+== Together::SendPluginMessage Together::NextPluginMessage
+Short messages over the current Together lobby, scoped to the calling plugin id. The sender id comes from the lobby
+transport, never the payload. Payloads are 1-768 bytes without NUL or line breaks, limited to eight per second per
+plugin and sender; an inbox keeps the newest 64. Lobby changes and plugin unload clear queued messages. These calls
+copy their traffic from Together's lobby inbox and do not consume its admission or shared-editor messages.
+--
+Together::SendPluginMessage("ready");
+string sender, message;
+while (Together::NextPluginMessage(sender, message))
+    Log::Info(sender + ": " + message);
