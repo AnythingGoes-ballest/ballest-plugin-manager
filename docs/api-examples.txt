@@ -2811,7 +2811,8 @@ Creates an unpublished editor map from `mapJson` in `Tracks::LocalFolder` and re
 name the same file. The JSON must contain a non-empty `levelDisplayName` and a non-positive
 `levelPublishedFileId`. The file belongs only to the calling plugin. It is removed when the plugin stops or, after an
 unclean shutdown, from the main menu on the next run. If the player edits the file, it is kept and no longer treated
-as temporary. Use the returned name with `Tracks::OpenLocal`, or append it to `Tracks::LocalFolder` when an API needs
+as temporary. Calling this again with the same key replaces an unchanged file with the new content; a player-edited
+file is never overwritten. Use the returned name with `Tracks::OpenLocal`, or append it to `Tracks::LocalFolder` when an API needs
 the full path.
 --
 string file = Tracks::CreateTemporaryMap("round 4", roundMapJson);

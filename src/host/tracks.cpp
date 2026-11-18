@@ -458,6 +458,17 @@ std::wstring TemporaryMapPath(const std::string& file) {
     return eng::Widen(dir + file);
 }
 
+bool WriteTemporaryMapFile(const std::wstring& path, const std::string& text, DWORD disposition) {
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, disposition, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    DWORD written = 0;
+    const bool wrote = WriteFile(h, text.data(), static_cast<DWORD>(text.size()), &written, nullptr) &&
+                       written == text.size() && FlushFileBuffers(h);
+    CloseHandle(h);
+    if (!wrote && disposition == CREATE_NEW) DeleteFileW(path.c_str());
+    return wrote;
+}
+
 bool EraseTemporaryMap(size_t index, bool warnIfEdited) {
     const TemporaryMap map = gTemporaryMaps[index];
     const std::wstring path = TemporaryMapPath(map.file);
@@ -674,27 +685,46 @@ std::string CreateTemporaryMap(int owner, const std::string& plugin, const std::
         if (gTemporaryMaps[i].file != file) continue;
         if (gTemporaryMaps[i].plugin != plugin) return "";
         const std::string existing = ReadSmallFile(path);
-        if (!existing.empty() && net::Sha256(existing) == gTemporaryMaps[i].hash && gTemporaryMaps[i].hash == contentHash) {
+        if (!existing.empty() && net::Sha256(existing) == gTemporaryMaps[i].hash) {
+            const int oldOwner = gTemporaryMaps[i].owner;
             gTemporaryMaps[i].owner = owner;
+            if (gTemporaryMaps[i].hash == contentHash) return file;
+            const std::string oldHash = gTemporaryMaps[i].hash;
+            if (!WriteTemporaryMapFile(path, mapJson, CREATE_ALWAYS)) return "";
+            gTemporaryMaps[i].hash = contentHash;
+            gLocalData.erase(eng::Narrow(path.c_str(), static_cast<int>(path.size())));
+            if (!SaveTemporaryMaps()) {
+                WriteTemporaryMapFile(path, existing, CREATE_ALWAYS);
+                gTemporaryMaps[i].owner = oldOwner;
+                gTemporaryMaps[i].hash = oldHash;
+                SaveTemporaryMaps();
+                return "";
+            }
+            hostlog::Info("tracks: temporary map updated for " + plugin + ": " + file);
             return file;
         }
         const DWORD attributes = GetFileAttributesW(path.c_str());
-        gTemporaryMaps.erase(gTemporaryMaps.begin() + static_cast<std::ptrdiff_t>(i));
-        SaveTemporaryMaps();
-        if (attributes != INVALID_FILE_ATTRIBUTES) return "";  // never overwrite an edited owned file
-        break;                                              // its old ledger entry survived but its file did not
+        if (attributes != INVALID_FILE_ATTRIBUTES) {          // never overwrite an edited owned file
+            gTemporaryMaps.erase(gTemporaryMaps.begin() + static_cast<std::ptrdiff_t>(i));
+            SaveTemporaryMaps();
+            return "";
+        }
+        const int oldOwner = gTemporaryMaps[i].owner;
+        const std::string oldHash = gTemporaryMaps[i].hash;
+        if (!WriteTemporaryMapFile(path, mapJson, CREATE_NEW)) return "";
+        gTemporaryMaps[i].owner = owner;
+        gTemporaryMaps[i].hash = contentHash;
+        if (!SaveTemporaryMaps()) {
+            DeleteFileW(path.c_str());
+            gTemporaryMaps[i].owner = oldOwner;
+            gTemporaryMaps[i].hash = oldHash;
+            return "";
+        }
+        hostlog::Info("tracks: temporary map recreated for " + plugin + ": " + file);
+        return file;
     }
 
-    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return "";               // an untracked player's file is never overwritten
-    DWORD written = 0;
-    const bool wrote = WriteFile(h, mapJson.data(), static_cast<DWORD>(mapJson.size()), &written, nullptr) &&
-                       written == mapJson.size() && FlushFileBuffers(h);
-    CloseHandle(h);
-    if (!wrote) {
-        DeleteFileW(path.c_str());
-        return "";
-    }
+    if (!WriteTemporaryMapFile(path, mapJson, CREATE_NEW)) return "";  // an untracked player's file is never overwritten
     gTemporaryMaps.push_back({owner, plugin, file, contentHash});
     if (!SaveTemporaryMaps()) {
         gTemporaryMaps.pop_back();

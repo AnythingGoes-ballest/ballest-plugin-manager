@@ -3271,6 +3271,8 @@ void RegisterLocalMapsNetSources()
         string published = Plugins::ReadFile("apitestpub_as.balledit");
         string first = Tracks::CreateTemporaryMap("api test first", local);
         string same = Tracks::CreateTemporaryMap("api test first", local);
+        string updated = Tracks::CreateTemporaryMap("api test first", local + " ");
+        string updatedAgain = Tracks::CreateTemporaryMap("api test first", local + " ");
         string second = Tracks::CreateTemporaryMap("api test second", local);
         string malformed = Tracks::CreateTemporaryMap("api test malformed", "{}");
         string refusedPublished = Tracks::CreateTemporaryMap("api test published", published);
@@ -3278,8 +3280,8 @@ void RegisterLocalMapsNetSources()
         bool removedFirst = Tracks::RemoveTemporaryMap(first);
         bool removedAgain = Tracks::RemoveTemporaryMap(first);
         bool removedSecond = Tracks::RemoveTemporaryMap(second);
-        array<string> c = {Is(first != "" && same == first && second != "" && second != first,
-                              "temporary map names: '" + first + "', '" + same + "', '" + second + "'"),
+        array<string> c = {Is(first != "" && same == first && updated == first && updatedAgain == first && second != "" && second != first,
+                              "temporary map names: '" + first + "', '" + same + "', '" + updated + "', '" + updatedAgain + "', '" + second + "'"),
                            Is(malformed == "" && refusedPublished == "", "temporary maps accepted malformed or published JSON"),
                            Is(!notOwned, "Tracks::RemoveTemporaryMap removed an unowned name"),
                            Is(removedFirst && !removedAgain && removedSecond, "temporary map removal did not enforce ownership")};
