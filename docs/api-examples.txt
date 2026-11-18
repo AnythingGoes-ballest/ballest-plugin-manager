@@ -2153,7 +2153,8 @@ Prepares one shared playback from two to four recorded runs. `names` and `record
 `Runs::Replay`) must have the same length. Only the calling plugin can use or stop the prepared playback. Whether a
 run finished or is a DNF is a rule for the plugin to keep; the replay system only plays the supplied recording.
 
-This function only prepares native ghosts. The plugin owns its camera, HUD and rules, and should call
+This function only prepares native ghosts. It is refused while the leaderboard's replay mode is active, and the
+leaderboard will not take over a prepared plugin group. The plugin owns its camera, HUD and rules, and should call
 `Replay::StopGhosts()` before leaving the presentation.
 --
 array<string> names = {"Ada", "Ben"};
@@ -2174,7 +2175,8 @@ if (!Replay::StartGhosts())
     Log::Error(Replay::GhostError());
 
 == Replay::StopGhosts
-Stops and removes the calling plugin's prepared ghost playback.
+Stops and removes the calling plugin's prepared ghost playback, then restores the race's normal ghost session,
+including the player's personal-best ghost. The same cleanup happens when the plugin stops.
 --
 Replay::StopGhosts();
 

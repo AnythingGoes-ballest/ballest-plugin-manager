@@ -39,6 +39,7 @@ std::string GhostName(int owner, int index);
 double GhostDuration(int owner, int index);         // recording duration, or -1 for an invalid index
 std::string GhostError(int owner);
 void RemoveOwner(int owner);
+bool GhostsPrepared();                              // internal: the native ghost session belongs to a plugin
 
 // Test hook: a simulated replay (its own clock at 1x, restarting at the end) behind the same functions, for
 // testing replay plugins when no real replay can be started.

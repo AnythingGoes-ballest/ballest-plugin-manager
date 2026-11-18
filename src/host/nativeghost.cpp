@@ -376,6 +376,14 @@ bool HasReplay(const std::string& steamId) {
     return key && Record(sub, key, &rec) && rec[0x91];
 }
 
+double ReplayDuration(const std::string& steamId) {
+    Obj sub = Subsystem();
+    if (!CurrentSession(sub)) return -1;
+    const uint8_t* key = KeyOf(sub, steamId, nullptr);
+    std::array<uint8_t, kRecordSize> rec{};
+    return key && Record(sub, key, &rec) && rec[0x91] ? *reinterpret_cast<const double*>(rec.data() + At(sub).duration) : -1;
+}
+
 bool Ready(const std::string& steamId) {
     Obj sub = Subsystem();
     if (!CurrentSession(sub)) return false;

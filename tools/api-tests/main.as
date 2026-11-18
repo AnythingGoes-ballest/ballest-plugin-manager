@@ -2721,10 +2721,23 @@ void RegisterRace()
             return "the recorded run is not ghost JSON";
         if (step == 0)
         {
-            id1 = 2;
+            mark = Log::LineCount();
+            Console::Run("nghost");
             step = 1;
+            t0 = Host::Time();
+            return WAIT;
         }
         if (step == 1)
+        {
+            string session = LogLineSince("session:");
+            if (session == "")
+                return Elapsed() > 3 ? "the race had no ghost session before the plugin replay" : WAIT;
+            if (session.findFirst(Steam::OwnId()) < 0)
+                return "the race's ghost session had no own record before the plugin replay: " + session;
+            id1 = 2;
+            step = 2;
+        }
+        if (step == 2)
         {
             array<string> names;
             array<string> recordings;
@@ -2745,43 +2758,65 @@ void RegisterRace()
                 Replay::StopGhosts();
                 return checked;
             }
-            step = 2;
-            t0 = Host::Time();
-            return WAIT;
-        }
-        if (step == 2)
-        {
-            if (!Replay::GhostsReady())
-                return Elapsed() > 15 ? "the " + id1 + " replay ghosts did not become ready: " + Replay::GhostError() : WAIT;
-            if (!Replay::StartGhosts())
-                return "Replay::StartGhosts(" + id1 + ") failed: " + Replay::GhostError();
             step = 3;
             t0 = Host::Time();
             return WAIT;
         }
         if (step == 3)
         {
-            if (Replay::GhostTime() <= 0.2)
-                return Elapsed() > 5 ? "Replay::GhostTime did not advance for " + id1 + " ghosts: " + Replay::GhostTime() : WAIT;
-            mark = Log::LineCount();
-            Console::Run("nametags");
+            if (!Replay::GhostsReady())
+                return Elapsed() > 15 ? "the " + id1 + " replay ghosts did not become ready: " + Replay::GhostError() : WAIT;
+            if (!Replay::StartGhosts())
+                return "Replay::StartGhosts(" + id1 + ") failed: " + Replay::GhostError();
             step = 4;
             t0 = Host::Time();
             return WAIT;
         }
-        string tags = LogLineSince("nametags:");
-        if (tags == "")
-            return Elapsed() > 3 ? "the name-tag inspection did not answer" : WAIT;
-        for (int i = 0; i < id1; i++)
-            if (tags.findFirst("api ghost " + (i + 1)) < 0)
-                return "the " + id1 + "-ghost playback has the wrong names: " + tags;
-        Replay::StopGhosts();
-        if (Replay::GhostCount() != 0)
-            return "Replay::StopGhosts left " + Replay::GhostCount() + " ghosts";
+        if (step == 4)
+        {
+            if (Replay::GhostTime() <= 0.2)
+                return Elapsed() > 5 ? "Replay::GhostTime did not advance for " + id1 + " ghosts: " + Replay::GhostTime() : WAIT;
+            mark = Log::LineCount();
+            Console::Run("nametags");
+            step = 5;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (step == 5)
+        {
+            string tags = LogLineSince("nametags:");
+            if (tags == "")
+                return Elapsed() > 3 ? "the name-tag inspection did not answer" : WAIT;
+            for (int i = 0; i < id1; i++)
+                if (tags.findFirst("api ghost " + (i + 1)) < 0)
+                    return "the " + id1 + "-ghost playback has the wrong names: " + tags;
+            Replay::StopGhosts();
+            if (Replay::GhostCount() != 0)
+                return "Replay::StopGhosts left " + Replay::GhostCount() + " ghosts";
+            mark = Log::LineCount();
+            Console::Run("nghost");
+            step = 6;
+            t0 = Host::Time();
+            d1 = 0;
+            return WAIT;
+        }
+        string restored = LogLineSince("session:");
+        if (restored == "" || restored.findFirst(Steam::OwnId()) < 0)
+        {
+            if (Elapsed() > 10)
+                return "Replay::StopGhosts did not restore the race's own ghost record: " + restored;
+            if (Host::Time() - d1 > 0.5)
+            {
+                mark = Log::LineCount();
+                Console::Run("nghost");
+                d1 = Host::Time();
+            }
+            return WAIT;
+        }
         if (id1 == 4)
             return PASS;
         id1++;
-        step = 1;
+        step = 2;
         return WAIT;
     }, 75);
 

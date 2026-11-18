@@ -29,6 +29,7 @@ std::string SessionDescription();       // for tests: the session's identity and
 // session; false with `error` if the game refused it.
 bool Load(const std::string& steamId, const std::string& replayJson, std::string* error);
 bool HasReplay(const std::string& steamId);
+double ReplayDuration(const std::string& steamId); // -1 without a loaded replay
 // The game has parsed it (record LoadState Ready with a replay): AcceptReplayJson only queues the parse (measured: the
 // follow camera refuses a ghost that isn't ready, so replay mode has to wait for this).
 bool Ready(const std::string& steamId);

@@ -11,9 +11,13 @@
 #include "game.hpp"
 #include "ghostdata.hpp"
 #include "input.hpp"
+#include "leaderboard.hpp"
 #include "log.hpp"
 #include "manager.hpp"
 #include "nativeghost.hpp"
+#include "race.hpp"
+#include "runs.hpp"
+#include "steam.hpp"
 
 using eng::Obj;
 using eng::Params;
@@ -54,13 +58,27 @@ struct GhostGroup {
     int owner = -1, generation = -1;
     bool prepared = false, started = false;
     std::vector<GroupGhost> ghosts;
+    std::string ownId, ownReplay;
+    int ownVisibility = 0;
 };
 GhostGroup gGroup;
 std::map<int, std::string> gGroupErrors;
 
-void ClearGroup(bool closeSession) {
-    if (closeSession && gGroup.prepared && gGroup.generation == game::Generation()) nativeghost::CloseSession();
+void ClearGroup(bool closeSession, bool restoreRace = false) {
+    const bool onSameMap = gGroup.owner >= 0 && gGroup.generation == game::Generation();
+    const std::string ownId = gGroup.ownId, ownReplay = gGroup.ownReplay;
+    const int ownVisibility = gGroup.ownVisibility;
+    if (closeSession && onSameMap) nativeghost::CloseSession();
     gGroup = {};
+    if (restoreRace && onSameMap) {
+        leaderboard::RestoreRaceSession(true);
+        if (!ownId.empty() && !ownReplay.empty()) {
+            std::string error;
+            if (!nativeghost::Load(ownId, ownReplay, &error))
+                hostlog::Warn("multi-ghost replay: the race's previous own ghost wasn't restored: " + error);
+            else nativeghost::Select(ownId, ownVisibility, nullptr);
+        }
+    }
 }
 
 bool GroupError(int owner, const std::string& message) {
@@ -578,6 +596,7 @@ void SetSeeThrough(bool on) {
 bool PrepareGhosts(int owner, const std::vector<std::string>& names, const std::vector<std::string>& recordings) {
     if (owner < 0) return false;
     if (gGroup.prepared && gGroup.owner != owner) return GroupError(owner, "another plugin owns the ghost replay");
+    if (leaderboard::ReplayModeActive()) return GroupError(owner, "the leaderboard is in replay mode");
     if (names.size() < 2 || names.size() > 4 || names.size() != recordings.size())
         return GroupError(owner, "two to four equally-sized names and recordings are required");
 
@@ -592,7 +611,8 @@ bool PrepareGhosts(int owner, const std::vector<std::string>& names, const std::
         if (recordings[i].size() > 1024 * 1024 || bytes > 4 * 1024 * 1024 ||
             !ghostdata::Parse(recordings[i], &parsed, &error) || parsed.samples.size() < 2 || parsed.time <= 0 || parsed.time > 3600)
             return GroupError(owner, "invalid ghost recording " + std::to_string(i + 1) + (error.empty() ? "" : ": " + error));
-        ghosts.push_back({"765611989999990" + std::to_string(10 + i), names[i], parsed.time});
+        // Values 2-5 are not valid public individual Steam IDs, so these synthetic records cannot name real people.
+        ghosts.push_back({std::to_string(2 + i), names[i], parsed.time});
     }
 
     if (gGroup.prepared) ClearGroup(true);
@@ -601,17 +621,35 @@ bool PrepareGhosts(int owner, const std::vector<std::string>& names, const std::
     gGroup.ghosts = std::move(ghosts);
     gGroupErrors.erase(owner);
 
+    // OpenAsLocal replaces the race's session. Preserve an in-memory own ghost that may not have reached the save
+    // yet (for example the run that just finished): only accept the newest kept run when its track and duration
+    // match the record currently in the race's session. Saved personal bests are otherwise reloaded normally.
+    const uint64_t own = steam::OwnSteamId();
+    gGroup.ownId = own ? std::to_string(own) : std::string();
+    const double ownDuration = gGroup.ownId.empty() ? -1 : nativeghost::ReplayDuration(gGroup.ownId);
+    for (int i = 0; ownDuration > 0 && i < runs::Count(); ++i) {
+        if (runs::TrackKey(i) != race::CurrentTrack().key) continue;
+        const std::string replay = runs::ReplayText(i);
+        ghostdata::Replay parsed;
+        std::string why;
+        if (ghostdata::Parse(replay, &parsed, &why) && std::fabs(parsed.time - ownDuration) < 0.01) {
+            gGroup.ownReplay = replay;
+            gGroup.ownVisibility = nativeghost::Override(gGroup.ownId);
+            break;
+        }
+    }
+
     std::string error;
     // The session's local identity is deliberately not one of the loaded ghosts: no participant is treated as the
     // signed-in player's own record, and all participant labels are handled alike by Frame.
-    if (!nativeghost::OpenAsLocal("76561198999999000", &error)) {
-        ClearGroup(false);
+    if (!nativeghost::OpenAsLocal("1", &error)) {
+        ClearGroup(false, true);
         return GroupError(owner, "could not open the native ghost session: " + error);
     }
     for (size_t i = 0; i < recordings.size(); ++i) {
         const GroupGhost& ghost = gGroup.ghosts[i];
         if (!nativeghost::Load(ghost.id, recordings[i], &error) || !nativeghost::Select(ghost.id, 1, &error)) {
-            ClearGroup(true);
+            ClearGroup(true, true);
             return GroupError(owner, "could not load ghost " + std::to_string(i + 1) + ": " + error);
         }
     }
@@ -638,7 +676,7 @@ bool StartGhosts(int owner) {
 }
 
 void StopGhosts(int owner) {
-    if (OwnsGroup(owner)) ClearGroup(true);
+    if (OwnsGroup(owner)) ClearGroup(true, true);
     gGroupErrors.erase(owner);
 }
 
@@ -655,6 +693,8 @@ std::string GhostError(int owner) {
     return found == gGroupErrors.end() ? "" : found->second;
 }
 void RemoveOwner(int owner) { StopGhosts(owner); }
+
+bool GhostsPrepared() { return gGroup.prepared; }
 
 void Simulate(bool on, double length) {
     gSimulated = on;
