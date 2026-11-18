@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cstring>
 
 #include "net.hpp"
@@ -29,6 +30,7 @@ struct Codec {
 };
 
 constexpr char kBase64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+constexpr unsigned char kFormat = 1;
 
 std::string Encode(const std::string& bytes) {
     std::string out;
@@ -54,8 +56,9 @@ std::string Decode(const std::string& text) {
     unsigned buffer = 0;
     int bits = 0;
     for (const char c : text) {
-        const char* found = std::strchr(kBase64, c);
-        if (!found) return "";
+        if (c == '\0') return "";
+        const char* found = std::find(kBase64, kBase64 + 64, c);
+        if (found == kBase64 + 64) return "";
         buffer = (buffer << 6) | static_cast<unsigned>(found - kBase64);
         bits += 6;
         if (bits >= 8) {
@@ -63,6 +66,7 @@ std::string Decode(const std::string& text) {
             out += static_cast<char>((buffer >> bits) & 255);
         }
     }
+    if (bits && (buffer & ((1u << bits) - 1)) != 0) return "";
     return out;
 }
 
@@ -82,29 +86,33 @@ std::string Pack(const std::string& text) {
         codec.close(handle);
         return "";
     }
-    std::string bytes(count + 4, '\0');
+    std::string bytes(count + 9, '\0');
+    bytes[0] = static_cast<char>(kFormat);
     const uint32_t length = static_cast<uint32_t>(text.size());
-    std::memcpy(bytes.data(), &length, sizeof length);
-    const bool ok = codec.code(handle, const_cast<char*>(text.data()), text.size(), bytes.data() + 4, count, &count) != 0;
+    std::memcpy(bytes.data() + 1, &length, sizeof length);
+    const bool ok = codec.code(handle, const_cast<char*>(text.data()), text.size(), bytes.data() + 9, count, &count) != 0;
     codec.close(handle);
     if (!ok) return "";
-    bytes.resize(count + 4);
+    const uint32_t compressed = static_cast<uint32_t>(count);
+    std::memcpy(bytes.data() + 5, &compressed, sizeof compressed);
+    bytes.resize(count + 9);
     return Encode(bytes);
 }
 
 std::string Unpack(const std::string& packed) {
     std::string bytes = Decode(packed);
-    uint32_t length = 0;
-    if (bytes.size() < 5) return "";
-    std::memcpy(&length, bytes.data(), sizeof length);
-    if (!length || length > kMaxInput) return "";
+    uint32_t length = 0, compressed = 0;
+    if (bytes.size() < 10 || static_cast<unsigned char>(bytes[0]) != kFormat) return "";
+    std::memcpy(&length, bytes.data() + 1, sizeof length);
+    std::memcpy(&compressed, bytes.data() + 5, sizeof compressed);
+    if (!length || length > kMaxInput || !compressed || bytes.size() != static_cast<size_t>(compressed) + 9) return "";
 
     Codec codec(false);
     void* handle = nullptr;
     if (!codec.create || !codec.close || !codec.code || !codec.create(4, nullptr, &handle)) return "";  // XPRESS_HUFF
     std::string out(length, '\0');
     SIZE_T written = 0;
-    const bool ok = codec.code(handle, bytes.data() + 4, bytes.size() - 4, out.data(), length, &written) != 0;
+    const bool ok = codec.code(handle, bytes.data() + 9, compressed, out.data(), length, &written) != 0;
     codec.close(handle);
     return ok && written == length ? out : "";
 }

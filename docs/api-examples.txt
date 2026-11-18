@@ -2271,16 +2271,18 @@ Small, bounded helpers for sending data through text-only transports. Inputs are
 oversized inputs return an empty string.
 
 == Data::Pack
-Compresses a non-empty string with Windows XPRESS_HUFF and returns unpadded base64 text. The result can be split
-into messages and reconstructed with `Data::Unpack` without treating it as trusted data.
+Compresses a non-empty string with Windows XPRESS_HUFF and returns versioned, unpadded base64 text. The result can be
+split into messages and reconstructed with `Data::Unpack` without treating it as trusted data. On Linux and Steam
+Deck this uses Proton/Wine's Windows `cabinet.dll` implementation on a best-effort basis; it returns an empty string
+if that implementation is unavailable. This path has not been separately verified under Proton/Wine.
 --
 string packed = Data::Pack(snapshot);
 if (packed == "")
     Log::Warn("snapshot could not be packed");
 
 == Data::Unpack
-Restores text made by `Data::Pack`, or returns an empty string if the input is malformed, truncated or expands past
-the 2 MB limit.
+Restores text made by `Data::Pack`, or returns an empty string if the input is malformed, truncated, has trailing
+data, uses an unknown format version or expands past the 2 MB limit.
 --
 string snapshot = Data::Unpack(packed);
 

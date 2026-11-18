@@ -475,6 +475,8 @@ void RegisterCore()
             oversized += oversized;
         array<string> c = {Is(packed != "" && packed.findFirst("=") < 0, "Data::Pack returned invalid text"),
                            Is(Data::Unpack(packed) == value, "Data::Unpack did not restore the text"),
+                           Is(Data::Unpack(packed + "AAAA") == "", "Data::Unpack accepted trailing data"),
+                           Is(Data::Unpack(packed + "\0\0\0\0") == "", "Data::Unpack accepted trailing NULs"),
                            Is(Data::Unpack(damaged) != value, "Data::Unpack accepted damaged data as the original"),
                            Is(Data::Unpack("not base64!") == "", "Data::Unpack accepted malformed text"),
                            Is(Data::Pack("") == "", "Data::Pack accepted an empty input"),

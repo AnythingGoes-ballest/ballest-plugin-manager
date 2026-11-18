@@ -1,5 +1,5 @@
 // Bounded helpers for moving plugin data through text-only transports. Pack is Windows XPRESS_HUFF compressed bytes
-// (with the original size in a four-byte prefix), encoded as unpadded base64. Game thread only.
+// (with a format byte, original size and compressed size), encoded as strict unpadded base64. Game thread only.
 #pragma once
 
 #include <string>

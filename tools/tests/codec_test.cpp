@@ -27,6 +27,15 @@ int main() {
     Check(packed.find('=') == std::string::npos, "output is unpadded base64");
     Check(codec::Unpack(packed) == text, "ordinary text round trip");
     Check(codec::Pack(text) == packed, "packing is deterministic");
+    Check(codec::Unpack(packed + "AAAA").empty(), "trailing packed text refused");
+    Check(codec::Unpack(packed + std::string(4, '\0')).empty(), "trailing NULs refused");
+    std::string middleNul = packed;
+    middleNul[middleNul.size() / 2] = '\0';
+    Check(codec::Unpack(middleNul).empty(), "middle NUL refused");
+
+    std::string wrongFormat = packed;
+    wrongFormat[0] = wrongFormat[0] == 'A' ? 'B' : 'A';
+    Check(codec::Unpack(wrongFormat).empty(), "unknown format refused");
 
     std::string binary;
     for (int repeat = 0; repeat < 32; ++repeat)
