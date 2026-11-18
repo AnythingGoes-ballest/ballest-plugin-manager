@@ -2528,41 +2528,61 @@ void RegisterRace()
             if (Race::RunId() != id1 || d4 + 0.05 < d1)
                 return "full restart changed attempt " + id1 + " to " + Race::RunId() + " or clock " + d1 + " to " + d4;
             d1 = d4;
-            Console::Run("post 82 200");                 // R before a checkpoint: respawn at the start
+            if (Race::CheckpointCount() < 1)
+                return "the continuous-respawn test map needs a checkpoint";
+            mark = Log::LineCount();
+            Console::Run("checkpoints");
             step = 3;
             t0 = Host::Time();
             return WAIT;
         }
         if (step == 3)
         {
-            if (Elapsed() < 0.6)
-                return WAIT;
-            d4 = Runs::Elapsed();
-            if (Race::RunId() != id1 || d4 + 0.05 < d1)
-                return "R changed attempt " + id1 + " to " + Race::RunId() + " or clock " + d1 + " to " + d4;
-            if (!Race::BallPosition(d2, d3, d4))
-                return "Race::BallPosition false before the kill-zone test";
-            d1 = Runs::Elapsed();
-            Console::Run("teleport " + (d2 + 30000) + " " + d3 + " " + d4);
+            string line = LogLineSince("  0 at ");
+            int at = line.findFirst("trigger ");
+            if (at < 0)
+                return Elapsed() > 5 ? "no trigger for checkpoint 0 in the checkpoints command's lines" : WAIT;
+            array<string>@ parts = line.substr(at + 8).split(" ");
+            if (parts.length() < 3)
+                return "can't read the checkpoint trigger in: " + line;
+            d2 = parseFloat(parts[0]);
+            d3 = parseFloat(parts[1]);
+            d4 = parseFloat(parts[2]);
+            Console::Run("teleport " + d2 + " " + d3 + " " + d4);
             step = 4;
             t0 = Host::Time();
             return WAIT;
         }
-        if (Race::Falls() == id2)
-            return Elapsed() > 8 ? "the local map's kill zone did not respawn the ball" : WAIT;
-        if (Elapsed() < 0.6)
+        if (step == 4)
+        {
+            if (Race::CurrentCheckpoint() < 0)
+                return Elapsed() > 5 ? "the checkpoint did not activate" : WAIT;
+            id3 = Race::Respawns();
+            d1 = Runs::Elapsed();
+            Console::Run("post 82 200");                 // R after a checkpoint: return there in the same attempt
+            step = 5;
+            t0 = Host::Time();
             return WAIT;
-        string why;
-        bool tainted = Race::RunTainted(why);
-        d4 = Runs::Elapsed();
-        bool disabled = Race::ContinuousRespawn(false);
-        array<string> checks = {
-            Is(Race::RunId() == id1, "kill zone changed attempt " + id1 + " to " + Race::RunId()),
-            Is(d4 + 0.05 >= d1, "kill zone reset clock " + d1 + " to " + d4),
-            Is(tainted && why.findFirst("respawned") >= 0, "continuous respawn did not taint the run: " + why),
-            Is(disabled, "Race::ContinuousRespawn(false) refused")};
-        return All(checks);
-    }, 25);
+        }
+        if (step == 5)
+        {
+            if (Race::Respawns() == id3)
+                return Elapsed() > 5 ? "R after the checkpoint did not respawn the ball" : WAIT;
+            d4 = Runs::Elapsed();
+            if (Race::RunId() != id1 || d4 + 0.05 < d1)
+                return "checkpoint R changed attempt " + id1 + " to " + Race::RunId() + " or clock " + d1 + " to " + d4;
+            if (Race::CurrentCheckpoint() < 0)
+                return "checkpoint R returned to the start";
+            string why;
+            bool tainted = Race::RunTainted(why);
+            bool disabled = Race::ContinuousRespawn(false);
+            array<string> checks = {
+                Is(tainted && why.findFirst("respawned") >= 0, "continuous respawn did not taint the run: " + why),
+                Is(disabled, "Race::ContinuousRespawn(false) refused")};
+            return All(checks);
+        }
+        return WAIT;
+    }, 35);
     Add("race", "Race restart", "Race::Restarts", function() {
         // A restart from the beginning, through the game's own ManuallyRestartBall (what R does before the first
         // checkpoint). Measured 2026-09-30: a Backspace posted to the window never reaches the game's restart (the

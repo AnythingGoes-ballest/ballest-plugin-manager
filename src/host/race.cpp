@@ -556,7 +556,8 @@ void CountRespawns(Obj controller, const RunState& run) {
     gLastFaults = faults;                   // a new controller, or a new run's reset: a new baseline
 }
 
-// Continuous respawn uses the game's reflected Blueprint entry points measured on the 2026-11-02 build:
+// Continuous respawn uses the game's reflected Blueprint entry points measured on the 2026-11-02 build and checked
+// unchanged on the 2026-11-12 build (R/checkpoint respawn and the kill zone were exercised there):
 //   * IA_RestartLevel and ManuallyRestartBall restart from the course start;
 //   * IA_RestartCheckpoint respawns at the current checkpoint (or the start before one);
 //   * BP_KillZone.ReceiveActorBeginOverlap begins the delayed kill-zone restart.

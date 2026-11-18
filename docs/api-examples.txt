@@ -1482,6 +1482,8 @@ On the player's own unpublished map raced with `Tracks::OpenLocal`, makes restar
 events return the same ball to the course start or current checkpoint without starting a new attempt or resetting the
 race clock. The moved run is marked as touched and cannot be submitted to a leaderboard. The option belongs to the
 calling plugin and the current map: it turns off when passed false, when the plugin stops, or when the map changes.
+While enabled it also catches full restarts requested through `ManuallyRestartBall` by the host or another plugin;
+those callers cannot start a new attempt until this option is disabled.
 Enabling returns false anywhere else, or when the game's measured restart events aren't available. Enable it after
 the local map has loaded and before the race begins, so the course start is captured before any checkpoint.
 --
