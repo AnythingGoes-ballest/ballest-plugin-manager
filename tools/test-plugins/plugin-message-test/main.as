@@ -7,6 +7,7 @@ bool failed = false;
 double passedAt = 0;
 double nextSearch = 0;
 double nextSend = 0;
+double createAfter = 0;
 
 void Fail(const string &in reason)
 {
@@ -21,8 +22,11 @@ void Main()
         Fail("requires the sandbox lobby backend");
         return;
     }
-    isHost = Together::OwnName().findFirst("(slot 1)") >= 0;
-    Log::Info("PLUGIN_MESSAGE_TEST role=" + (isHost ? "host" : "guest"));
+    string ownName = Together::OwnName();
+    int slotAt = ownName.findFirst("(slot ");
+    int slot = slotAt >= 0 && slotAt + 6 < int(ownName.length()) ? int(ownName[slotAt + 6]) - 48 : 9;
+    createAfter = Host::Time() + slot;
+    Log::Info("PLUGIN_MESSAGE_TEST candidate slot=" + slot);
 }
 
 void Update(float dt)
@@ -31,9 +35,16 @@ void Update(float dt)
     const double now = Host::Time();
     if (passed && now - passedAt >= 5) return;
     const string state = Together::LobbyState();
-    if (isHost && state == "none" && !created)
+    if (!isHost && state == "none" && !Together::Searching() && Together::FoundCount() > 0)
     {
+        Together::JoinLobby(Together::FoundId(0));
+        return;
+    }
+    if (!isHost && state == "none" && !Together::Searching() && now >= createAfter)
+    {
+        isHost = true;
         created = true;
+        Log::Info("PLUGIN_MESSAGE_TEST role=host");
         Together::CreateLobby(Together::Code, 2);
         return;
     }
@@ -49,11 +60,6 @@ void Update(float dt)
     {
         Together::FindLobbies("PLUGIN_MESSAGE_TEST");
         nextSearch = now + 1;
-        return;
-    }
-    if (!isHost && state == "none" && !Together::Searching() && Together::FoundCount() > 0)
-    {
-        Together::JoinLobby(Together::FoundId(0));
         return;
     }
     if (state.findFirst("error") == 0)
