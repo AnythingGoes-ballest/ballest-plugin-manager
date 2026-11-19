@@ -71,7 +71,7 @@ void ClearGroup(bool closeSession, bool restoreRace = false) {
     if (closeSession && onSameMap) nativeghost::CloseSession();
     gGroup = {};
     if (restoreRace && onSameMap) {
-        leaderboard::RestoreRaceSession(true);
+        leaderboard::RestoreRaceSession();
         if (!ownId.empty() && !ownReplay.empty()) {
             std::string error;
             if (!nativeghost::Load(ownId, ownReplay, &error))

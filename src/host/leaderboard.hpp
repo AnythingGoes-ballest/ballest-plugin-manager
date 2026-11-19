@@ -69,7 +69,7 @@ std::string RowGhost();                         // the Steam id whose ghost a so
 bool SetOwnReplay(int owner, const std::string& replayJson, std::string* error);
 bool SourceShown();                             // the board on screen shows a plugin's source now
 bool ReplayModeActive();                        // internal: a source row owns the native replay session
-void RestoreRaceSession(bool restart = false); // internal: reopen the race's ghosts after another session
+void RestoreRaceSession();                      // internal: reopen the race's ghosts after another session
 void RemoveOwner(int owner);
 
 }  // namespace leaderboard

@@ -20,7 +20,7 @@
 #include "widgets.hpp"
 
 namespace leaderboard {
-void RestoreRaceSession(bool restart);         // back from replay mode (below)
+void RestoreRaceSession();                     // back from replay mode (below)
 void ApplyOwnReplay();                        // the own-best replay into the open session (below)
 std::string OwnId();
 namespace {
@@ -734,7 +734,7 @@ void RestartRace() {
 }  // namespace
 
 // Back from replay mode: the race's own ghost session again (the game's set-up), the raced ghost loaded and shown.
-void RestoreRaceSession(bool restart) {
+void RestoreRaceSession() {
     gOwnBestPending = 0;
     gWatchSession = gWatchEntered = false;
     gWatchPending.clear();
@@ -753,7 +753,6 @@ void RestoreRaceSession(bool restart) {
         nativeghost::Select(gGhostId, 1, nullptr);
     }
     gOwnBestPending = gOwnBestRaceOverride;      // the own best's toggle as it was (0: the game's settings decide)
-    if (restart) RestartRace();                  // the game's race set-up loads its saved and rival ghosts again
     hostlog::Info("leaderboard: back from replay mode; the race's ghosts again");
 }
 

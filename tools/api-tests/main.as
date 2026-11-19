@@ -2790,6 +2790,9 @@ void RegisterRace()
             for (int i = 0; i < id1; i++)
                 if (tags.findFirst("api ghost " + (i + 1)) < 0)
                     return "the " + id1 + "-ghost playback has the wrong names: " + tags;
+            id2 = Race::RunId();
+            id3 = Race::Restarts();
+            d2 = Runs::Elapsed();
             Replay::StopGhosts();
             if (Replay::GhostCount() != 0)
                 return "Replay::StopGhosts left " + Replay::GhostCount() + " ghosts";
@@ -2813,6 +2816,11 @@ void RegisterRace()
             }
             return WAIT;
         }
+        if (Race::RunId() != id2 || Race::Restarts() != id3)
+            return "Replay::StopGhosts restarted the race: run " + id2 + " to " + Race::RunId() +
+                   ", restarts " + id3 + " to " + Race::Restarts();
+        if (d2 >= 0 && Runs::Elapsed() + 0.05 < d2)
+            return "Replay::StopGhosts reset the race clock from " + d2 + " to " + Runs::Elapsed();
         if (id1 == 4)
             return PASS;
         id1++;
