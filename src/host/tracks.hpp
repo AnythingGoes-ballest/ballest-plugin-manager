@@ -16,6 +16,7 @@
 namespace tracks {
 
 void Frame();
+void RemoveOwner(int owner);
 
 // The game's own tracks, grouped as its playlists group them (read from the game's files): each circuit season
 // (the game instance's CircuitSeasons.NumberedSeasons), then DA_CollabLevels_ShippingList ("collabs") and
@@ -53,6 +54,11 @@ bool OpenLocal(const std::string& fileName);
 // the game's own "next track" goes to the next one; the game's own list is put back on the main menu.
 bool OpenLocalList(const std::vector<std::string>& fileNames, int index);
 std::string LocalMapsFolder();
+// Makes an unpublished editor map in LocalMapsFolder for a plugin. The host chooses its file name; the same plugin
+// and key name the same temporary file. A plugin can remove only its own unchanged temporary maps. Any left behind
+// by a stopped host are removed from the main menu on its next run.
+std::string CreateTemporaryMap(int owner, const std::string& plugin, const std::string& key, const std::string& mapJson);
+bool RemoveTemporaryMap(int owner, const std::string& fileName);
 // A map file shipped with a plugin (full path) copied into the player's maps folder when missing or older there:
 // 1 copied, 0 already there (or the player's own newer copy, kept), -1 not done (OpenState: why).
 int InstallLocalMap(const std::wstring& source);

@@ -212,6 +212,8 @@ def main():
         changed_saves = sorted(set(snapshot(SAVED / "SaveGames").items()) ^ set(saves_before.items()))
         changed_maps = [c for c in sorted(set(snapshot(SAVED / "UserSavedMaps").items()) ^ set(maps_before.items()))
                         if not c[0].endswith(".vdf")]              # Steam Cloud's own bookkeeping, not a map
+        left_temporary_maps = sorted(p.name for p in (SAVED / "UserSavedMaps").glob("Map_LevelEditorMain&PluginTemp_*.balledit")
+                                     if str(p.relative_to(SAVED / "UserSavedMaps")) not in maps_before)
 
     # The results, by documented key.
     # A failing test's messages name the APIs they are about: only those fail. Its other APIs passed when every check
@@ -255,6 +257,8 @@ def main():
         out += [f"**The game crashed**: {', '.join(crashes)}", ""]
     if changed_maps:
         out += ["**Saved maps changed during the run** (check them): " + ", ".join(sorted({p for p, _ in changed_maps})), ""]
+    if left_temporary_maps:
+        out += ["**Temporary maps were left behind**: " + ", ".join(left_temporary_maps), ""]
     if changed_saves:
         out += ["The game saved " + ", ".join(sorted({p for p, _ in changed_saves})) + " (it does as it runs).", ""]
     if unknown:
@@ -295,8 +299,10 @@ def main():
         print("  CRASH:", ", ".join(crashes))
     if changed_maps:
         print("  SAVED MAPS CHANGED:", ", ".join(sorted({p for p, _ in changed_maps})))
+    if left_temporary_maps:
+        print("  TEMPORARY MAPS LEFT:", ", ".join(left_temporary_maps))
     print(f"report: {REPORT.with_suffix('.md')}")
-    sys.exit(1 if failing or crashes or reason != "done" or (args.strict and counts["UNTESTED"]) else 0)
+    sys.exit(1 if failing or crashes or left_temporary_maps or reason != "done" or (args.strict and counts["UNTESTED"]) else 0)
 
 
 if __name__ == "__main__":

@@ -6,12 +6,16 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <map>
 
 #include "engine.hpp"
 #include "game.hpp"
 #include "cosmetics.hpp"
+#include "files.hpp"
+#include "json.hpp"
 #include "log.hpp"
+#include "net.hpp"
 
 namespace tracks {
 namespace {
@@ -158,9 +162,13 @@ bool Open(uint64_t id) {
 }  // namespace
 
 void LocalFrame();
+namespace {
+void TemporaryMapsFrame();
+}
 
 void Frame() {
     LocalFrame();
+    TemporaryMapsFrame();
     if (!gOpening) return;
     const uint32_t state = steam::ItemState(gOpening);
     if ((state & steam::kItemInstalled) && !(state & (steam::kItemDownloading | steam::kItemDownloadPending))) {
@@ -380,6 +388,143 @@ eng::Weak gCupList, gCupPrevious;               // the plugin's list of local ma
 bool gCupActive = false;
 bool gCupLeftMenu = false;                     // its first map has loaded (the main menu was left)
 
+struct TemporaryMap {
+    int owner = -1;                            // -1: left by an earlier run of the host
+    std::string plugin, file, hash;
+};
+std::vector<TemporaryMap> gTemporaryMaps;
+bool gTemporaryMapsLoaded = false;
+double gTemporaryMapsChecked = 0;
+
+std::wstring TemporaryMapLedger() { return hostlog::DataDir() + L"\\temporary-maps.tsv"; }
+
+bool TemporaryMapFile(const std::string& file) {
+    constexpr const char* prefix = "Map_LevelEditorMain&PluginTemp_";
+    constexpr const char* suffix = ".balledit";
+    if (file.rfind(prefix, 0) != 0 || file.size() != std::strlen(prefix) + 24 + std::strlen(suffix) ||
+        file.compare(file.size() - std::strlen(suffix), std::strlen(suffix), suffix) != 0)
+        return false;
+    return std::all_of(file.begin() + std::strlen(prefix), file.end() - std::strlen(suffix), [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+    });
+}
+
+bool HexHash(const std::string& hash) {
+    return hash.size() == 64 && std::all_of(hash.begin(), hash.end(), [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+    });
+}
+
+void LoadTemporaryMaps() {
+    if (gTemporaryMapsLoaded) return;
+    gTemporaryMapsLoaded = true;
+    std::ifstream in(TemporaryMapLedger().c_str());
+    for (std::string line; std::getline(in, line);) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        const size_t a = line.find('\t'), b = a == std::string::npos ? a : line.find('\t', a + 1);
+        if (a == std::string::npos || b == std::string::npos || line.find('\t', b + 1) != std::string::npos) continue;
+        TemporaryMap map{-1, line.substr(0, a), line.substr(a + 1, b - a - 1), line.substr(b + 1)};
+        if (!map.plugin.empty() && map.plugin.find_first_of("\t\r\n") == std::string::npos &&
+            TemporaryMapFile(map.file) && HexHash(map.hash))
+            gTemporaryMaps.push_back(std::move(map));
+    }
+}
+
+bool SaveTemporaryMaps() {
+    std::string text;
+    for (const auto& map : gTemporaryMaps) text += map.plugin + "\t" + map.file + "\t" + map.hash + "\n";
+    return files::WriteWhole(TemporaryMapLedger(), text);
+}
+
+std::string ReadSmallFile(const std::wstring& path) {
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                           FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return "";
+    LARGE_INTEGER size{};
+    std::string text;
+    if (GetFileSizeEx(h, &size) && size.QuadPart > 0 && size.QuadPart <= 2 * 1024 * 1024) {
+        text.resize(static_cast<size_t>(size.QuadPart));
+        DWORD got = 0;
+        if (!ReadFile(h, text.data(), static_cast<DWORD>(text.size()), &got, nullptr) || got != text.size()) text.clear();
+    }
+    CloseHandle(h);
+    return text;
+}
+
+std::wstring TemporaryMapPath(const std::string& file) {
+    std::string dir = CustomMapDirectory();
+    if (dir.empty()) return L"";
+    if (dir.back() != '/' && dir.back() != '\\') dir += "/";
+    return eng::Widen(dir + file);
+}
+
+bool WriteTemporaryMapFile(const std::wstring& path, const std::string& text, DWORD disposition) {
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, disposition, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    DWORD written = 0;
+    const bool wrote = WriteFile(h, text.data(), static_cast<DWORD>(text.size()), &written, nullptr) &&
+                       written == text.size() && FlushFileBuffers(h);
+    CloseHandle(h);
+    if (!wrote && disposition == CREATE_NEW) DeleteFileW(path.c_str());
+    return wrote;
+}
+
+bool EraseTemporaryMap(size_t index, bool warnIfEdited) {
+    const TemporaryMap map = gTemporaryMaps[index];
+    const std::wstring path = TemporaryMapPath(map.file);
+    if (path.empty()) return false;
+    WIN32_FILE_ATTRIBUTE_DATA info{};
+    if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &info)) {
+        if (GetLastError() != ERROR_FILE_NOT_FOUND && GetLastError() != ERROR_PATH_NOT_FOUND) return false;
+    } else {
+        if ((info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0) return false;
+        const std::string text = ReadSmallFile(path);
+        if (text.empty() || net::Sha256(text) != map.hash) {
+            if (warnIfEdited) hostlog::Warn("tracks: keeping an edited temporary map: " + map.file);
+            gTemporaryMaps.erase(gTemporaryMaps.begin() + static_cast<std::ptrdiff_t>(index));
+            SaveTemporaryMaps();
+            return false;
+        }
+        if (!DeleteFileW(path.c_str())) return false;
+        gLocalData.erase(eng::Narrow(path.c_str(), static_cast<int>(path.size())));
+    }
+    gTemporaryMaps.erase(gTemporaryMaps.begin() + static_cast<std::ptrdiff_t>(index));
+    SaveTemporaryMaps();
+    return true;
+}
+
+bool ValidTemporaryMapJson(const std::string& text) {
+    if (text.empty() || text.size() > 2 * 1024 * 1024) return false;
+    json::Value root;
+    std::string error;
+    if (!json::Parse(text, root, error) || root.type != json::Value::Object) return false;
+    const json::Value* level = root.Get("levelData");
+    if (!level) {
+        const json::Value* world = root.Get("worldSettings");
+        if (world && world->type == json::Value::Object) level = world->Get("levelData");
+    }
+    if (!level || level->type != json::Value::Object) return false;
+    const json::Value* id = level->Get("levelPublishedFileId");
+    const json::Value* name = level->Get("levelDisplayName");
+    return id && id->type == json::Value::Number && id->number <= 0 && name && name->type == json::Value::String &&
+           !name->string.empty();
+}
+
+void TemporaryMapsFrame() {
+    LoadTemporaryMaps();
+    if (game::Seconds() < gTemporaryMapsChecked + 1) return;
+    gTemporaryMapsChecked = game::Seconds();
+    Obj controller = game::PlayerController();
+    Obj world = controller ? eng::OuterOf(eng::OuterOf(controller)) : nullptr;
+    if (!world || eng::ObjName(world) != "Map_MainMenu") return;
+    for (size_t i = 0; i < gTemporaryMaps.size();) {
+        const size_t before = gTemporaryMaps.size();
+        if (gTemporaryMaps[i].owner < 0) EraseTemporaryMap(i, true);
+        if (gTemporaryMaps.size() < before) continue;
+        ++i;
+    }
+}
+
 // "My Track_AnythingGoes" (or the full file name) -> the full path in the game's maps folder, or "".
 std::string LocalPath(const std::string& name) {
     const std::string dir = CustomMapDirectory();
@@ -523,6 +668,89 @@ bool SetActiveList(Obj list, const char* why) {
 }  // namespace
 
 std::string LocalMapsFolder() { return CustomMapDirectory(); }
+
+std::string CreateTemporaryMap(int owner, const std::string& plugin, const std::string& key, const std::string& mapJson) {
+    LoadTemporaryMaps();
+    if (owner < 0 || plugin.empty() || key.empty() || key.size() > 128 ||
+        std::any_of(key.begin(), key.end(), [](char c) { return static_cast<unsigned char>(c) < 32; }) ||
+        !ValidTemporaryMapJson(mapJson))
+        return "";
+    const std::string nameHash = net::Sha256(plugin + "\n" + key), contentHash = net::Sha256(mapJson);
+    if (!HexHash(nameHash) || !HexHash(contentHash)) return "";
+    const std::string file = "Map_LevelEditorMain&PluginTemp_" + nameHash.substr(0, 24) + ".balledit";
+    const std::wstring path = TemporaryMapPath(file);
+    if (path.empty()) return "";
+
+    for (size_t i = 0; i < gTemporaryMaps.size(); ++i) {
+        if (gTemporaryMaps[i].file != file) continue;
+        if (gTemporaryMaps[i].plugin != plugin) return "";
+        const std::string existing = ReadSmallFile(path);
+        if (!existing.empty() && net::Sha256(existing) == gTemporaryMaps[i].hash) {
+            const int oldOwner = gTemporaryMaps[i].owner;
+            gTemporaryMaps[i].owner = owner;
+            if (gTemporaryMaps[i].hash == contentHash) return file;
+            const std::string oldHash = gTemporaryMaps[i].hash;
+            if (!WriteTemporaryMapFile(path, mapJson, CREATE_ALWAYS)) return "";
+            gTemporaryMaps[i].hash = contentHash;
+            gLocalData.erase(eng::Narrow(path.c_str(), static_cast<int>(path.size())));
+            if (!SaveTemporaryMaps()) {
+                WriteTemporaryMapFile(path, existing, CREATE_ALWAYS);
+                gTemporaryMaps[i].owner = oldOwner;
+                gTemporaryMaps[i].hash = oldHash;
+                SaveTemporaryMaps();
+                return "";
+            }
+            hostlog::Info("tracks: temporary map updated for " + plugin + ": " + file);
+            return file;
+        }
+        const DWORD attributes = GetFileAttributesW(path.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES) {          // never overwrite an edited owned file
+            gTemporaryMaps.erase(gTemporaryMaps.begin() + static_cast<std::ptrdiff_t>(i));
+            SaveTemporaryMaps();
+            return "";
+        }
+        const int oldOwner = gTemporaryMaps[i].owner;
+        const std::string oldHash = gTemporaryMaps[i].hash;
+        if (!WriteTemporaryMapFile(path, mapJson, CREATE_NEW)) return "";
+        gTemporaryMaps[i].owner = owner;
+        gTemporaryMaps[i].hash = contentHash;
+        if (!SaveTemporaryMaps()) {
+            DeleteFileW(path.c_str());
+            gTemporaryMaps[i].owner = oldOwner;
+            gTemporaryMaps[i].hash = oldHash;
+            return "";
+        }
+        hostlog::Info("tracks: temporary map recreated for " + plugin + ": " + file);
+        return file;
+    }
+
+    if (!WriteTemporaryMapFile(path, mapJson, CREATE_NEW)) return "";  // an untracked player's file is never overwritten
+    gTemporaryMaps.push_back({owner, plugin, file, contentHash});
+    if (!SaveTemporaryMaps()) {
+        gTemporaryMaps.pop_back();
+        DeleteFileW(path.c_str());
+        return "";
+    }
+    hostlog::Info("tracks: temporary map created for " + plugin + ": " + file);
+    return file;
+}
+
+bool RemoveTemporaryMap(int owner, const std::string& fileName) {
+    LoadTemporaryMaps();
+    for (size_t i = 0; i < gTemporaryMaps.size(); ++i)
+        if (gTemporaryMaps[i].owner == owner && gTemporaryMaps[i].file == fileName) return EraseTemporaryMap(i, true);
+    return false;
+}
+
+void RemoveOwner(int owner) {
+    LoadTemporaryMaps();
+    for (size_t i = 0; i < gTemporaryMaps.size();) {
+        const size_t before = gTemporaryMaps.size();
+        if (gTemporaryMaps[i].owner == owner) EraseTemporaryMap(i, true);
+        if (gTemporaryMaps.size() < before) continue;
+        ++i;
+    }
+}
 
 long long PublishedIdOfFile(const std::string& path) { return PublishedIdOf(eng::Widen(path)); }
 
