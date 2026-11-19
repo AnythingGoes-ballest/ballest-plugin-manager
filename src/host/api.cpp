@@ -2669,6 +2669,12 @@ bool TogetherOpenMap(const std::string& file) {
     plugins::GameWork work;
     return together::OpenMap(file);
 }
+bool TogetherSendPluginMessage(const std::string& message) {
+    return together::SendPluginMessage(plugins::CurrentId(), message);
+}
+bool TogetherNextPluginMessage(std::string& sender, std::string& message) {
+    return together::NextPluginMessage(plugins::CurrentId(), sender, message);
+}
 
 void RegisterTogether() {
     e->SetDefaultNamespace("Together");
@@ -2723,6 +2729,8 @@ void RegisterTogether() {
     Global("bool InviteDialog()", asFUNCTION(lobby::InviteDialog));
     Global("string TakeInvite()", asFUNCTION(lobby::TakeInvite));
     Global("string OwnName()", asFUNCTION(lobby::OwnName));
+    Global("bool SendPluginMessage(const string &in message)", asFUNCTION(TogetherSendPluginMessage));
+    Global("bool NextPluginMessage(string &out senderId, string &out message)", asFUNCTION(TogetherNextPluginMessage));
 }
 
 void Register(asIScriptEngine* engine) {

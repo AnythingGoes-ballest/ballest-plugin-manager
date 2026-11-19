@@ -442,6 +442,17 @@ void Register()
     RegisterWorkshop();
     RegisterEditor();
     RegisterLocalMapsNetSources();
+    Add("core", "Together plugin message guards", "Together::SendPluginMessage,Together::NextPluginMessage", function() {
+        if (Together::LobbyState() != "none")
+        {
+            Together::LeaveLobby();
+            return WAIT;
+        }
+        string sender = "stale", message = "stale";
+        if (Together::SendPluginMessage("test") || Together::NextPluginMessage(sender, message) || sender != "" || message != "")
+            return "plugin messages escaped their lobby guard";
+        return PASS;
+    });
 }
 
 // --- core: Math, Log, Host, Plugins, Settings, Registry, Console, Storage, Input -----------------------------------------

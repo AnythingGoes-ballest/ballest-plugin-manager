@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cwctype>
 #include <cstdlib>
+#include <deque>
 #include <functional>
 #include <cstring>
 #include <map>
@@ -24,6 +25,7 @@
 #include "layout.hpp"
 #include "lobby.hpp"
 #include "log.hpp"
+#include "plugins.hpp"
 #include "sandbox.hpp"
 #include "steam.hpp"
 #include "tracks.hpp"
@@ -34,6 +36,63 @@ namespace together {
 std::wstring SavedMapsFolder();
 extern bool gJoinPending;
 namespace {
+
+constexpr size_t kPluginMessageBytes = 768;
+constexpr size_t kPluginInboxMessages = 64;
+constexpr int kPluginMessagesPerSecond = 8;
+
+struct PluginMessageRate {
+    double at = 0;
+    int count = 0;
+};
+
+std::string gPluginMessageLobby;
+std::map<std::string, std::deque<lobby::Message>> gPluginMessageInboxes;
+std::map<std::string, PluginMessageRate> gPluginMessageRates;
+
+void CheckPluginMessageLobby() {
+    const std::string current = lobby::State() == "in lobby" ? lobby::Id() : "";
+    if (current == gPluginMessageLobby) return;
+    gPluginMessageLobby = current;
+    gPluginMessageInboxes.clear();
+    gPluginMessageRates.clear();
+}
+
+bool AllowPluginMessage(const std::string& key) {
+    PluginMessageRate& rate = gPluginMessageRates[key];
+    const double now = game::Seconds();
+    if (now - rate.at >= 1) {
+        rate.at = now;
+        rate.count = 0;
+    }
+    if (rate.count >= kPluginMessagesPerSecond) return false;
+    ++rate.count;
+    return true;
+}
+
+void ReceivePluginMessages(const std::vector<lobby::Message>& messages) {
+    CheckPluginMessageLobby();
+    if (gPluginMessageLobby.empty()) return;
+    const std::vector<lobby::Member> members = lobby::Members();
+    for (const lobby::Message& message : messages) {
+        if (message.text.rfind("plugin ", 0) != 0) continue;
+        const size_t split = message.text.find(' ', 7);
+        if (split == std::string::npos) continue;
+        const std::string plugin = message.text.substr(7, split - 7);
+        const bool member = std::any_of(members.begin(), members.end(), [&](const lobby::Member& candidate) {
+            return candidate.id == message.from;
+        });
+        plugins::Info info;
+        if (!member || !plugins::Find(plugin, &info) || info.status != "running") continue;
+        const std::string payload = message.text.substr(split + 1);
+        if (payload.empty() || payload.size() > kPluginMessageBytes ||
+            payload.find_first_of("\r\n\0", 0, 3) != std::string::npos ||
+            !AllowPluginMessage("rx:" + message.from + ":" + plugin)) continue;
+        std::deque<lobby::Message>& inbox = gPluginMessageInboxes[plugin];
+        if (inbox.size() >= kPluginInboxMessages) inbox.pop_front();
+        inbox.push_back({message.from, payload});
+    }
+}
 
 using NativeFunction = void (*)(Obj context, uint8_t* frame, void* result);
 NativeFunction gOpenOriginal = nullptr;
@@ -1231,6 +1290,7 @@ void ShareHistory() {
     }
     std::vector<lobby::Message> messages;
     { Timed t_("LobbyReceive"); messages = lobby::Receive(); }
+    ReceivePluginMessages(messages);       // copied: Together's own messages keep their existing consumers
     if (!lobby::IsOwner()) FromHost(messages);
     if (IsClient()) { Timed t_("ApplyHostWorld"); ApplyHostWorld(messages); }
     if (!IsServer() || !lobby::IsOwner() || messages.empty()) return;
@@ -1752,6 +1812,38 @@ int Players() {
     Obj controller = game::PlayerController();
     Obj state = controller ? eng::Call(eng::FindCdo("GameplayStatics"), "GetGameState", controller).ReturnObj() : nullptr;
     return state ? static_cast<int>(eng::ReadObjArray(state, "PlayerArray").size()) : 0;
+}
+
+bool SendPluginMessage(const std::string& plugin, const std::string& message) {
+    CheckPluginMessageLobby();
+    if (gPluginMessageLobby.empty() || plugin.empty() || message.empty() || message.size() > kPluginMessageBytes ||
+        message.find_first_of("\r\n\0", 0, 3) != std::string::npos || !AllowPluginMessage("tx:" + plugin)) return false;
+    return lobby::Send("plugin " + plugin + " " + message);
+}
+
+bool NextPluginMessage(const std::string& plugin, std::string& sender, std::string& message) {
+    CheckPluginMessageLobby();
+    sender.clear();
+    message.clear();
+    const auto found = gPluginMessageInboxes.find(plugin);
+    if (found == gPluginMessageInboxes.end() || found->second.empty()) return false;
+    const lobby::Message next = found->second.front();
+    found->second.pop_front();
+    sender = next.from;
+    message = next.text;
+    return true;
+}
+
+void PluginMessagesStopped(const std::string& plugin) {
+    gPluginMessageInboxes.erase(plugin);
+    const std::string incomingSuffix = ":" + plugin;
+    for (auto it = gPluginMessageRates.begin(); it != gPluginMessageRates.end();) {
+        if (it->first == "tx:" + plugin || it->first.ends_with(incomingSuffix)) {
+            it = gPluginMessageRates.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 std::string OwnAddress() {

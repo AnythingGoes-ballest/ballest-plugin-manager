@@ -1,0 +1,6 @@
+[meta]
+name = "Plugin message integration test"
+version = "0.0.1"
+author = "Ballest Plugin Manager"
+description = "Two-copy integration fixture for Together plugin messages."
+min_host = "0.34.7"

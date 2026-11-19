@@ -51,6 +51,10 @@ std::string TakeNotice();
 // hosting disarmed, the lobby left, the editor left.
 void SetOwner(int plugin);
 void PluginStopped(int plugin);
+// Short lobby messages scoped to the calling plugin. The lobby transport supplies the sender id.
+bool SendPluginMessage(const std::string& plugin, const std::string& message);
+bool NextPluginMessage(const std::string& plugin, std::string& sender, std::string& message);
+void PluginMessagesStopped(const std::string& plugin);
 // The game's own ways into its editor (each goes through ListenNextEditor when armed): a new map ("+new"), or one of
 // its saved maps (a file in its UserSavedMaps folder, as the Create page's files list opens it).
 bool NewMap();
