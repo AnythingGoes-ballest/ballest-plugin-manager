@@ -1018,6 +1018,10 @@ bool RaceAddBallVelocity(double x, double y, double z) {
     plugins::GameWork work;
     return race::AddBallVelocity(x, y, z, plugins::Current());
 }
+bool RaceContinuousRespawn(bool enabled) {
+    plugins::GameWork work;
+    return race::ContinuousRespawn(plugins::Current(), enabled);
+}
 bool RaceCheckpointPosition(int index, double& x, double& y, double& z) { return race::CheckpointPosition(index, &x, &y, &z); }
 std::string RaceTrackName() { return race::CurrentTrack().name; }
 std::string RaceTrackAuthor() { return race::CurrentTrack().author; }
@@ -1111,6 +1115,7 @@ void RegisterRace() {
     Global("bool BallPosition(double &out, double &out, double &out)", asFUNCTION(RaceBallPosition));
     Global("bool BallVelocity(double &out, double &out, double &out)", asFUNCTION(RaceBallVelocity));
     Global("bool AddBallVelocity(double, double, double)", asFUNCTION(RaceAddBallVelocity));
+    Global("bool ContinuousRespawn(bool enabled = true)", asFUNCTION(RaceContinuousRespawn));
     Global("bool NextBounce(double &out strength, double &out x, double &out y, double &out z, double &out nx, double &out ny, "
            "double &out nz, bool &out ground)", asFUNCTION(RaceNextBounce));
 }

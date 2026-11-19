@@ -32,6 +32,7 @@
 #include "splitref.hpp"
 #include "log.hpp"
 #include "registry.hpp"
+#include "race.hpp"
 #include "settings.hpp"
 #include "ui.hpp"
 
@@ -500,6 +501,7 @@ void Release(size_t i) {
     leaderboard::RemoveOwner(static_cast<int>(i));
     editor::RemoveOwner(static_cast<int>(i));
     tracks::RemoveOwner(static_cast<int>(i));
+    race::RemoveOwner(static_cast<int>(i));
     createpage::RemoveOwner(static_cast<int>(i));
     together::PluginStopped(static_cast<int>(i));
     together::PluginMessagesStopped(p.id);

@@ -16,6 +16,7 @@
 namespace race {
 
 void Frame();                   // after game::Frame
+void RemoveOwner(int owner);
 
 bool OnTrack();                 // a race controller exists (a track is loaded, not the main menu)
 bool Active();                  // a race is running
@@ -50,6 +51,10 @@ bool AddBallVelocity(double x, double y, double z, int owner = -1);
 // Whether what is open is the player's own never-published map: AddBallVelocity's rule, and also the track editor
 // while editing (its map's file never published). `why` says why not. Decided once per map (file reads).
 bool OwnUnpublishedMapHere(std::string* why);
+// On the current player's own unpublished race, lets restart, checkpoint-respawn and kill-zone events move the same
+// ball to its start/checkpoint without starting a new attempt. Scoped to the enabling plugin and current map. A moved
+// run is tainted. Enabling is refused elsewhere; disabling is always allowed.
+bool ContinuousRespawn(int owner, bool enabled);
 bool SetBallVelocity(double x, double y, double z);     // tests only: AddBallVelocity's rule, the velocity set (spin stopped)
 eng::Obj PlayedBallActor();                             // that ball's actor, or null
 bool EditorTesting();           // in the track editor, a test run is on (the camera is on the ball)

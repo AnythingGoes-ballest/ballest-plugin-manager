@@ -14,7 +14,7 @@
 [Setting name="Phases" description="The phases to run, by name, comma separated ('all' for every one)"]
 string Phases = "all";
 
-[Setting name="Track" description="The track for the track and race phases: 'workshop:<published file id>', or an official track's level ('' for the first)"]
+[Setting name="Track" description="The track for the track and race phases: 'workshop:<id>', 'local:<file>', or an official level ('' for the first)"]
 string Track = "";
 
 [Setting name="Workshop" description="The published file id of the workshop track for the workshop phase ('' for the first search result)"]
@@ -71,7 +71,7 @@ int step = 0;
 double t0 = 0;
 uint mark = 0;                  // the log's line count when the test started
 int id1 = 0, id2 = 0, id3 = 0;
-double d1 = 0, d2 = 0, d3 = 0;
+double d1 = 0, d2 = 0, d3 = 0, d4 = 0, d5 = 0, d6 = 0;
 string s1 = "";
 // Kept between tests.
 UI::Window@ win;
@@ -125,6 +125,8 @@ void OpenLevel()
         return;
     if (level.findFirst("workshop:") == 0)
         Tracks::OpenWorkshop(level.substr(9));          // a workshop track (a test map of the project's own)
+    else if (level.findFirst("local:") == 0)
+        Tracks::OpenLocal(level.substr(6));             // an unpublished map in the sandbox's maps folder
     else
         Tracks::Open(level);
 }
@@ -136,6 +138,8 @@ bool OnLevel()
     string key = Race::TrackKey();
     if (level.findFirst("workshop:") == 0)
         return key.findFirst("custom:" + level.substr(9) + ":") == 0;
+    if (level.findFirst("local:") == 0)
+        return key.findFirst("custom:local:") == 0;
     return key == "map:" + level;
 }
 
@@ -256,7 +260,7 @@ void ResetScratch()
     t0 = Host::Time();
     mark = Log::LineCount();
     id1 = id2 = id3 = 0;
-    d1 = d2 = d3 = 0;
+    d1 = d2 = d3 = d4 = d5 = d6 = 0;
     s1 = "";
 }
 
@@ -374,6 +378,21 @@ void Register()
         }
         return Race::OnTrack() && Race::TrackKey() != "" && Host::Time() - pt > 8;
     });
+    // A fresh run used by the continuous-respawn test. Kept separate from the general race phase so its restart,
+    // R and kill-zone events are measured before another test can change the attempt or checkpoint.
+    AddPhase("continuousrespawn", function() {
+        if (Race::IsActive())
+            return OnLevel();
+        if (Host::Time() - pt > 3)
+        {
+            pt = Host::Time();
+            if (OnLevel())
+                Console::Run("callx WBP_RaceUIManager_C ButtonActionRouter_Play Transient | u8:0");
+            else if (Tracks::OpenState() != "opening")
+                OpenLevel();
+        }
+        return false;
+    }, 60);
     // The race: started with the track's own play button, and only on the phase's track. (2026-10-08: an Enter posted
     // here took the test map back to the main menu, and the next ones started the menu's first official track, which
     // the sandbox then forced into practice.) Anywhere else the track is opened again instead.
@@ -2508,6 +2527,96 @@ void RegisterRace()
         double moved = Math::sqrt((x - d1) * (x - d1) + (y - d2) * (y - d2) + (z - d3) * (z - d3));
         return Is(moved > 100, "Race::BallPosition: the ball moved " + int(moved) + " cm with W held 1.5 s");
     }, 8);
+    Add("continuousrespawn", "Race continuous respawn keeps one timed attempt", "Race::ContinuousRespawn,Race::RunId,Race::RunTainted", function() {
+        if (Race::TrackKey().findFirst("custom:local:") != 0)
+            return Is(!Race::ContinuousRespawn(), "Race::ContinuousRespawn accepted " + Race::TrackKey());
+        if (step == 0)
+        {
+            if (!Race::IsActive() || Race::RunId() < 0)
+                return WAIT;
+            if (!Race::ContinuousRespawn())
+                return "Race::ContinuousRespawn refused the local unpublished map";
+            id1 = Race::RunId();
+            id2 = Race::Falls();
+            d1 = Runs::Elapsed();
+            Console::Run("post 87 800");                 // move away from the start before the full restart
+            step = 1;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (step == 1)
+        {
+            if (Elapsed() < 1.5)
+                return WAIT;
+            d1 = Runs::Elapsed();
+            Console::Run("call BP_MyPlayerController_C ManuallyRestartBall");
+            step = 2;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (step == 2)
+        {
+            if (Elapsed() < 0.6)
+                return WAIT;
+            d4 = Runs::Elapsed();
+            if (Race::RunId() != id1 || d4 + 0.05 < d1)
+                return "full restart changed attempt " + id1 + " to " + Race::RunId() + " or clock " + d1 + " to " + d4;
+            d1 = d4;
+            if (Race::CheckpointCount() < 1)
+                return "the continuous-respawn test map needs a checkpoint";
+            mark = Log::LineCount();
+            Console::Run("checkpoints");
+            step = 3;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (step == 3)
+        {
+            string line = LogLineSince("  0 at ");
+            int at = line.findFirst("trigger ");
+            if (at < 0)
+                return Elapsed() > 5 ? "no trigger for checkpoint 0 in the checkpoints command's lines" : WAIT;
+            array<string>@ parts = line.substr(at + 8).split(" ");
+            if (parts.length() < 3)
+                return "can't read the checkpoint trigger in: " + line;
+            d2 = parseFloat(parts[0]);
+            d3 = parseFloat(parts[1]);
+            d4 = parseFloat(parts[2]);
+            Console::Run("teleport " + d2 + " " + d3 + " " + d4);
+            step = 4;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (step == 4)
+        {
+            if (Race::CurrentCheckpoint() < 0)
+                return Elapsed() > 5 ? "the checkpoint did not activate" : WAIT;
+            id3 = Race::Respawns();
+            d1 = Runs::Elapsed();
+            Console::Run("post 82 200");                 // R after a checkpoint: return there in the same attempt
+            step = 5;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (step == 5)
+        {
+            if (Race::Respawns() == id3)
+                return Elapsed() > 5 ? "R after the checkpoint did not respawn the ball" : WAIT;
+            d4 = Runs::Elapsed();
+            if (Race::RunId() != id1 || d4 + 0.05 < d1)
+                return "checkpoint R changed attempt " + id1 + " to " + Race::RunId() + " or clock " + d1 + " to " + d4;
+            if (Race::CurrentCheckpoint() < 0)
+                return "checkpoint R returned to the start";
+            string why;
+            bool tainted = Race::RunTainted(why);
+            bool disabled = Race::ContinuousRespawn(false);
+            array<string> checks = {
+                Is(tainted && why.findFirst("respawned") >= 0, "continuous respawn did not taint the run: " + why),
+                Is(disabled, "Race::ContinuousRespawn(false) refused")};
+            return All(checks);
+        }
+        return WAIT;
+    }, 35);
     Add("race", "Race restart", "Race::Restarts", function() {
         // A restart from the beginning, through the game's own ManuallyRestartBall (what R does before the first
         // checkpoint). Measured 2026-09-30: a Backspace posted to the window never reaches the game's restart (the
