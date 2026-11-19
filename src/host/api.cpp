@@ -20,6 +20,7 @@
 #include <utility>
 
 #include "campaigns.hpp"
+#include "codec.hpp"
 #include "cosmetics.hpp"
 #include "draw.hpp"
 #include "postprocess.hpp"
@@ -2441,6 +2442,10 @@ bool RaceRunTainted(std::string& why) {
 }
 
 void RegisterSources() {
+    e->SetDefaultNamespace("Data");
+    Global("string Pack(const string &in text)", asFUNCTION(codec::Pack));
+    Global("string Unpack(const string &in packed)", asFUNCTION(codec::Unpack));
+    Global("string Digest(const string &in text)", asFUNCTION(codec::Digest));
     e->SetDefaultNamespace("Leaderboard");
     Global("void SetSource(const string &in trackKey, const string &in title, const array<string>@ names, const array<double>@ times, "
            "const array<int>@ ranks = null, int highlight = -1, const array<bool>@ ghosts = null)",
