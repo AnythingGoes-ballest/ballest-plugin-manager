@@ -376,6 +376,14 @@ bool HasReplay(const std::string& steamId) {
     return key && Record(sub, key, &rec) && rec[0x91];
 }
 
+double ReplayDuration(const std::string& steamId) {
+    Obj sub = Subsystem();
+    if (!CurrentSession(sub)) return -1;
+    const uint8_t* key = KeyOf(sub, steamId, nullptr);
+    std::array<uint8_t, kRecordSize> rec{};
+    return key && Record(sub, key, &rec) && rec[0x91] ? *reinterpret_cast<const double*>(rec.data() + At(sub).duration) : -1;
+}
+
 bool Ready(const std::string& steamId) {
     Obj sub = Subsystem();
     if (!CurrentSession(sub)) return false;
@@ -684,6 +692,31 @@ bool OpenAsLocal(const std::string& localId, std::string* error) {
     }
     ApplyRealSkins();
     return CurrentSession(sub);
+}
+
+bool StartPlayback(double seconds, std::string* error) {
+    Obj sub = Subsystem();
+    if (!CurrentSession(sub)) {
+        if (error) *error = "no ghost session";
+        return false;
+    }
+    eng::Call(sub, "SetSpectateRate", 1.0);
+    eng::Call(sub, "SetSpectatePaused", uint8_t{0});
+    Params start = eng::Call(sub, "StartPlayback", seconds);
+    size_t size = 0;
+    const uint8_t* result = start.Return(&size);
+    if (result && size >= 1 && result[0]) return true;
+    if (error) *error = result && size >= 24 ? eng::ReadFString(result + 8) : "StartPlayback failed";
+    return false;
+}
+
+double PlaybackTime() {
+    Obj sub = Subsystem();
+    if (!CurrentSession(sub)) return 0;
+    const Params time = eng::Call(sub, "GetPlaybackTime");
+    size_t size = 0;
+    time.Return(&size);
+    return size == 4 ? time.ReturnAs<float>() : time.ReturnAs<double>();
 }
 
 std::string DebugReopenAs(const std::string& localId) {

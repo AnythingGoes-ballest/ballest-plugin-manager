@@ -1991,6 +1991,22 @@ void RegisterReplay()
         Replay::SetSeeThrough(through);
         return All(c);
     });
+    Add("replay", "Multi-ghost replay validation", "Replay::PrepareGhosts,Replay::GhostsReady,Replay::StartGhosts,Replay::StopGhosts,Replay::GhostTime,Replay::GhostCount,Replay::GhostName,Replay::GhostDuration,Replay::GhostError", function() {
+        array<string> names;
+        array<string> recordings;
+        bool prepared = Replay::PrepareGhosts(names, recordings);
+        bool started = Replay::StartGhosts();
+        array<string> c = {Is(!prepared, "Replay::PrepareGhosts took an empty group"),
+                           Is(!Replay::GhostsReady(), "Replay::GhostsReady true without a group"),
+                           Is(!started, "Replay::StartGhosts true without a group"),
+                           Is(Replay::GhostTime() == 0, "Replay::GhostTime nonzero without a group"),
+                           Is(Replay::GhostCount() == 0, "Replay::GhostCount nonzero without a group"),
+                           Is(Replay::GhostName(0) == "", "Replay::GhostName nonempty without a group"),
+                           Is(Replay::GhostDuration(0) == -1, "Replay::GhostDuration not -1 without a group"),
+                           Is(Replay::GhostError() != "", "Replay::GhostError empty after refusals")};
+        Replay::StopGhosts();
+        return All(c);
+    });
 }
 
 // --- track (before the race): Race info, Leaderboard, Hud, Ghosts in the world, Draw, Camera --------------------------
@@ -2839,6 +2855,121 @@ void RegisterRace()
         }
         return Race::IsPaused() ? (Elapsed() > 5 ? "Race::IsPaused still true after Race::SetPaused(false)" : WAIT) : PASS;
     }, 8);
+
+    Add("race", "Two to four named replay ghosts", "Replay::PrepareGhosts,Replay::GhostsReady,Replay::StartGhosts,Replay::StopGhosts,Replay::GhostTime,Replay::GhostCount,Replay::GhostName,Replay::GhostDuration,Replay::GhostError", function() {
+        if (Runs::Count() == 0)
+            return "no recorded run for the multi-ghost replay";
+        string replay = Runs::Replay(0);
+        if (!Json::Has(replay, "locations"))
+            return "the recorded run is not ghost JSON";
+        if (step == 0)
+        {
+            mark = Log::LineCount();
+            Console::Run("nghost");
+            step = 1;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (step == 1)
+        {
+            string session = LogLineSince("session:");
+            if (session == "")
+                return Elapsed() > 3 ? "the race had no ghost session before the plugin replay" : WAIT;
+            if (session.findFirst(Steam::OwnId()) < 0)
+                return "the race's ghost session had no own record before the plugin replay: " + session;
+            id1 = 2;
+            step = 2;
+        }
+        if (step == 2)
+        {
+            array<string> names;
+            array<string> recordings;
+            for (int i = 0; i < id1; i++)
+            {
+                names.insertLast("api ghost " + (i + 1));
+                recordings.insertLast(replay);
+            }
+            if (!Replay::PrepareGhosts(names, recordings))
+                return "Replay::PrepareGhosts(" + id1 + ") failed: " + Replay::GhostError();
+            array<string> c = {Is(Replay::GhostCount() == id1, "Replay::GhostCount " + Replay::GhostCount() + ", want " + id1),
+                               Is(Replay::GhostName(0) == "api ghost 1", "Replay::GhostName(0) '" + Replay::GhostName(0) + "'"),
+                               Is(Replay::GhostDuration(0) > 0, "Replay::GhostDuration(0) " + Replay::GhostDuration(0)),
+                               Is(Replay::GhostDuration(id1 - 1) > 0, "Replay::GhostDuration(last) " + Replay::GhostDuration(id1 - 1))};
+            string checked = All(c);
+            if (checked != PASS)
+            {
+                Replay::StopGhosts();
+                return checked;
+            }
+            step = 3;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (step == 3)
+        {
+            if (!Replay::GhostsReady())
+                return Elapsed() > 15 ? "the " + id1 + " replay ghosts did not become ready: " + Replay::GhostError() : WAIT;
+            if (!Replay::StartGhosts())
+                return "Replay::StartGhosts(" + id1 + ") failed: " + Replay::GhostError();
+            step = 4;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (step == 4)
+        {
+            if (Replay::GhostTime() <= 0.2)
+                return Elapsed() > 5 ? "Replay::GhostTime did not advance for " + id1 + " ghosts: " + Replay::GhostTime() : WAIT;
+            mark = Log::LineCount();
+            Console::Run("nametags");
+            step = 5;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (step == 5)
+        {
+            string tags = LogLineSince("nametags:");
+            if (tags == "")
+                return Elapsed() > 3 ? "the name-tag inspection did not answer" : WAIT;
+            for (int i = 0; i < id1; i++)
+                if (tags.findFirst("api ghost " + (i + 1)) < 0)
+                    return "the " + id1 + "-ghost playback has the wrong names: " + tags;
+            id2 = Race::RunId();
+            id3 = Race::Restarts();
+            d2 = Runs::Elapsed();
+            Replay::StopGhosts();
+            if (Replay::GhostCount() != 0)
+                return "Replay::StopGhosts left " + Replay::GhostCount() + " ghosts";
+            mark = Log::LineCount();
+            Console::Run("nghost");
+            step = 6;
+            t0 = Host::Time();
+            d1 = 0;
+            return WAIT;
+        }
+        string restored = LogLineSince("session:");
+        if (restored == "" || restored.findFirst(Steam::OwnId()) < 0)
+        {
+            if (Elapsed() > 10)
+                return "Replay::StopGhosts did not restore the race's own ghost record: " + restored;
+            if (Host::Time() - d1 > 0.5)
+            {
+                mark = Log::LineCount();
+                Console::Run("nghost");
+                d1 = Host::Time();
+            }
+            return WAIT;
+        }
+        if (Race::RunId() != id2 || Race::Restarts() != id3)
+            return "Replay::StopGhosts restarted the race: run " + id2 + " to " + Race::RunId() +
+                   ", restarts " + id3 + " to " + Race::Restarts();
+        if (d2 >= 0 && Runs::Elapsed() + 0.05 < d2)
+            return "Replay::StopGhosts reset the race clock from " + d2 + " to " + Runs::Elapsed();
+        if (id1 == 4)
+            return PASS;
+        id1++;
+        step = 2;
+        return WAIT;
+    }, 75);
 
     Add("race", "Race practice", "Race::StartPractice,Race::IsPractice", function() {
         if (step == 0)

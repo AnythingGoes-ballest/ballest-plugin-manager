@@ -15,11 +15,12 @@
 #include "nativeghost.hpp"
 #include "ghostdata.hpp"
 #include "race.hpp"
+#include "replay.hpp"
 #include "steam.hpp"
 #include "widgets.hpp"
 
 namespace leaderboard {
-void RestoreRaceSession();                    // back from replay mode (below)
+void RestoreRaceSession();                     // back from replay mode (below)
 void ApplyOwnReplay();                        // the own-best replay into the open session (below)
 std::string OwnId();
 namespace {
@@ -722,6 +723,7 @@ void ClearSource(int owner) {
 }
 
 bool SourceShown() { return gSourceShown && gTabOpen; }
+bool ReplayModeActive() { return gWatchSession; }
 
 namespace {
 void RestartRace() {
@@ -743,7 +745,8 @@ void RestoreRaceSession() {
         hostlog::Warn("leaderboard: the race's ghost session didn't open again: " + error);
         return;
     }
-    ApplyOwnReplay();
+    if (gOwnReplay.empty()) nativeghost::LoadOwnBest();
+    else ApplyOwnReplay();
     if (!gGhostId.empty() && gHanded.count(gGhostId)) {
         std::string why;
         if (!nativeghost::LoadAsRival(gGhostId, gHanded[gGhostId], &why)) nativeghost::Load(gGhostId, gHanded[gGhostId], &why);
@@ -836,6 +839,10 @@ bool WatchRowReplay(int owner, int row, const std::string& steamId, const std::s
         return false;
     }
     if (!SourceApplies(error)) return false;
+    if (replay::GhostsPrepared()) {
+        if (error) *error = "a plugin ghost replay is active";
+        return false;
+    }
     if (row < 0 || row >= static_cast<int>(gSourceRows.size())) {
         if (error) *error = "no such row";
         return false;

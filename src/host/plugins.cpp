@@ -33,6 +33,7 @@
 #include "log.hpp"
 #include "registry.hpp"
 #include "race.hpp"
+#include "replay.hpp"
 #include "settings.hpp"
 #include "ui.hpp"
 
@@ -508,6 +509,7 @@ void Release(size_t i) {
     draw::RemoveOwner(static_cast<int>(i));
     postprocess::RemoveOwner(static_cast<int>(i));
     hud::RemoveOwner(static_cast<int>(i));
+    replay::RemoveOwner(static_cast<int>(i));
     pluginnet::RemoveOwner(static_cast<int>(i));
     screen::RemoveOwner(static_cast<int>(i));
     steam::ForgetWebTicket(static_cast<int>(i));

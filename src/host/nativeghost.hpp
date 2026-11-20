@@ -29,6 +29,7 @@ std::string SessionDescription();       // for tests: the session's identity and
 // session; false with `error` if the game refused it.
 bool Load(const std::string& steamId, const std::string& replayJson, std::string* error);
 bool HasReplay(const std::string& steamId);
+double ReplayDuration(const std::string& steamId); // -1 without a loaded replay
 // The game has parsed it (record LoadState Ready with a replay): AcceptReplayJson only queues the parse (measured: the
 // follow camera refuses a ghost that isn't ready, so replay mode has to wait for this).
 bool Ready(const std::string& steamId);
@@ -53,6 +54,8 @@ std::string DebugReopenAs(const std::string& localId);
 // replay needs a session whose local player is that player: OpenAsLocal closes the session and opens one so (core
 // identity of the level, ghosts shown). CloseSession closes it (OpenSession then opens the normal one again).
 bool OpenAsLocal(const std::string& localId, std::string* error);
+bool StartPlayback(double seconds, std::string* error);
+double PlaybackTime();
 void CloseSession();
 // The player's own saved best into the open session, by the game's own function (as its session set-up does).
 bool LoadOwnBest();
