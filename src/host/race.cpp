@@ -1187,6 +1187,40 @@ bool OwnUnpublishedMapHere(std::string* why) {
     return LocalUnpublishedMap(why);
 }
 
+bool StartLocal() {
+    std::string why;
+    if (!gOnTrack || editor::Open() || !LocalUnpublishedMap(&why)) {
+        hostlog::Warn("race: StartLocal refused: " + (why.empty() ? std::string("not a local unpublished race") : why));
+        return false;
+    }
+    Obj controller = game::PlayerController();
+    const RunState run = ReadRun(controller);
+    if (!run.ok || !run.state) {
+        hostlog::Warn("race: StartLocal refused: the native race state is unavailable");
+        return false;
+    }
+    if (run.phase == kCountdown || run.phase == kRunning) return true;
+    if (run.phase != kIdle) {
+        hostlog::Warn("race: StartLocal refused: the race is not waiting to start");
+        return false;
+    }
+    const eng::Prop revisionAt = eng::FindProp(gRunAt.structure, "CourseRevision");
+    int64_t revision = 0;
+    if (!revisionAt || revisionAt.size != sizeof revision) {
+        hostlog::Warn("race: StartLocal refused: the native course revision is unavailable");
+        return false;
+    }
+    std::memcpy(&revision, run.state + revisionAt.offset, sizeof revision);
+    Obj playerState = eng::ReadObj(controller, "PlayerState");
+    Obj requests = playerState ? eng::Call(playerState, "GetRaceRequests").ReturnObj() : nullptr;
+    if (!requests || !eng::Call(requests, "RequestStart", run.attempt, revision).ReturnBool()) {
+        hostlog::Warn("race: StartLocal refused: the native start request was rejected");
+        return false;
+    }
+    hostlog::Info("race: local unpublished attempt start requested");
+    return true;
+}
+
 bool ContinuousRespawn(int owner, bool enabled) {
     auto& state = gContinuousRespawn;
     if (!enabled) {
