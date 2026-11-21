@@ -1053,6 +1053,10 @@ void RaceStartPractice() {
     plugins::GameWork work;
     race::StartPractice();
 }
+bool RaceStartLocal() {
+    plugins::GameWork work;
+    return race::StartLocal();
+}
 
 // Hud: Elements() takes a snapshot the other getters answer from, so a plugin walking the list sees one HUD.
 std::vector<hud::Element> gHudSnapshot;
@@ -1107,6 +1111,7 @@ void RegisterRace() {
     Global("string SaveBall()", asFUNCTION(RaceSaveBall));
     Global("bool LoadBall(const string &in, bool momentum = true)", asFUNCTION(RaceLoadBall));
     Global("void StartPractice()", asFUNCTION(RaceStartPractice));
+    Global("bool StartLocal()", asFUNCTION(RaceStartLocal));
     Global("bool IsPractice()", asFUNCTION(race::Practice));
     Global("void HideBall(bool)", asFUNCTION(RaceHideBall));
     Global("void FreezeBall(bool)", asFUNCTION(RaceFreezeBall));

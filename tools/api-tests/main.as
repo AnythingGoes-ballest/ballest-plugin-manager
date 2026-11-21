@@ -393,6 +393,25 @@ void Register()
         }
         return false;
     }, 60);
+    // A player's own unpublished map, left on its pre-race screen. The test itself starts it through Race::StartLocal.
+    AddPhase("localstart", function() {
+        if (pstep != 12)
+        {
+            level = ChooseLevel();
+            if (level.findFirst("local:") != 0)
+                return false;
+            OpenLevel();
+            pstep = 12;
+            pt = Host::Time();
+        }
+        if (Race::IsActive())
+        {
+            OpenLevel();
+            pt = Host::Time();
+            return false;
+        }
+        return OnLevel() && Race::TrackKey().findFirst("custom:local:") == 0 && Host::Time() - pt > 8;
+    }, 60);
     // The race: started with the track's own play button, and only on the phase's track. (2026-10-08: an Enter posted
     // here took the test map back to the main menu, and the next ones started the menu's first official track, which
     // the sandbox then forced into practice.) Anywhere else the track is opened again instead.
@@ -2633,6 +2652,36 @@ void RegisterRace()
         }
         return WAIT;
     }, 35);
+    Add("localstart", "Race starts one local unpublished attempt", "Race::StartLocal,Race::IsActive,Race::RunId", function() {
+        if (step == 0)
+        {
+            if (Race::TrackKey().findFirst("custom:local:") != 0 || Race::IsActive())
+                return "the local unpublished map is not waiting on its pre-race screen";
+            if (!Race::StartLocal())
+                return "Race::StartLocal refused the local unpublished map";
+            step = 1;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (!Race::IsActive() || Race::RunId() < 0)
+            return Elapsed() > 8 ? "Race::StartLocal did not start an attempt" : WAIT;
+        if (step == 1)
+        {
+            id1 = Race::RunId();
+            d1 = Runs::Elapsed();
+            if (!Race::StartLocal())
+                return "Race::StartLocal refused the already active attempt";
+            step = 2;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (Elapsed() < 0.5)
+            return WAIT;
+        array<string> checks = {
+            Is(Race::RunId() == id1, "a repeated Race::StartLocal changed the attempt"),
+            Is(Runs::Elapsed() + 0.05 >= d1, "a repeated Race::StartLocal reset the clock")};
+        return All(checks);
+    }, 12);
     Add("race", "Race restart", "Race::Restarts", function() {
         // A restart from the beginning, through the game's own ManuallyRestartBall (what R does before the first
         // checkpoint). Measured 2026-09-30: a Backspace posted to the window never reaches the game's restart (the
