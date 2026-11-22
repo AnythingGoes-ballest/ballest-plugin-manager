@@ -340,6 +340,7 @@ void Update(float dt)
 // --- phases ---------------------------------------------------------------------------------------------------------------
 int pstep = 0;
 double pt = 0;
+string localStartMap = "";
 
 void Register()
 {
@@ -393,22 +394,18 @@ void Register()
         }
         return false;
     }, 60);
-    // A player's own unpublished map, left on its pre-race screen. The test itself starts it through Race::StartLocal.
+    // A plugin-owned unpublished map, left on its pre-race screen. The test itself starts it through Race::StartLocal.
+    // It is made here instead of relying on --track local:..., so ordinary full-suite runs exercise the API too.
     AddPhase("localstart", function() {
         if (pstep != 12)
         {
-            level = ChooseLevel();
-            if (level.findFirst("local:") != 0)
+            localStartMap = Tracks::CreateTemporaryMap("api test local start", Plugins::ReadFile("localstart_test.balledit"));
+            if (localStartMap == "")
                 return false;
+            level = "local:" + localStartMap;
             OpenLevel();
             pstep = 12;
             pt = Host::Time();
-        }
-        if (Race::IsActive())
-        {
-            OpenLevel();
-            pt = Host::Time();
-            return false;
         }
         return OnLevel() && Race::TrackKey().findFirst("custom:local:") == 0 && Host::Time() - pt > 8;
     }, 60);
@@ -2033,6 +2030,11 @@ string hudKey = "";
 
 void RegisterTrack()
 {
+    Add("track", "Race::StartLocal refuses a workshop map", "Race::StartLocal", function() {
+        if (level.findFirst("workshop:") != 0)
+            return "SKIP: the track phase was not pointed at the workshop test map";
+        return Is(!Race::StartLocal(), "Race::StartLocal accepted a workshop map");
+    });
     Add("track", "Tracks::Open reached the track", "Tracks::Open,Tracks::OpenState", function() {
         string state = Tracks::OpenState();
         return Is(Race::OnTrack() && state.findFirst("error") != 0, "Tracks::Open: on track " + Race::OnTrack() + ", Tracks::OpenState '" + state + "'");
@@ -2677,9 +2679,14 @@ void RegisterRace()
         }
         if (Elapsed() < 0.5)
             return WAIT;
+        bool removed = Tracks::RemoveTemporaryMap(localStartMap);
+        localStartMap = "";
+        level = ChooseLevel();
+        OpenLevel();
         array<string> checks = {
             Is(Race::RunId() == id1, "a repeated Race::StartLocal changed the attempt"),
-            Is(Runs::Elapsed() + 0.05 >= d1, "a repeated Race::StartLocal reset the clock")};
+            Is(Runs::Elapsed() + 0.05 >= d1, "a repeated Race::StartLocal reset the clock"),
+            Is(removed, "the local-start test map was not removed")};
         return All(checks);
     }, 12);
     Add("race", "Race restart", "Race::Restarts", function() {
@@ -3065,6 +3072,9 @@ int choice = -1;
 
 void RegisterEditor()
 {
+    Add("editor", "Race::StartLocal refuses the editor", "Race::StartLocal", function() {
+        return Is(!Race::StartLocal(), "Race::StartLocal accepted an editor map");
+    });
     Add("editor", "Editor open with pieces", "Editor::IsOpen,Editor::Pieces,Editor::PieceClass,Editor::MapName,Editor::IsTesting,Editor::Typing,Editor::Placed", function() {
         array<int>@ pieces = Editor::Pieces();
         piece = -1;
