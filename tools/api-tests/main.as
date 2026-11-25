@@ -2706,6 +2706,69 @@ void RegisterRace()
         }
         return WAIT;
     }, 30);
+    Add("localstart", "Runs keep the first attempt on each local map", "Runs::Id,Runs::TrackKey,Runs::Replay", function() {
+        // The game's attempt number can be the same on both maps. Measure by map and saved ID.
+        if (step == 0 || step == 3)
+        {
+            if (step == 0)
+                s1 = Runs::Count() == 0 ? "" : Runs::Id(0);
+            localStartMap = Tracks::CreateTemporaryMap("api test recordings " + step, Plugins::ReadFile("localstart_test.balledit"));
+            if (localStartMap == "" || !Tracks::OpenLocal(localStartMap))
+                return "could not open the local recording fixture: " + Tracks::OpenState();
+            id1 = Host::MapNumber();
+            step++;
+            return WAIT;
+        }
+        if (step == 1 || step == 4)
+        {
+            if (Host::MapNumber() == id1 || !Race::OnTrack() || Race::IsActive() || Tracks::OpenState() == "opening")
+                return WAIT;
+            string key = Race::TrackKey();
+            if (key.findFirst("custom:local:") != 0)
+                return WAIT;
+            if (step == 4)
+            {
+                if (Runs::Count() == 0 || Runs::Id(0) == s1 || Runs::Replay(0) == "")
+                    return "Runs::Replay did not keep the first map's attempt";
+                s1 = Runs::Id(0);
+            }
+            if (!Race::StartLocal())
+                return "could not start on " + key;
+            step++;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (step == 2 || step == 5)
+        {
+            // Use the long straight of the bundled test map. Move far enough for an unfinished attempt to be kept.
+            if (!Race::IsActive() || Elapsed() < 3)
+                return WAIT;
+            if (id2 != step)
+            {
+                Console::Run("teleport -2800 -1785 8670");
+                id2 = step;
+                t0 = Host::Time() - 2.5;
+                return WAIT;
+            }
+            if (!Tracks::RemoveTemporaryMap(localStartMap))
+                return "could not remove the local recording fixture";
+            localStartMap = "";
+            step++;
+            if (step == 6)
+            {
+                id1 = Host::MapNumber();
+                level = ChooseLevel();
+                OpenLevel();
+                t0 = Host::Time();
+            }
+            return WAIT;
+        }
+        if (Host::MapNumber() == id1 || !OnLevel() || Race::IsActive() || Tracks::OpenState() == "opening" || Elapsed() < 4)
+            return WAIT;
+        pt = Host::Time();
+        return Is(Runs::Count() > 0 && Runs::Id(0) != s1 && Runs::TrackKey(0).findFirst("custom:local:") == 0
+                  && Runs::Replay(0) != "", "Runs::Replay did not keep the next map's first attempt");
+    }, 45);
     Add("race", "Race restart", "Race::Restarts", function() {
         // A restart from the beginning, through the game's own ManuallyRestartBall (what R does before the first
         // checkpoint). Measured 2026-09-30: a Backspace posted to the window never reaches the game's restart (the

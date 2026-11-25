@@ -54,6 +54,7 @@ struct Sample {
 };
 bool gRecording = false;
 int gRunId = -1, gEndedRunId = -1;
+int gMapGeneration = -1;
 double gNoPawnSince = -1;                // game seconds since the run lost its pawn (a finish on its way), or -1
 double gLastSample = -1, gNow = 0;
 std::string gKey, gName;
@@ -356,6 +357,14 @@ const ghostdata::Replay* ReplayOf(int i) {
 }  // namespace
 
 void Frame() {
+    const int generation = game::Generation();
+    if (generation != gMapGeneration) {
+        // Attempt IDs are local to the map instance. End the old recording
+        // before a new map can reuse the same ID.
+        if (gRecording) End(false);
+        gEndedRunId = -1;
+        gMapGeneration = generation;
+    }
     Obj controller = game::PlayerController();
     const bool on = race::OnTrack();
     const int id = race::RunId();
