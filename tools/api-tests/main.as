@@ -2665,6 +2665,16 @@ void RegisterRace()
             t0 = Host::Time();
             return WAIT;
         }
+        if (step == 3)
+        {
+            // Back on the phase's track before the race phase: it presses Play as soon as it finds the track open, and a
+            // Play pressed while the track was still loading left the ball ignoring input (measured on 2026-11-25:
+            // "The ball rolls" then failed, and every test needing a recorded run with it).
+            if (!OnLevel() || Race::IsActive() || Tracks::OpenState() == "opening" || Elapsed() < 4)
+                return Elapsed() > 20 ? "the phase's track did not open again after the local-start test" : WAIT;
+            pt = Host::Time();
+            return s1;
+        }
         if (!Race::IsActive() || Race::RunId() < 0)
             return Elapsed() > 8 ? "Race::StartLocal did not start an attempt" : WAIT;
         if (step == 1)
@@ -2677,18 +2687,25 @@ void RegisterRace()
             t0 = Host::Time();
             return WAIT;
         }
-        if (Elapsed() < 0.5)
+        if (step == 2)
+        {
+            if (Elapsed() < 0.5)
+                return WAIT;
+            bool removed = Tracks::RemoveTemporaryMap(localStartMap);
+            localStartMap = "";
+            array<string> checks = {
+                Is(Race::RunId() == id1, "a repeated Race::StartLocal changed the attempt"),
+                Is(Runs::Elapsed() + 0.05 >= d1, "a repeated Race::StartLocal reset the clock"),
+                Is(removed, "the local-start test map was not removed")};
+            s1 = All(checks);
+            level = ChooseLevel();
+            OpenLevel();
+            step = 3;
+            t0 = Host::Time();
             return WAIT;
-        bool removed = Tracks::RemoveTemporaryMap(localStartMap);
-        localStartMap = "";
-        level = ChooseLevel();
-        OpenLevel();
-        array<string> checks = {
-            Is(Race::RunId() == id1, "a repeated Race::StartLocal changed the attempt"),
-            Is(Runs::Elapsed() + 0.05 >= d1, "a repeated Race::StartLocal reset the clock"),
-            Is(removed, "the local-start test map was not removed")};
-        return All(checks);
-    }, 12);
+        }
+        return WAIT;
+    }, 30);
     Add("race", "Race restart", "Race::Restarts", function() {
         // A restart from the beginning, through the game's own ManuallyRestartBall (what R does before the first
         // checkpoint). Measured 2026-09-30: a Backspace posted to the window never reaches the game's restart (the
