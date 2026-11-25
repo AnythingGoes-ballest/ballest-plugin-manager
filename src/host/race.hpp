@@ -51,6 +51,9 @@ bool AddBallVelocity(double x, double y, double z, int owner = -1);
 // Whether what is open is the player's own never-published map: AddBallVelocity's rule, and also the track editor
 // while editing (its map's file never published). `why` says why not. Decided once per map (file reads).
 bool OwnUnpublishedMapHere(std::string* why);
+// Starts the current player's own unpublished local race through the game's native request. True also when that
+// attempt is already counting down or running, so repeated plugin requests never restart it. Refused everywhere else.
+bool StartLocal();
 // On the current player's own unpublished race, lets restart, checkpoint-respawn and kill-zone events move the same
 // ball to its start/checkpoint without starting a new attempt. Scoped to the enabling plugin and current map. A moved
 // run is tainted. Enabling is refused elsewhere; disabling is always allowed.

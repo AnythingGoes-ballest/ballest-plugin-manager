@@ -340,6 +340,7 @@ void Update(float dt)
 // --- phases ---------------------------------------------------------------------------------------------------------------
 int pstep = 0;
 double pt = 0;
+string localStartMap = "";
 
 void Register()
 {
@@ -392,6 +393,21 @@ void Register()
                 OpenLevel();
         }
         return false;
+    }, 60);
+    // A plugin-owned unpublished map, left on its pre-race screen. The test itself starts it through Race::StartLocal.
+    // It is made here instead of relying on --track local:..., so ordinary full-suite runs exercise the API too.
+    AddPhase("localstart", function() {
+        if (pstep != 12)
+        {
+            localStartMap = Tracks::CreateTemporaryMap("api test local start", Plugins::ReadFile("localstart_test.balledit"));
+            if (localStartMap == "")
+                return false;
+            level = "local:" + localStartMap;
+            OpenLevel();
+            pstep = 12;
+            pt = Host::Time();
+        }
+        return OnLevel() && Race::TrackKey().findFirst("custom:local:") == 0 && Host::Time() - pt > 8;
     }, 60);
     // The race: started with the track's own play button, and only on the phase's track. (2026-10-08: an Enter posted
     // here took the test map back to the main menu, and the next ones started the menu's first official track, which
@@ -2014,6 +2030,11 @@ string hudKey = "";
 
 void RegisterTrack()
 {
+    Add("track", "Race::StartLocal refuses a workshop map", "Race::StartLocal", function() {
+        if (level.findFirst("workshop:") != 0)
+            return "SKIP: the track phase was not pointed at the workshop test map";
+        return Is(!Race::StartLocal(), "Race::StartLocal accepted a workshop map");
+    });
     Add("track", "Tracks::Open reached the track", "Tracks::Open,Tracks::OpenState", function() {
         string state = Tracks::OpenState();
         return Is(Race::OnTrack() && state.findFirst("error") != 0, "Tracks::Open: on track " + Race::OnTrack() + ", Tracks::OpenState '" + state + "'");
@@ -2633,6 +2654,58 @@ void RegisterRace()
         }
         return WAIT;
     }, 35);
+    Add("localstart", "Race starts one local unpublished attempt", "Race::StartLocal,Race::IsActive,Race::RunId", function() {
+        if (step == 0)
+        {
+            if (Race::TrackKey().findFirst("custom:local:") != 0 || Race::IsActive())
+                return "the local unpublished map is not waiting on its pre-race screen";
+            if (!Race::StartLocal())
+                return "Race::StartLocal refused the local unpublished map";
+            step = 1;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (step == 3)
+        {
+            // Back on the phase's track before the race phase: it presses Play as soon as it finds the track open, and a
+            // Play pressed while the track was still loading left the ball ignoring input (measured on 2026-11-25:
+            // "The ball rolls" then failed, and every test needing a recorded run with it).
+            if (!OnLevel() || Race::IsActive() || Tracks::OpenState() == "opening" || Elapsed() < 4)
+                return Elapsed() > 20 ? "the phase's track did not open again after the local-start test" : WAIT;
+            pt = Host::Time();
+            return s1;
+        }
+        if (!Race::IsActive() || Race::RunId() < 0)
+            return Elapsed() > 8 ? "Race::StartLocal did not start an attempt" : WAIT;
+        if (step == 1)
+        {
+            id1 = Race::RunId();
+            d1 = Runs::Elapsed();
+            if (!Race::StartLocal())
+                return "Race::StartLocal refused the already active attempt";
+            step = 2;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        if (step == 2)
+        {
+            if (Elapsed() < 0.5)
+                return WAIT;
+            bool removed = Tracks::RemoveTemporaryMap(localStartMap);
+            localStartMap = "";
+            array<string> checks = {
+                Is(Race::RunId() == id1, "a repeated Race::StartLocal changed the attempt"),
+                Is(Runs::Elapsed() + 0.05 >= d1, "a repeated Race::StartLocal reset the clock"),
+                Is(removed, "the local-start test map was not removed")};
+            s1 = All(checks);
+            level = ChooseLevel();
+            OpenLevel();
+            step = 3;
+            t0 = Host::Time();
+            return WAIT;
+        }
+        return WAIT;
+    }, 30);
     Add("race", "Race restart", "Race::Restarts", function() {
         // A restart from the beginning, through the game's own ManuallyRestartBall (what R does before the first
         // checkpoint). Measured 2026-09-30: a Backspace posted to the window never reaches the game's restart (the
@@ -3016,6 +3089,9 @@ int choice = -1;
 
 void RegisterEditor()
 {
+    Add("editor", "Race::StartLocal refuses the editor", "Race::StartLocal", function() {
+        return Is(!Race::StartLocal(), "Race::StartLocal accepted an editor map");
+    });
     Add("editor", "Editor open with pieces", "Editor::IsOpen,Editor::Pieces,Editor::PieceClass,Editor::MapName,Editor::IsTesting,Editor::Typing,Editor::Placed", function() {
         array<int>@ pieces = Editor::Pieces();
         piece = -1;

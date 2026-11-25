@@ -1587,6 +1587,16 @@ restarts, gets a new ball or leaves the map.
 --
 Race::StartPractice();
 
+== Race::StartLocal
+Requests the native Play action for the current player's own unpublished map opened with `Tracks::OpenLocal`.
+Returns true when the request was accepted, or when that attempt is already counting down or running. It never
+restarts an active attempt. False in the editor, on official or workshop tracks, after a finish, or while no local
+race is waiting. The function only starts one local attempt; lobby readiness and synchronization remain the calling
+plugin's responsibility. Requires host 0.37.0.
+--
+if (everyoneReady && !Race::StartLocal())
+    Log::Warn("the local race was not ready to start");
+
 == Race::BallPosition
 Where the ball being played is: in a race, and in the track editor's test runs. False when there's none (the main
 menu, or editing). Requires host 0.15.2.
